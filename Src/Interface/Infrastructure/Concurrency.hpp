@@ -26,7 +26,7 @@ namespace Piper {
     class FutureImpl : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(FutureImpl, Object)
-        virtual ~FutureImpl() = 0{}
+        virtual ~FutureImpl() = 0 {}
         virtual bool ready() const noexcept = 0;
         virtual const void* get() const = 0;
         void* get() {
@@ -35,7 +35,7 @@ namespace Piper {
     };
 
     template <typename T>
-    class Future final : private Unmovable {
+    class Future final {
     private:
         SharedObject<FutureImpl> mImpl;
 
@@ -56,7 +56,7 @@ namespace Piper {
     };
 
     template <>
-    class Future<void> final : private Unmovable {
+    class Future<void> final {
     private:
         SharedObject<FutureImpl> mImpl;
 
@@ -107,109 +107,57 @@ namespace Piper {
     protected:
         virtual void spawnImpl(const Function<void, void*>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                                const SharedObject<FutureImpl>& res) = 0;
-        virtual SharedObject<FutureImpl> newFutureImpl(const size_t size, const void* value) = 0;
-
-        template <typename T>
-        struct IsFuture {
-            static constexpr bool value = false;
-        };
-
-        template <typename T>
-        struct IsFuture<Future<T>> {
-            static constexpr bool value = true;
-        };
-
-        template <size_t x, class T>
-        struct Insert {};
-
-        template <size_t x, size_t... I>
-        struct Insert<x, std::index_sequence<I...>> {
-            using type = std::index_sequence<x, I...>;
-        };
-
-        template <size_t index, typename... Args>
-        struct FutureSequence {};
-
-        template <size_t index>
-        struct FutureSequence<index> {
-            using type = std::index_sequence<>;
-        };
-
-        template <size_t index, typename First, typename... Args>
-        struct FutureSequence<index, Future<First>, Args...> {
-            using type = typename Insert<index, typename FutureSequence<index + 1, Args...>::type>::type;
-        };
-
-        template <size_t index, typename First, typename... Args>
-        struct FutureSequence<index, First, Args...> {
-            using type = typename FutureSequence<index + 1, Args...>::type;
-        };
-
-        template <typename Tuple, size_t... I>
-        std::initializer_list<SharedObject<FutureImpl>> extractTuple(Tuple&& tuple, std::index_sequence<I...>) {
-            return { std::get<I>(std::forward<Tuple>(tuple))... };
-        }
-        template <typename... Args>
-        auto extractFuture(Args&&... args) {
-            using Index = typename FutureSequence<0, std::decay_t<Args>...>::type;
-            return extractTuple(std::make_tuple(std::forward<Args>(args)...), Index{});
-        }
+        virtual SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) = 0;
 
         template <typename ReturnType, typename Callable, typename... Args>
-        auto spawnDispatch(std::enable_if_t<std::is_void_v<ReturnType>>* ptr, Callable&& callable, Args&&... args) {
-            throw;
-            // copy
-            auto dependencies = extractFuture(std::forward<Args>(args)...);
+        auto spawnDispatch(std::enable_if_t<std::is_void_v<ReturnType>>*, Callable&& callable, const Future<Args>&... args) {
+            auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
-            auto result = newFutureImpl(0, nullptr);
-            // copy
-            spawnImpl(Function<void, void*>(
-                          [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)](void*) {
-                              std::apply(std::move(call), std::move(tuple));
-                          }),
+            auto result = newFutureImpl(0, false);
+            auto tuple = std::make_tuple(args...);
+            spawnImpl(Function<void, void*>([call = std::forward<Callable>(callable), tuple](void*) { std::apply(call, tuple); }),
                       depSpan, result);
 
             return Future<ReturnType>(result);
         }
 
         template <typename ReturnType, typename Callable, typename... Args>
-        auto spawnDispatch(std::enable_if_t<!std::is_void_v<ReturnType>>* ptr, Callable&& callable, Args&&... args) {
-            throw;
-            // copy
-            auto dependencies = extractFuture(std::forward<Args>(args)...);
-            auto result = newFutureImpl(sizeof(ReturnType), nullptr);
+        auto spawnDispatch(std::enable_if_t<!std::is_void_v<ReturnType>>*, Callable&& callable, const Future<Args>&... args) {
+            auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
+            auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
+            auto result = newFutureImpl(sizeof(ReturnType), false);
+            auto tuple = std::make_tuple(args...);
 
-            spawnImpl(
-                Function<void, void*>(
-                    [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)](void* res) {
-                        *reinterpret_cast<ReturnType*>(res) = std::apply(std::forward<Callable>(call), std::move(tuple));
-                    },
-                    context().getAllocator()),
-                dependencies, result);
+            spawnImpl(Function<void, void*>([call = std::forward<Callable>(callable), tuple](void* res) {
+                          new(reinterpret_cast<ReturnType*>(res)) ReturnType(std::move(std::apply(call, tuple)));
+                      }),
+                      depSpan, result);
 
             return Future<ReturnType>(result);
         }
 
     public:
         PIPER_INTERFACE_CONSTRUCT(Scheduler, Object)
-        virtual ~Scheduler() = 0{}
+        virtual ~Scheduler() = 0 {}
 
+        // TODO:move
         template <typename T>
-        auto value(T&& value) {
-            return Future<T>(newFutureImpl(sizeof(T), &value));
+        auto value(const T& value) {
+            auto res = newFutureImpl(sizeof(T), true);
+            new(static_cast<T*>(res->get())) T(value);
+            return Future<T>{ res };
         }
 
         template <typename Callable, typename... Args>
-        auto spawn(Callable&& callable, Args&&... args) {
-            using ReturnType = std::invoke_result_t<Callable, Args...>;
-            return spawnDispatch<ReturnType, Callable, Args...>(nullptr, std::forward<Callable>(callable),
-                                                                std::forward<Args>(args)...);
+        auto spawn(Callable&& callable, const Future<Args>&... args) {
+            using ReturnType = std::invoke_result_t<Callable, decltype(args)...>;
+            return spawnDispatch<ReturnType, Callable, Args...>(nullptr, std::forward<Callable>(callable), args...);
         }
 
         virtual void waitAll() noexcept = 0;
 
         // parallel_for
         // reduce
-    };
+    };  // namespace Piper
 
 }  // namespace Piper

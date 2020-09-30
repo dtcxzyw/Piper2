@@ -21,6 +21,7 @@
 #include <cstring>
 
 namespace Piper {
+    //+pdf?
     struct PhysicalQuantitySIDesc final {
         int32_t m, kg, s, A, K, mol, cd, rad, sr;
         bool operator==(const PhysicalQuantitySIDesc& rhs) const noexcept {
@@ -31,9 +32,9 @@ namespace Piper {
     class UnitManager : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(UnitManager, Object);
-        virtual ~UnitManager() = 0{}
+        virtual ~UnitManager() = 0 {}
         virtual void addTranslation(const PhysicalQuantitySIDesc& desc, const StringView& name) = 0;  // prefixPower==0
-        virtual String serialize(const PhysicalQuantitySIDesc& desc,const bool forceUseSIUnit) const = 0;
+        virtual String serialize(const PhysicalQuantitySIDesc& desc, const bool forceUseSIUnit) const = 0;
         virtual PhysicalQuantitySIDesc deserialize(const StringView& name) const = 0;
     };
 

@@ -31,10 +31,10 @@
 #include "STL/UMap.hpp"
 #include "STL/USet.hpp"
 #include "STL/UniquePtr.hpp"
-#include "STL/Vector.hpp"
+#include <charconv>
 #include <iostream>
+#include <regex>
 // use builtin allocator
-#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <shared_mutex>
@@ -49,60 +49,41 @@
 namespace fs = std::filesystem;
 
 #ifdef PIPER_WIN32
-namespace std {
-    void* aligned_alloc(std::size_t alignment, std::size_t size) {
-        return _aligned_malloc(size, alignment);
-    }
-}  // namespace std
+void* allocMemory(std::size_t alignment, std::size_t size) {
+    return _aligned_malloc(size, alignment);
+}
 void freeMemory(void* ptr) {
     _aligned_free(ptr);
 }
 #else
+void* allocMemory(std::size_t alignment, std::size_t size) {
+    return std::aligned_malloc(alignment, size);
+}
 void freeMemory(void* ptr) {
     free(ptr);
 }
 #endif
 
-namespace EA {
-    namespace StdC {
-        PIPER_API int Vsnprintf(char* EA_RESTRICT pDestination, size_t n, const char* EA_RESTRICT pFormat, va_list arguments) {
-            return vsnprintf(pDestination, n, pFormat, arguments);
-        }
-    }  // namespace StdC
-}  // namespace EA
+PIPER_API int EA::StdC::Vsnprintf(char* EA_RESTRICT pDestination, size_t n, const char* EA_RESTRICT pFormat, va_list arguments) {
+    return vsnprintf(pDestination, n, pFormat, arguments);
+}
 
 namespace Piper {
-
     void* STLAllocator::allocate(size_t n, int flags) {
-        if(flags != 0)
-            throw;
         return reinterpret_cast<void*>(mAllocator->alloc(n));
     }
     void* STLAllocator::allocate(size_t n, size_t alignment, size_t offset, int flags) {
-        throw;
+        if(offset != 0)
+            throw;
+        return reinterpret_cast<void*>(mAllocator->alloc(n, alignment));
     }
-    void STLAllocator::deallocate(void* p, size_t n) {
+    void STLAllocator::deallocate(void* p, size_t) {
         mAllocator->free(reinterpret_cast<Ptr>(p));
     }
 
     void ObjectDeleter::operator()(Object* obj) {
         obj->~Object();
         mAllocator.free(reinterpret_cast<Ptr>(obj));
-    }
-
-    const UMap<String, SharedObject<Config>>& Config::viewAsObject() const {
-        return Piper::get<UMap<String, SharedObject<Config>>>(mValue);
-    }
-
-    const Vector<SharedObject<Config>>& Config::viewAsArray() const {
-        return Piper::get<Vector<SharedObject<Config>>>(mValue);
-    };
-
-    const SharedObject<Config>& Config::operator()(const StringView& key) const {
-        return viewAsObject().find(String(key, context().getAllocator()))->second;
-    }
-    const SharedObject<Config>& Config::operator[](Index index) const {
-        return viewAsArray()[index];
     }
 
     class DefaultAllocator final : public Allocator {
@@ -113,9 +94,9 @@ namespace Piper {
         }
         Ptr alloc(const size_t size, const size_t align) override {
             static_assert(sizeof(Ptr) == sizeof(void*));
-            return reinterpret_cast<Ptr>(std::aligned_alloc(align, size));
+            return reinterpret_cast<Ptr>(allocMemory(align, size));
         }
-        void free(Ptr ptr) override {
+        void free(const Ptr ptr) override {
             freeMemory(reinterpret_cast<void*>(ptr));
         }
     };
@@ -126,8 +107,8 @@ namespace Piper {
             size_t operator()(const PhysicalQuantitySIDesc& desc) const {
                 // FNV1-a
                 uint64_t res = 14695981039346656037ULL;
-                const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&desc);
-                const uint8_t* end = reinterpret_cast<const uint8_t*>(&desc) + sizeof(desc);
+                auto ptr = reinterpret_cast<const uint8_t*>(&desc);
+                auto end = reinterpret_cast<const uint8_t*>(&desc) + sizeof(desc);
                 while(ptr != end) {
                     res = (res ^ (*ptr)) * 1099511628211ULL;
                     ++ptr;
@@ -142,11 +123,18 @@ namespace Piper {
 
         String serializeSI(const PhysicalQuantitySIDesc& desc) const {
             String res{ context().getAllocator() };
-#define Unit(x)                                            \
-    if(desc.x) {                                           \
-        res += #x;                                         \
-        res += '^';                                        \
-        res += toString(context().getAllocator(), desc.x); \
+            auto flag = false;
+#define Unit(x)                                                \
+    if(desc.x) {                                               \
+        if(flag)                                               \
+            res += '*';                                        \
+        else                                                   \
+            flag = true;                                       \
+        res += #x;                                             \
+        if(desc.x != 1) {                                      \
+            res += '^';                                        \
+            res += toString(context().getAllocator(), desc.x); \
+        }                                                      \
     }
 
             Unit(m);
@@ -165,13 +153,26 @@ namespace Piper {
         String serializeUnit(const PhysicalQuantitySIDesc& desc, const bool forceUseSIUnit) const {
             if(forceUseSIUnit)
                 return serializeSI(desc);
-            auto iter = mD2S.find(desc);
+            const auto iter = mD2S.find(desc);
             return iter == mD2S.cend() ? serializeSI(desc) : iter->second;
         }
 
+        std::regex mRegex;
+
     public:
         explicit UnitManagerImpl(PiperContext& context)
-            : UnitManager(context), mD2S(context.getAllocator()), mS2D(context.getAllocator()) {}
+            : UnitManager(context), mD2S(context.getAllocator()), mS2D(context.getAllocator()),
+              mRegex("([A-Za-z]+)(\\^-?[1-9][0-9]*)?", std::regex::flag_type::ECMAScript | std::regex::flag_type::optimize) {
+            mS2D.insert(makePair(String("m", context.getAllocator()), PhysicalQuantitySIDesc{ 1, 0, 0, 0, 0, 0, 0, 0, 0 }));
+            mS2D.insert(makePair(String("kg", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 1, 0, 0, 0, 0, 0, 0, 0 }));
+            mS2D.insert(makePair(String("s", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 0, 1, 0, 0, 0, 0, 0, 0 }));
+            mS2D.insert(makePair(String("A", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 0, 0, 1, 0, 0, 0, 0, 0 }));
+            mS2D.insert(makePair(String("K", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 0, 0, 0, 1, 0, 0, 0, 0 }));
+            mS2D.insert(makePair(String("mol", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 0, 0, 0, 0, 1, 0, 0, 0 }));
+            mS2D.insert(makePair(String("cd", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 0, 0, 0, 0, 0, 1, 0, 0 }));
+            mS2D.insert(makePair(String("rad", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 0, 0, 0, 0, 0, 0, 1, 0 }));
+            mS2D.insert(makePair(String("sr", context.getAllocator()), PhysicalQuantitySIDesc{ 0, 0, 0, 0, 0, 0, 0, 0, 1 }));
+        }
         void addTranslation(const PhysicalQuantitySIDesc& desc, const StringView& name) override {
             if(mD2S.count(desc))
                 throw;
@@ -185,15 +186,46 @@ namespace Piper {
             return serializeUnit(desc, forceUseSIUnit);
         }
         PhysicalQuantitySIDesc deserialize(const StringView& name) const override {
-            PhysicalQuantitySIDesc desc;
-            memset(&desc, 0, sizeof(desc));
-            throw;
+            PhysicalQuantitySIDesc desc{};
+            Index lastPos = 0;
+            for(Index i = 0; i <= name.size(); ++i) {
+                if(i != name.size() && name[i] != '*')
+                    continue;
+                std::cmatch matches;
+                bool res = std::regex_match(name.cbegin() + lastPos, name.cbegin() + i, matches, mRegex);
+                if(!res)
+                    throw;
+                if(matches.size() < 2 || matches.size() > 3)
+                    throw;
+                const auto iter = mS2D.find(String(matches[1].first, matches[1].second, context().getAllocator()));
+                if(iter == mS2D.cend())
+                    throw;
+                int32_t base = 1;
+                if(matches.size() == 3 && matches[2].matched) {
+                    auto res = std::from_chars(matches[2].first + 1, matches[2].second, base);
+                    Ensures(res.ptr == matches[2].second);
+                }
+#define Unit(x) desc.x += iter->second.x * base;
+
+                Unit(m);
+                Unit(kg);
+                Unit(s);
+                Unit(A);
+                Unit(K);
+                Unit(mol);
+                Unit(cd);
+                Unit(rad);
+                Unit(sr);
+
+#undef Unit
+                lastPos = i + 1;
+            }
             return desc;
         }
     };
 
 #ifdef PIPER_WIN32
-    static void raiseWin32Error() {
+    [[noreturn]] static void raiseWin32Error() {
         // throw GetLastError();
         throw;
     }
@@ -236,7 +268,11 @@ namespace Piper {
             auto iter = info.find(String("Path", context().getAllocator()));
             if(iter == info.cend())
                 throw;
-            auto path = String(descPath, context().getAllocator()) + "/" + iter->second->get<String>();
+#ifdef PIPER_WIN32
+            constexpr auto extension = ".dll";
+#endif  // PIPER_WIN32
+
+            auto path = String(descPath, context().getAllocator()) + "/" + iter->second->get<String>() + extension;
             iter = info.find(String("Name", context().getAllocator()));
             if(iter == info.cend())
                 throw;
@@ -244,36 +280,38 @@ namespace Piper {
             // TODO:filesystem
             // TODO:multi load
             return context().getScheduler().spawn([this, name, path] {
-                // TODO:checksum/dependencies
+                // TODO:checksum/dependencies/utf-8
                 Owner<void*> handle = reinterpret_cast<void*>(LoadLibraryA(path.c_str()));
                 if(handle == nullptr)
                     raiseWin32Error();
                 DLLHandle lib{ handle };
-                using InitFunc = Module* (*)(PiperContext & context);
+                using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator);
                 auto func = reinterpret_cast<InitFunc>(lib.getFunctionAddress("initModule"));
                 // TODO:ABI
-                auto mod = SharedObject<Module>{ func(context()), ObjectDeleter{ context().getAllocator() },
-                                                 STLAllocator{ context().getAllocator() } };
+                auto& allocator = context().getAllocator();
+                auto mod =
+                    SharedObject<Module>{ func(context(), allocator), ObjectDeleter{ allocator }, STLAllocator{ allocator } };
                 if(!mod)
                     throw;
-                String name{ name, context().getAllocator() };
                 {
                     std::unique_lock<std::shared_mutex> guard{ mMutex };
                     mModules.insert(makePair(name, makePair(std::move(lib), mod)));
                 }
             });
         };
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config) override {
+        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+                                                 const Future<void>& module) override {
+            std::shared_lock<std::shared_mutex> guard{ mMutex };
             // TODO:lazy load
-            auto pos = classID.find_last_of('.');
-            auto iter = mModules.find(String(classID.substr(0, pos), context().getAllocator()));
+            const auto pos = classID.find_last_of('.');
+            const auto iter = mModules.find(String(classID.substr(0, pos), context().getAllocator()));
             if(iter == mModules.cend())
                 throw;
-            return iter->second.second->newInstance(classID.substr(pos + 1), config);
+            return iter->second.second->newInstance(classID.substr(pos + 1), config, module);
         }
         ~ModuleLoaderImpl() {
-            // destruction order
-            throw;
+            for(auto&& lib : mModules)
+                lib.second.second.reset();
         }
     };
 
@@ -283,24 +321,19 @@ namespace Piper {
             switch(level) {
                 case LogLevel::Info:
                     return "INFO";
-                    break;
                 case LogLevel::Warning:
                     return "WARNING";
-                    break;
                 case LogLevel::Error:
                     return "ERROR";
-                    break;
                 case LogLevel::Fatal:
                     return "FATAL";
-                    break;
                 case LogLevel::Debug:
                     return "DEBUG";
-                    break;
                 default:
                     return "UNKNOWN";
-                    break;
             }
         }
+        std::mutex mMutex;
 
     public:
         PIPER_INTERFACE_CONSTRUCT(LoggerImpl, Logger)
@@ -308,7 +341,10 @@ namespace Piper {
             return true;
         }
         void record(const LogLevel level, const StringView& message, const SourceLocation& sourceLocation) noexcept override {
-            std::cerr << "[" << level2Str(level) << "]" << message.data() << std::endl;
+            std::lock_guard guard(mMutex);
+            std::cerr << "[" << level2Str(level) << "]" << std::string_view(message.data(), message.size()) << std::endl;
+            std::cerr << "<<<< " << sourceLocation.func << "[" << sourceLocation.file << ":" << sourceLocation.line << "]"
+                      << std::endl;
         }
         void flush() noexcept override {
             std::cerr.flush();
@@ -320,20 +356,13 @@ namespace Piper {
         void* mPtr;
 
         void* alloc(PiperContext& context, const size_t size) {
-            if(size) {
-                Ptr ret{};
-                context.getAllocator().alloc(size, ret);
-                return reinterpret_cast<void*>(ret);
-            }
+            if(size)
+                return reinterpret_cast<void*>(context.getAllocator().alloc(size));
             return nullptr;
         }
 
     public:
-        FutureStorage(PiperContext& context, const size_t size, const void* value)
-            : FutureImpl(context), mPtr(alloc(context, size)) {
-            if(value)
-                memcpy(mPtr, value, size);
-        }
+        FutureStorage(PiperContext& context, const size_t size) : FutureImpl(context), mPtr(alloc(context, size)) {}
         bool ready() const noexcept override {
             return true;
         }
@@ -352,12 +381,13 @@ namespace Piper {
                 dep->get();
             func(const_cast<void*>(res->get()));
         }
-        SharedObject<FutureImpl> newFutureImpl(const size_t size, const void* value) override {
-            return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size, value);
+        SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool) override {
+            return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size);
         }
         void waitAll() noexcept override {}
     };
 
+    // TODO:root
     class FileSystemImpl final : public FileSystem {
     public:
         PIPER_INTERFACE_CONSTRUCT(FileSystemImpl, FileSystem)
@@ -399,13 +429,8 @@ namespace Piper {
         Stack<SharedObject<Object>> mLifeTimeRecorder;
 
     public:
-        PiperContextImpl()
-            : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator), mModuleLoader(*this),
-              mLifeTimeRecorder(STLAllocator{ getAllocator() }), mUnitManager(*this) {
-            setLogger(makeSharedPtr<LoggerImpl>(getAllocator(), *this));
-            setScheduler(makeSharedPtr<SchedulerImpl>(getAllocator(), *this));
-            setFileSystem(makeSharedPtr<FileSystemImpl>(getAllocator(), *this));
-        }
+        PiperContextImpl();
+
         Logger& getLogger() noexcept {
             return *mLogger;
         }
@@ -443,11 +468,22 @@ namespace Piper {
             mAllocator = mUserAllocator.get();
         }
         ~PiperContextImpl() {
+            mLogger->record(LogLevel::Info, "Destroy Piper context", PIPER_SOURCE_LOCATION());
+            mLogger->flush();
             mScheduler->waitAll();
             while(!mLifeTimeRecorder.empty())
                 mLifeTimeRecorder.pop();
         }
     };
+
+    PiperContextImpl::PiperContextImpl()
+        : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator), mModuleLoader(*this), mUnitManager(*this),
+          mLifeTimeRecorder(STLAllocator{ getAllocator() }) {
+        setLogger(makeSharedPtr<LoggerImpl>(getAllocator(), *this));
+        mLogger->record(LogLevel::Info, "Create Piper context", PIPER_SOURCE_LOCATION());
+        setScheduler(makeSharedPtr<SchedulerImpl>(getAllocator(), *this));
+        setFileSystem(makeSharedPtr<FileSystemImpl>(getAllocator(), *this));
+    }
 }  // namespace Piper
 
 PIPER_API Piper::PiperContextOwner* piperCreateContext() {

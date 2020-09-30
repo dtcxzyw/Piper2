@@ -16,7 +16,6 @@
 
 #pragma once
 #include "../PiperAPI.hpp"
-#include "../STL/GSL.hpp"
 #include "../STL/SharedPtr.hpp"
 
 namespace Piper {
@@ -41,7 +40,7 @@ namespace Piper {
         PiperContext& context() const noexcept {
             return mContext;
         }
-        virtual ~Object() = 0{}
+        virtual ~Object() = 0 {}
     };
 
 #define PIPER_INTERFACE_CONSTRUCT(NAME, FATHER) \
@@ -49,6 +48,11 @@ namespace Piper {
 
     template <typename T>
     using SharedObject = eastl::shared_ptr<T>;
+
+    template <typename T, typename... Args>
+    auto makeSharedObject(PiperContext& context, Args&&... args) {
+        return makeSharedPtr<T>(context.getAllocator(), context, std::forward<Args>(args)...);
+    }
 
     class PIPER_API ObjectDeleter final {
     private:

@@ -15,11 +15,14 @@
 */
 
 #pragma once
+#pragma warning(push, 0)
+#include "../PiperAPI.hpp"
 #define EASTL_USER_DEFINED_ALLOCATOR
 #define EASTLAllocatorType Piper::STLAllocator
 #define EASTLAllocatorDefault() nullptr
 #include "GSL.hpp"
 #include <eastl/internal/config.h>
+#pragma warning(pop)
 
 namespace Piper {
     class Allocator;
@@ -30,34 +33,20 @@ namespace Piper {
 
     public:
         STLAllocator(Allocator& allocator) : mAllocator(&allocator) {}
-        explicit STLAllocator(const char* pName = EASTL_NAME_VAL(EASTL_ALLOCATOR_DEFAULT_NAME)) : mAllocator(nullptr) {}
-        STLAllocator(const STLAllocator& x, const char* pName) : STLAllocator(x) {
-#if EASTL_NAME_ENABLED
-            mName = pName;
-#endif
-        }
+        explicit STLAllocator(const char* = EASTL_NAME_VAL(EASTL_ALLOCATOR_DEFAULT_NAME)) : mAllocator(nullptr) {}
+        STLAllocator(const STLAllocator& x, const char*) : STLAllocator(x) {}
 
         void* allocate(size_t n, int flags = 0);
         void* allocate(size_t n, size_t alignment, size_t offset, int flags = 0);
         void deallocate(void* p, size_t n);
 
         const char* get_name() const noexcept {
-#if EASTL_NAME_ENABLED
-            return mName;
-#else
             return "Unknown Allocator";
-#endif
         }
-        void set_name(const char* pName) noexcept {
-#if EASTL_NAME_ENABLED
-            mName = pName;
-#endif
+        void set_name(const char*) noexcept {}
+        bool operator!=(const STLAllocator& rhs) const noexcept {
+            return &mAllocator != &rhs.mAllocator;
         }
-
-    protected:
-#if EASTL_NAME_ENABLED
-        const char* mName;  // Debug name, used to track memory.
-#endif
     };
 
 }  // namespace Piper

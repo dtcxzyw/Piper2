@@ -27,15 +27,17 @@ namespace Piper {
     class Module : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Module, Object)
-        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config) = 0;
-        virtual ~Module() = 0{}
+        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+                                                         const Future<void>& module) = 0;
+        virtual ~Module() = 0 {}
     };
 
     class ModuleLoader : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleLoader, Object)
         virtual Future<void> loadModule(const SharedObject<Config>& packageDesc, const StringView& descPath) = 0;
-        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config) = 0;
-        virtual ~ModuleLoader() = 0{}
+        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+                                                         const Future<void>& module) = 0;
+        virtual ~ModuleLoader() = 0 {}
     };
 }  // namespace Piper

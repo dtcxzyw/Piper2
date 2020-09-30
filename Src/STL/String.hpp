@@ -15,9 +15,11 @@
 */
 
 #pragma once
+#pragma warning(push , 0)
 #include "STLAllocator.hpp"
 #define EASTL_EASTDC_API PIPER_API
 #include <EASTL/string.h>
+#pragma warning(pop)
 #include <cinttypes>
 
 namespace Piper {

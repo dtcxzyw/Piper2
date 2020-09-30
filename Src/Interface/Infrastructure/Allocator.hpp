@@ -17,6 +17,7 @@
 #pragma once
 #include "../ContextResource.hpp"
 #include <cstdint>
+#include <new>
 
 namespace Piper {
 
@@ -34,6 +35,7 @@ namespace Piper {
     class Allocator : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(Allocator, ContextResource)
+        // TODO:hardware_constructive_interference_size
         virtual Ptr alloc(const size_t size, const size_t align = 8) = 0;
         virtual void free(const Ptr ptr) = 0;
         virtual ~Allocator() = 0 {}

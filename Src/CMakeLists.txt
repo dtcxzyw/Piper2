@@ -8,10 +8,10 @@ add_subdirectory("Infrastructure")
 add_subdirectory("BuiltinComponent")
 add_subdirectory("Test")
 
-add_library(PiperCore SHARED PiperCore.cpp)
+set_output_path(./)
+add_library(PiperCore SHARED PiperCore.cpp )
 target_link_libraries(PiperCore PRIVATE EABase EASTL Microsoft.GSL::GSL)
 
-add_executable(PiperCLI PiperCLI.cpp)
+set_output_path(./)
+add_executable(PiperCLI PiperCLI.cpp )
 target_link_libraries(PiperCLI PRIVATE EABase EASTL Microsoft.GSL::GSL)
-
-install(TARGETS PiperCore PiperCLI RUNTIME DESTINATION ./)
