@@ -376,6 +376,7 @@ namespace Piper {
     class FutureStorage final : public FutureImpl {
     private:
         void* mPtr;
+        ContextHandle mHandle;
 
         void* alloc(PiperContext& context, const size_t size) {
             if(size)
@@ -384,12 +385,17 @@ namespace Piper {
         }
 
     public:
-        FutureStorage(PiperContext& context, const size_t size) : FutureImpl(context), mPtr(alloc(context, size)) {}
+        FutureStorage(PiperContext& context, const size_t size, const ContextHandle handle)
+            : FutureImpl(context), mPtr(alloc(context, size)), mHandle(handle) {}
         bool ready() const noexcept override {
             return true;
         }
-        const void* get() const override {
+        void* storage() const override {
             return mPtr;
+        }
+        void wait() const override {}
+        ContextHandle getContextHandle() const override {
+            return mHandle;
         }
     };
 
@@ -397,16 +403,20 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(SchedulerImpl, Scheduler)
 
-        void spawnImpl(const Function<void, void*>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        void spawnImpl(const Function<void>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                        const SharedObject<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
-                dep->get();
-            func(const_cast<void*>(res->get()));
+                dep->wait();
+            func();
         }
         SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool) override {
-            return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size);
+            return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size, getContextHandle());
         }
         void waitAll() noexcept override {}
+        ContextHandle getContextHandle() const override {
+            static char mark;
+            return reinterpret_cast<ContextHandle>(&mark);
+        }
     };
 
     // TODO:root

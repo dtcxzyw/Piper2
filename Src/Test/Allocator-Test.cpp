@@ -20,6 +20,22 @@
 #include "TestEnvironment.hpp"
 #include <algorithm>
 
+// TODO:change test layer
+void generalAllocatorTest(Piper::PiperContext& context) {
+    // aligned alloc
+    auto ptr = context.getAllocator().alloc(1 << 20, 1 << 10);
+    ASSERT_EQ(ptr & 1023, 0);
+    context.getAllocator().free(ptr);
+    // STL Container
+    Piper::Vector<size_t> sum(context.getAllocator());
+    for(Piper::Index i = 0; i < static_cast<Piper::Index>(100); ++i)
+        sum.push_back(i);
+    auto res = std::accumulate(sum.cbegin(), sum.cend(), static_cast<size_t>(0));
+    ASSERT_EQ(res, static_cast<size_t>(4950));
+    sum.clear();
+    sum.shrink_to_fit();
+}
+
 TEST_F(PiperCoreEnvironment, Jemalloc) {
     auto desc = Piper::makeSharedObject<Piper::Config>(*context);
     desc->at("Path").set("Infrastructure/Allocator/JemallocAllocator");
@@ -35,13 +51,7 @@ TEST_F(PiperCoreEnvironment, Jemalloc) {
                                  Piper::makeSharedObject<Piper::Config>(*context), mod)
                     .get();
     contextOwner->setAllocator(eastl::dynamic_shared_pointer_cast<Piper::Allocator>(inst));
-    Piper::Vector<size_t> sum(context->getAllocator());
-    for(Piper::Index i = 0; i < static_cast<Piper::Index>(100); ++i)
-        sum.push_back(i);
-    auto res = std::accumulate(sum.cbegin(), sum.cend(), static_cast<size_t>(0));
-    ASSERT_EQ(res, static_cast<size_t>(4950));
-    sum.clear();
-    sum.shrink_to_fit();
+    generalAllocatorTest(*context);
 }
 
 int main(int argc, char** argv) {

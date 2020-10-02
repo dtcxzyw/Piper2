@@ -23,15 +23,13 @@ namespace Piper {
     template <typename T>
     class DataView;
 
-    class FutureImpl : public Object {
+    class FutureImpl : public ContextResource {
     public:
-        PIPER_INTERFACE_CONSTRUCT(FutureImpl, Object)
+        PIPER_INTERFACE_CONSTRUCT(FutureImpl, ContextResource)
         virtual ~FutureImpl() = 0 {}
         virtual bool ready() const noexcept = 0;
-        virtual const void* get() const = 0;
-        void* get() {
-            return const_cast<void*>(const_cast<const FutureImpl*>(this)->get());
-        }
+        virtual void wait() const = 0;
+        virtual void* storage() const = 0;
     };
 
     template <typename T>
@@ -47,11 +45,16 @@ namespace Piper {
         bool ready() const noexcept {
             return mImpl->ready();
         }
+        void wait() const {
+            return mImpl->wait();
+        }
         T& get() {
-            return *reinterpret_cast<T*>(mImpl->get());
+            mImpl->wait();
+            return *reinterpret_cast<T*>(mImpl->storage());
         }
         const T& get() const {
-            return *reinterpret_cast<T*>(mImpl->get());
+            mImpl->wait();
+            return *reinterpret_cast<T*>(mImpl->storage());
         }
     };
 
@@ -68,8 +71,8 @@ namespace Piper {
         bool ready() const noexcept {
             return mImpl->ready();
         }
-        void get() const {
-            mImpl->get();
+        void wait() const {
+            return mImpl->wait();
         }
     };
 
@@ -103,9 +106,9 @@ namespace Piper {
         };
         */
 
-    class Scheduler : public Object {
+    class Scheduler : public ContextResource {
     protected:
-        virtual void spawnImpl(const Function<void, void*>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        virtual void spawnImpl(const Function<void>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                                const SharedObject<FutureImpl>& res) = 0;
         virtual SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) = 0;
 
@@ -115,8 +118,8 @@ namespace Piper {
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
             auto tuple = std::make_tuple(args...);
-            spawnImpl(Function<void, void*>([call = std::forward<Callable>(callable), tuple](void*) { std::apply(call, tuple); }),
-                      depSpan, result);
+            spawnImpl(Function<void>([call = std::forward<Callable>(callable), tuple] { std::apply(call, tuple); }), depSpan,
+                      result);
 
             return Future<ReturnType>(result);
         }
@@ -128,8 +131,8 @@ namespace Piper {
             auto result = newFutureImpl(sizeof(ReturnType), false);
             auto tuple = std::make_tuple(args...);
 
-            spawnImpl(Function<void, void*>([call = std::forward<Callable>(callable), tuple](void* res) {
-                          new(reinterpret_cast<ReturnType*>(res)) ReturnType(std::move(std::apply(call, tuple)));
+            spawnImpl(Function<void>([call = std::forward<Callable>(callable), tuple, ptr = result->storage()] {
+                          new(reinterpret_cast<ReturnType*>(ptr)) ReturnType(std::move(std::apply(call, tuple)));
                       }),
                       depSpan, result);
 
@@ -137,14 +140,14 @@ namespace Piper {
         }
 
     public:
-        PIPER_INTERFACE_CONSTRUCT(Scheduler, Object)
+        PIPER_INTERFACE_CONSTRUCT(Scheduler, ContextResource)
         virtual ~Scheduler() = 0 {}
 
         // TODO:move
         template <typename T>
         auto value(const T& value) {
             auto res = newFutureImpl(sizeof(T), true);
-            new(static_cast<T*>(res->get())) T(value);
+            new(static_cast<T*>(res->storage())) T(value);
             return Future<T>{ res };
         }
 

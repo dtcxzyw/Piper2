@@ -13,3 +13,4 @@ endfunction()
 
 add_piper_test(PiperCore)
 add_piper_test(Allocator)
+add_piper_test(Concurrency)
