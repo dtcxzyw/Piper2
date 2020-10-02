@@ -34,6 +34,10 @@ void generalAllocatorTest(Piper::PiperContext& context) {
     ASSERT_EQ(res, static_cast<size_t>(4950));
     sum.clear();
     sum.shrink_to_fit();
+    // Object
+    auto object = Piper::makeSharedObject<Piper::Config>(context);
+    ASSERT_EQ(&object->context(), &context);
+    object.reset();
 }
 
 TEST_F(PiperCoreEnvironment, Jemalloc) {

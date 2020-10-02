@@ -17,17 +17,18 @@
 #pragma once
 
 #include "../PiperContext.hpp"
+#include "../STL/UniquePtr.hpp"
 #include <gtest/gtest.h>
-#include <memory>
 
-struct ContextDeleter final {
+struct ContextDeleter {
     void operator()(Piper::PiperContextOwner* ptr) const {
         piperDestoryContext(ptr);
     }
 };
+
 class PiperCoreEnvironment : public testing::Test {
 protected:
-    std::unique_ptr<Piper::PiperContextOwner, ContextDeleter> contextOwner;
+    Piper::UniquePtr<Piper::PiperContextOwner, ContextDeleter> contextOwner;
     Piper::PiperContext* context = nullptr;
     void SetUp() override {
         contextOwner.reset(piperCreateContext());

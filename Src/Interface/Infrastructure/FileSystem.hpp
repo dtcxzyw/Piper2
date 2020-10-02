@@ -15,33 +15,35 @@
 */
 
 #pragma once
-#include "../../STL/String.hpp"
 #include "../../STL/StringView.hpp"
-#include "../../STL/Vector.hpp"
 #include "../Object.hpp"
-#include "Concurrency.hpp"
+#include "IO.hpp"
 
 namespace Piper {
     enum class FileType { File, Directory, NotExist };
-    enum class Permission { Read = 1, Write = 2, Create = 4, Delete = 8 };
+    enum class FilePermission { Read = 1, Write = 2, Create = 4, Delete = 8 };
+    enum class FileAccessMode { Read, Write };
+    enum class FileCacheHint { Random, Sequential };
 
     class FileSystem : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(FileSystem, Object)
-        //virtual void createFile(const StringView& path) = 0;
+        // TODO:enumerate files
+        virtual SharedObject<Stream> openFileStream(const StringView& path, const FileAccessMode access,
+                                                    const FileCacheHint hint) = 0;
+        virtual SharedObject<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint,
+                                                   const size_t maxSize = 0) = 0;
         virtual void removeFile(const StringView& path) = 0;
-        virtual String findFile(const StringView& path, const Span<StringView>& searchDirs) = 0;
 
         virtual void createDir(const StringView& path) = 0;
         virtual void removeDir(const StringView& path) = 0;
-        virtual String findDir(const StringView& path, const Span<StringView>& searchDirs) = 0;
 
         virtual bool exist(const StringView& path) = 0;
-        virtual Permission permission(const StringView& path) = 0;
-        //virtual size_t spaceUsage(const StringView& path) = 0;
+        // virtual FilePermission permission(const StringView& path) = 0;  // TODO:User Group
+        // virtual size_t spaceUsage(const StringView& path) = 0;
 
-        //virtual String prepareNativeFileGroup(const StringView& path) = 0;
+        // virtual String prepareNativeFileGroup(const StringView& path) = 0;
 
-        virtual ~FileSystem() = 0{}
+        virtual ~FileSystem() = 0 {}
     };
 }  // namespace Piper

@@ -49,11 +49,6 @@ namespace Piper {
     template <typename T>
     using SharedObject = eastl::shared_ptr<T>;
 
-    template <typename T, typename... Args>
-    auto makeSharedObject(PiperContext& context, Args&&... args) {
-        return makeSharedPtr<T>(context.getAllocator(), context, std::forward<Args>(args)...);
-    }
-
     class PIPER_API ObjectDeleter final {
     private:
         Allocator& mAllocator;
@@ -62,6 +57,12 @@ namespace Piper {
         explicit ObjectDeleter(Allocator& allocator) : mAllocator(allocator) {}
         void operator()(Object* obj);
     };
+
+    template <typename T, typename... Args>
+    auto makeSharedObject(PiperContext& context, Args&&... args) {
+        auto& allocator = context.getAllocator();
+        return makeSharedPtr<T>(allocator, ObjectDeleter{ allocator }, context, std::forward<Args>(args)...);
+    }
 
     template <typename T>
     using UniqueObject = eastl::unique_ptr<T, ObjectDeleter>;

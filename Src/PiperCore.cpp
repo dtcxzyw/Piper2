@@ -35,6 +35,7 @@
 #include <iostream>
 #include <regex>
 // use builtin allocator
+#include <cassert>
 #include <filesystem>
 #include <mutex>
 #include <shared_mutex>
@@ -42,8 +43,6 @@
 #ifdef PIPER_WIN32
 #define NOMAXMIN
 #include <Windows.h>
-#include <errhandlingapi.h>
-#include <libloaderapi.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -284,13 +283,14 @@ namespace Piper {
             // TODO:filesystem
             // TODO:multi load
             return context().getScheduler().spawn([this, base, name, path, deps] {
-            // TODO:checksum/utf-8
+            // TODO:checksum/utf-8/module dependices/packageDesc provider
 #ifdef PIPER_WIN32
                 constexpr auto extension = ".dll";
 #endif  // PIPER_WIN32
                 for(auto&& dep : deps) {
 #ifdef PIPER_WIN32
-                    Owner<void*> handle = reinterpret_cast<void*>(LoadLibraryA((base + dep + extension).c_str()));
+                    Owner<void*> handle = reinterpret_cast<void*>(
+                        LoadLibraryW(fs::u8path((base + dep + extension).c_str()).generic_wstring().c_str()));
                     if(handle == nullptr)
                         raiseWin32Error();
 #endif  // PIPER_WIN32
@@ -300,7 +300,8 @@ namespace Piper {
                     }
                 }
 #ifdef PIPER_WIN32
-                Owner<void*> handle = reinterpret_cast<void*>(LoadLibraryA((base + path + extension).c_str()));
+                Owner<void*> handle = reinterpret_cast<void*>(
+                    LoadLibraryW(fs::u8path((base + path + extension).c_str()).generic_wstring().c_str()));
                 if(handle == nullptr)
                     raiseWin32Error();
 #endif PIPER_WIN32
@@ -411,7 +412,7 @@ namespace Piper {
             func();
         }
         SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool) override {
-            return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size, getContextHandle());
+            return makeSharedObject<FutureStorage>(context(), size, getContextHandle());
         }
         void waitAll() noexcept override {}
         void yield() noexcept override {}
@@ -421,16 +422,173 @@ namespace Piper {
         }
     };
 
-    // TODO:root
+    // TODO:File RWLock
+    struct FileHandleCloser {
+        void operator()(void* handle) const {
+#ifdef PIPER_WIN32
+            CloseHandle(handle);
+#endif  // PIPER_WIN32
+        }
+    };
+    using MappingHandleCloser = FileHandleCloser;
+
+    static size_t getFileSize(void* handle) {
+#ifdef PIPER_WIN32
+        DWORD high;
+        size_t size = GetFileSize(handle, &high);
+        size += static_cast<size_t>(high) << 32;
+#endif  // PIPER_WIN32
+        return size;
+    }
+
+    class StreamImpl final : public Stream {
+    private:
+        SharedPtr<void> mHandle;
+        size_t mSize, mCurrent;
+
+    public:
+        // TODO:Async SetFileIoOverlappedrange
+        StreamImpl(PiperContext& context, SharedPtr<void>&& handle)
+            : Stream(context), mHandle(std::move(handle)), mSize(getFileSize(mHandle.get())), mCurrent(0) {}
+        size_t size() const noexcept override {
+            return mSize;
+        }
+        Future<Vector<std::byte>> read(const size_t offset, const size_t size) const override {
+            return context().getScheduler().spawn([offset, size, context = &context(), handle = mHandle] {
+                Vector<std::byte> data(size, context->getAllocator());
+                throw;
+                // TODO: thread safety
+                // SetFilePointer(handle.get(),offset );
+                // TODO:read big data
+                auto res = ReadFile(handle.get(), data.data(), static_cast<DWORD>(size), nullptr, nullptr);
+                if(!res)
+                    raiseWin32Error();
+                return data;
+            });
+        }
+        Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) const override {
+            return context().getScheduler().spawn(
+                [offset, context = &context(), handle = mHandle](const Future<Vector<std::byte>>& span) {
+                    throw;
+                    // thread safety
+                    // SetFilePointer(handle.get(),offset );
+                    // TODO:write big data
+                    auto res =
+                        WriteFile(handle.get(), span.get().data(), static_cast<DWORD>(span.get().size()), nullptr, nullptr);
+                    if(!res)
+                        raiseWin32Error();
+                    // TODO:update size
+                },
+                data);
+        }
+    };
+
+    class MappedSpanImpl final : public MappedSpan {
+    private:
+        void* mPtr;
+        Span<std::byte> mSpan;
+
+    public:
+        MappedSpanImpl(PiperContext& context, void* ptr, const Span<std::byte>& span)
+            : MappedSpan(context), mPtr(ptr), mSpan(span) {}
+        Span<std::byte> get() const noexcept override {
+            return mSpan;
+        }
+        ~MappedSpanImpl() {
+#ifdef PIPER_WIN32
+            if(!UnmapViewOfFile(mPtr))
+                raiseWin32Error();
+#endif  // PIPER_WIN32
+        }
+    };
+
+    static size_t getMemoryAlignmentImpl() {
+#ifdef PIPER_WIN32
+        SYSTEM_INFO info;
+        GetSystemInfo(&info);
+        return info.dwAllocationGranularity;
+#endif  // PIPER_WIN32
+    }
+
+    static size_t getMemoryAlignment() {
+        static const size_t align = getMemoryAlignmentImpl();
+        return align;
+    }
+
+    class MappedMemoryImpl final : public MappedMemory {
+    private:
+        SharedPtr<void> mFileHandle;
+        UniquePtr<void, MappingHandleCloser> mMapHandle;
+        const size_t mSize;
+        const FileAccessMode mAccess;
+
+    public:
+        MappedMemoryImpl(PiperContext& context, SharedPtr<void>&& handle, const FileAccessMode access, const size_t maxSize)
+            : MappedMemory(context), mFileHandle(std::move(handle)), mSize(maxSize ? maxSize : getFileSize(mFileHandle.get())),
+              mAccess(access) {
+            if(mSize == 0)
+                throw;
+#ifdef PIPER_WIN32
+            auto mapHandle =
+                CreateFileMappingW(mFileHandle.get(), nullptr, access == FileAccessMode::Read ? PAGE_READONLY : PAGE_READWRITE,
+                                   static_cast<DWORD>(maxSize >> 32), static_cast<DWORD>(maxSize), nullptr);
+            if(!mapHandle)
+                raiseWin32Error();
+            mMapHandle.reset(mapHandle);
+#endif  // PIPER_WIN32
+        }
+        size_t size() const noexcept override {
+            return mSize;
+        }
+        size_t alignment() const noexcept override {
+            return getMemoryAlignment();
+        }
+        SharedObject<MappedSpan> map(const size_t offset, const size_t size) const override {
+            size_t end = offset + size;
+            size_t rem = offset % getMemoryAlignment();
+            size_t roffset = offset - rem;
+            auto ptr = reinterpret_cast<std::byte*>(
+                MapViewOfFile(mMapHandle.get(), mAccess == FileAccessMode::Read ? FILE_MAP_READ : FILE_MAP_WRITE,
+                              static_cast<DWORD>(roffset >> 32), static_cast<DWORD>(roffset), end - roffset));
+            if(ptr == nullptr)
+                throw;
+            auto base = ptr + offset - roffset;
+            return makeSharedObject<MappedSpanImpl>(context(), ptr, Span<std::byte>(base, base + size));
+        }
+    };
+
+    // TODO:root path
     class FileSystemImpl final : public FileSystem {
+    private:
+        auto openFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint) {
+#ifdef PIPER_WIN32
+            const auto nativePath = fs::u8path(path.cbegin(), path.cend());
+            auto handle = CreateFileW(
+                nativePath.generic_wstring().c_str(),
+                (access == FileAccessMode::Read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE),
+                (access == FileAccessMode::Write ? 0 : FILE_SHARE_READ), nullptr,
+                (access == FileAccessMode::Read ? OPEN_EXISTING : (fs::exists(nativePath) ? TRUNCATE_EXISTING : CREATE_NEW)),
+                (hint == FileCacheHint::Random ? FILE_FLAG_RANDOM_ACCESS : FILE_FLAG_SEQUENTIAL_SCAN), nullptr);
+            if(!handle)
+                raiseWin32Error();
+// TODO:FILE_FLAG_OVERLAPPED/FILE_FLAG_WRITE_THROUGH
+#endif  // PIPER_WIN32
+
+            return SharedPtr<void>(handle, FileHandleCloser{}, STLAllocator{ context().getAllocator() });
+        }
+
     public:
         PIPER_INTERFACE_CONSTRUCT(FileSystemImpl, FileSystem)
-        // void createFile(const StringView& path) override {}
+        SharedObject<Stream> openFileStream(const StringView& path, const FileAccessMode access,
+                                            const FileCacheHint hint) override {
+            return makeSharedObject<StreamImpl>(context(), openFile(path, access, hint));
+        }
+        SharedObject<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint,
+                                           const size_t maxSize) override {
+            return makeSharedObject<MappedMemoryImpl>(context(), openFile(path, access, hint), access, maxSize);
+        }
         void removeFile(const StringView& path) override {
             fs::remove(path.data());
-        }
-        String findFile(const StringView& path, const Span<StringView>& searchDirs) override {
-            throw;
         }
         void createDir(const StringView& path) override {
             fs::create_directory(path.data());
@@ -438,14 +596,8 @@ namespace Piper {
         void removeDir(const StringView& path) override {
             fs::remove_all(path.data());
         }
-        String findDir(const StringView& path, const Span<StringView>& searchDirs) override {
-            throw;
-        }
         bool exist(const StringView& path) override {
             return fs::exists(path.data());
-        }
-        Permission permission(const StringView& path) override {
-            throw;
         }
     };
 
@@ -513,10 +665,10 @@ namespace Piper {
     PiperContextImpl::PiperContextImpl()
         : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator), mModuleLoader(*this), mUnitManager(*this),
           mLifeTimeRecorder(STLAllocator{ getAllocator() }) {
-        setLogger(makeSharedPtr<LoggerImpl>(getAllocator(), *this));
+        setLogger(makeSharedObject<LoggerImpl>(*this));
         mLogger->record(LogLevel::Info, "Create Piper context", PIPER_SOURCE_LOCATION());
-        setScheduler(makeSharedPtr<SchedulerImpl>(getAllocator(), *this));
-        setFileSystem(makeSharedPtr<FileSystemImpl>(getAllocator(), *this));
+        setScheduler(makeSharedObject<SchedulerImpl>(*this));
+        setFileSystem(makeSharedObject<FileSystemImpl>(*this));
     }
 }  // namespace Piper
 

@@ -20,6 +20,7 @@
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
+#include "../../../STL/UniquePtr.hpp"
 #include <map>
 #include <new>
 #include <spdlog/spdlog.h>

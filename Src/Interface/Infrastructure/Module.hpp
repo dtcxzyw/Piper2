@@ -50,7 +50,7 @@ namespace Piper {
                 allocator.free(reinterpret_cast<Piper::Ptr>(ptr));                                                    \
             }                                                                                                         \
         };                                                                                                            \
-        std::unique_ptr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))), \
+        Piper::UniquePtr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))), \
                                                 Deleter{ allocator } };                                               \
         new(ptr.get()) CLASS(context);                                                                                \
         return ptr.release();                                                                                         \

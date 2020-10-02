@@ -19,10 +19,11 @@
 #include "../Interface/Infrastructure/Logger.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
 #include "../Interface/Infrastructure/PhysicalQuantitySIDesc.hpp"
+#include "../STL/UniquePtr.hpp"
 #include "TestEnvironment.hpp"
 
 TEST(PiperCore, InitAndUninitTest) {
-    std::unique_ptr<Piper::PiperContextOwner, ContextDeleter> context{ piperCreateContext() };
+    Piper::UniquePtr<Piper::PiperContextOwner, ContextDeleter> context{ piperCreateContext() };
     context->getLogger().record(Piper::LogLevel::Info, "Hello,World!", PIPER_SOURCE_LOCATION());
     context.reset();
 }

@@ -16,6 +16,7 @@
 
 #define PIPER_EXPORT
 #include "../../../Interface/Infrastructure/Allocator.hpp"
+#include "../../../STL/UniquePtr.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"

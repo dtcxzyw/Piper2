@@ -20,6 +20,7 @@
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
 #include "../../../STL/Optional.hpp"
+#include "../../../STL/UniquePtr.hpp"
 #include <mutex>
 #include <new>
 #include <taskflow/taskflow.hpp>
@@ -95,8 +96,7 @@ namespace Piper {
             ctx.future = mExecutor.run(ctx.flow);
         }
         SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) override {
-            return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size, ready,
-                                                reinterpret_cast<ContextHandle>(this));
+            return makeSharedObject<FutureStorage>(context(), size, ready, reinterpret_cast<ContextHandle>(this));
         }
         void yield() noexcept override {}
         void waitAll() noexcept override {

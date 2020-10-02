@@ -15,27 +15,34 @@
 */
 
 #pragma once
+#include "../../STL/Vector.hpp"
 #include "../ContextResource.hpp"
+#include "Concurrency.hpp"
 
 namespace Piper {
-
-    class IStream : public ContextResource {
+    // TODO:Stream Pipeline
+    // TODO:separate I/O
+    class Stream : public Object {
     public:
-
+        PIPER_INTERFACE_CONSTRUCT(Stream, Object)
+        virtual ~Stream() = 0 {}
+        virtual size_t size() const noexcept = 0;
+        // TODO:FutureSequence/reduce copy
+        virtual Future<Vector<std::byte>> read(const size_t offset, const size_t size) const = 0;
+        virtual Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) const = 0;
     };
 
-    class OStream : public ContextResource {
+    class MappedSpan : public Object {
     public:
-    
+        PIPER_INTERFACE_CONSTRUCT(MappedSpan, Object)
+        virtual Span<std::byte> get() const noexcept = 0;
     };
 
-    class ReadOnlyMappedMemory: public ContextResource {
+    class MappedMemory : public Object {
     public:
-    
-    };
-
-    class ReadWriteMappedMemory : public ContextResource {
-    public:
-    
+        PIPER_INTERFACE_CONSTRUCT(MappedMemory, Object)
+        virtual size_t size() const noexcept = 0;
+        virtual size_t alignment() const noexcept = 0;
+        virtual SharedObject<MappedSpan> map(const size_t offset, const size_t size) const = 0;
     };
 }  // namespace Piper
