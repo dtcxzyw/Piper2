@@ -4,6 +4,12 @@ find_package(GTest CONFIG REQUIRED)
 
 # function
 set_output_path(./)
-add_executable(PiperCore-Test PiperCore-Test.cpp)
-target_link_libraries(PiperCore-Test PRIVATE PiperCore GTest::gtest GTest::gtest_main GTest::gmock GTest::gmock_main EASTL)
-add_test(NAME PiperCore-Test COMMAND PiperCore-Test)
+
+function(add_piper_test name)
+add_executable(${name}-Test ${name}-Test.cpp)
+target_link_libraries(${name}-Test PRIVATE PiperCore GTest::gtest GTest::gtest_main GTest::gmock GTest::gmock_main EASTL)
+add_test(NAME ${name}-Test COMMAND ${name}-Test)
+endfunction()
+
+add_piper_test(PiperCore)
+add_piper_test(Allocator)

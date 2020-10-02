@@ -23,6 +23,7 @@ namespace Piper {
 
     using Ptr = uint64_t;
 
+    /*
     class MemoryProvider : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(MemoryProvider, ContextResource)
@@ -31,6 +32,7 @@ namespace Piper {
         virtual ~MemoryProvider() = 0 {}
         virtual bool isThreadSafety() const noexcept = 0;
     };
+    */
 
     class Allocator : public ContextResource {
     public:

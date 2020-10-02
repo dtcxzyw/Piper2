@@ -19,38 +19,13 @@
 #include "../Interface/Infrastructure/Logger.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
 #include "../Interface/Infrastructure/PhysicalQuantitySIDesc.hpp"
-#include "../PiperContext.hpp"
-#include <gtest/gtest.h>
-#include <memory>
-
-struct ContextDeleter final {
-    void operator()(Piper::PiperContextOwner* ptr) const {
-        piperDestoryContext(ptr);
-    }
-};
+#include "TestEnvironment.hpp"
 
 TEST(PiperCore, InitAndUninitTest) {
     std::unique_ptr<Piper::PiperContextOwner, ContextDeleter> context{ piperCreateContext() };
     context->getLogger().record(Piper::LogLevel::Info, "Hello,World!", PIPER_SOURCE_LOCATION());
     context.reset();
 }
-
-class PiperCoreEnvironment : public testing::Test {
-private:
-    std::unique_ptr<Piper::PiperContextOwner, ContextDeleter> mContext;
-
-protected:
-    Piper::PiperContext* context = nullptr;
-    void SetUp() override {
-        mContext.reset(piperCreateContext());
-        context = mContext.get();
-    }
-
-    void TearDown() override {
-        mContext.reset();
-        context = nullptr;
-    }
-};
 
 TEST_F(PiperCoreEnvironment, ConcurrencyTest) {
     auto&& scheduler = context->getScheduler();

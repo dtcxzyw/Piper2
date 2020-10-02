@@ -90,6 +90,7 @@ namespace Piper {
             return Piper::get<Vector<SharedObject<Config>>>(mValue);
         };
 
+        //TODO:remove shared_ptr
         const Config& at(const StringView& key) const {
             return *(viewAsObject().find(String(key, context().getAllocator()))->second);
         }

@@ -16,38 +16,25 @@
 
 #define PIPER_EXPORT
 #include "../../../Interface/Infrastructure/Allocator.hpp"
-#include "../../../Interface/Infrastructure/FileSystem.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
+#include <jemalloc/jemalloc.h>
 #include <new>
 
 namespace Piper {
-    class MemoryFile final : public FileSystem {
-    private:
+    class JemallocAllocator final : public Allocator {
     public:
-        PIPER_INTERFACE_CONSTRUCT(MemoryFile, FileSystem)
-        void removeFile(const StringView& path) override {
-            throw;
+        PIPER_INTERFACE_CONSTRUCT(JemallocAllocator, Allocator)
+        Ptr alloc(const size_t size, const size_t align = 8) override {
+            return reinterpret_cast<Ptr>(je_aligned_alloc(align, size));
         }
-        String findFile(const StringView& path, const Span<StringView>& searchDirs) override {
-            throw;
+        void free(const Ptr ptr) override {
+            je_free(reinterpret_cast<void*>(ptr));
         }
-        void createDir(const StringView& path) override {
-            throw;
-        }
-        void removeDir(const StringView& path) override {
-            throw;
-        }
-        String findDir(const StringView& path, const Span<StringView>& searchDirs) override {
-            throw;
-        }
-
-        bool exist(const StringView& path) override {
-            throw;
-        }
-        Permission permission(const StringView& path) override {
-            throw;
+        ContextHandle getContextHandle() const {
+            static char mark;
+            return reinterpret_cast<ContextHandle>(&mark);
         }
     };
     class ModuleImpl final : public Module {
@@ -55,9 +42,9 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
         Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
                                                  const Future<void>& module) override {
-            if(classID == "MemoryFile") {
+            if(classID == "JemallocAllocator") {
                 return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<MemoryFile>(context())));
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<JemallocAllocator>(context())));
             }
             throw;
         }

@@ -226,8 +226,7 @@ namespace Piper {
 
 #ifdef PIPER_WIN32
     [[noreturn]] static void raiseWin32Error() {
-        // throw GetLastError();
-        throw;
+        throw std::runtime_error(std::to_string(GetLastError()));
     }
 #endif
 
@@ -257,33 +256,54 @@ namespace Piper {
 
     class ModuleLoaderImpl final : public ModuleLoader {
     private:
-        UMap<String, Pair<DLLHandle, SharedObject<Module>>> mModules;
+        UMap<String, SharedObject<Module>> mModules;
+        Stack<DLLHandle> mHandles;
         // USet<String> mClasses; TODO:Cache
         std::shared_mutex mMutex;
 
     public:
-        explicit ModuleLoaderImpl(PiperContext& context) : ModuleLoader(context), mModules(context.getAllocator()) {}
+        explicit ModuleLoaderImpl(PiperContext& context)
+            : ModuleLoader(context), mModules(context.getAllocator()), mHandles(STLAllocator{ context.getAllocator() }) {}
         Future<void> loadModule(const SharedObject<Config>& packageDesc, const StringView& descPath) override {
             auto&& info = packageDesc->viewAsObject();
             auto iter = info.find(String("Path", context().getAllocator()));
             if(iter == info.cend())
                 throw;
-#ifdef PIPER_WIN32
-            constexpr auto extension = ".dll";
-#endif  // PIPER_WIN32
-
-            auto path = String(descPath, context().getAllocator()) + "/" + iter->second->get<String>() + extension;
+            auto base = String(descPath, context().getAllocator()) + "/";
+            auto path = iter->second->get<String>();
             iter = info.find(String("Name", context().getAllocator()));
             if(iter == info.cend())
                 throw;
             auto name = iter->second->get<String>();
+            iter = info.find("Dependencies");
+            Vector<String> deps(context().getAllocator());
+            if(iter != info.cend()) {
+                for(auto&& dep : iter->second->viewAsArray())
+                    deps.push_back(dep->get<String>());
+            }
             // TODO:filesystem
             // TODO:multi load
-            return context().getScheduler().spawn([this, name, path] {
-                // TODO:checksum/dependencies/utf-8
-                Owner<void*> handle = reinterpret_cast<void*>(LoadLibraryA(path.c_str()));
+            return context().getScheduler().spawn([this, base, name, path, deps] {
+            // TODO:checksum/utf-8
+#ifdef PIPER_WIN32
+                constexpr auto extension = ".dll";
+#endif  // PIPER_WIN32
+                for(auto&& dep : deps) {
+#ifdef PIPER_WIN32
+                    Owner<void*> handle = reinterpret_cast<void*>(LoadLibraryA((base + dep + extension).c_str()));
+                    if(handle == nullptr)
+                        raiseWin32Error();
+#endif  // PIPER_WIN32
+                    {
+                        std::unique_lock<std::shared_mutex> guard{ mMutex };
+                        mHandles.push(DLLHandle{ handle });
+                    }
+                }
+#ifdef PIPER_WIN32
+                Owner<void*> handle = reinterpret_cast<void*>(LoadLibraryA((base + path + extension).c_str()));
                 if(handle == nullptr)
                     raiseWin32Error();
+#endif PIPER_WIN32
                 DLLHandle lib{ handle };
                 using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator);
                 auto func = reinterpret_cast<InitFunc>(lib.getFunctionAddress("initModule"));
@@ -295,7 +315,8 @@ namespace Piper {
                     throw;
                 {
                     std::unique_lock<std::shared_mutex> guard{ mMutex };
-                    mModules.insert(makePair(name, makePair(std::move(lib), mod)));
+                    mModules.insert(makePair(name, mod));
+                    mHandles.push(std::move(lib));
                 }
             });
         };
@@ -307,11 +328,12 @@ namespace Piper {
             const auto iter = mModules.find(String(classID.substr(0, pos), context().getAllocator()));
             if(iter == mModules.cend())
                 throw;
-            return iter->second.second->newInstance(classID.substr(pos + 1), config, module);
+            return iter->second->newInstance(classID.substr(pos + 1), config, module);
         }
         ~ModuleLoaderImpl() {
-            for(auto&& lib : mModules)
-                lib.second.second.reset();
+            mModules.clear();
+            while(!mHandles.empty())
+                mHandles.pop();
         }
     };
 

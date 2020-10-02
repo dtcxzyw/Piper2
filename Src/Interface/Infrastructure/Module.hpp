@@ -41,3 +41,17 @@ namespace Piper {
         virtual ~ModuleLoader() = 0 {}
     };
 }  // namespace Piper
+
+#define PIPER_INIT_MODULE_IMPL(CLASS)                                                                                 \
+    extern "C" PIPER_API Piper::Module* initModule(Piper::PiperContext& context, Piper::Allocator& allocator) {       \
+        struct Deleter {                                                                                              \
+            Piper::Allocator& allocator;                                                                              \
+            void operator()(CLASS* ptr) const {                                                                       \
+                allocator.free(reinterpret_cast<Piper::Ptr>(ptr));                                                    \
+            }                                                                                                         \
+        };                                                                                                            \
+        std::unique_ptr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))), \
+                                                Deleter{ allocator } };                                               \
+        new(ptr.get()) CLASS(context);                                                                                \
+        return ptr.release();                                                                                         \
+    }\
