@@ -55,7 +55,7 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
         Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
                                                  const Future<void>& module) override {
-            if(classID == "MemoryFile") {
+            if(classID == "MemoryFS") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<MemoryFile>(context())));
             }

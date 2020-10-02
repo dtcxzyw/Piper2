@@ -100,12 +100,12 @@ TEST_F(PiperCoreEnvironment, UnitManagerTest) {
 
 TEST_F(PiperCoreEnvironment, ModuleLoaderTest) {
     auto desc = Piper::makeSharedObject<Piper::Config>(*context);
-    desc->at("Path").set("Infrastructure/FileSystem/MemoryFile");
-    desc->at("Name").set("Piper.Infrastructure.FileSystem.MemoryFile");
+    desc->at("Path").set("Infrastructure/FileSystem/MemoryFS");
+    desc->at("Name").set("Piper.Infrastructure.FileSystem.MemoryFS");
     auto&& loader = context->getModuleLoader();
     const auto mod = loader.loadModule(desc, ".");
     auto inst = loader
-                    .newInstance("Piper.Infrastructure.FileSystem.MemoryFile.MemoryFile",
+                    .newInstance("Piper.Infrastructure.FileSystem.MemoryFS.MemoryFS",
                                  Piper::makeSharedObject<Piper::Config>(*context), mod)
                     .get();
     ASSERT_EQ(context, &inst->context());

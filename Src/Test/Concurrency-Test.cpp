@@ -19,6 +19,7 @@
 #include "../Interface/Infrastructure/Module.hpp"
 #include "../STL/Vector.hpp"
 #include "TestEnvironment.hpp"
+#include <atomic>
 
 using namespace std::chrono_literals;
 
@@ -30,8 +31,10 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
     auto b = context.getScheduler().value(2);
     ASSERT_TRUE(b.ready());
     ASSERT_EQ(b.get(), 2);
+    std::atomic_size_t count{ 0 };
     auto c = context.getScheduler().spawn(
-        [](const Piper::Future<int32_t>& x, const Piper::Future<int32_t>& y) {
+        [&count](const Piper::Future<int32_t>& x, const Piper::Future<int32_t>& y) {
+            ++count;
             std::this_thread::sleep_for(1000ms);
             return x.get() + y.get();
         },
@@ -39,11 +42,12 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
     ASSERT_FALSE(c.ready());
     context.getScheduler().waitAll();
     ASSERT_TRUE(c.ready());
-    auto d = context.getScheduler().spawn([](const Piper::Future<int32_t>& x)
-    {
-        return x.get() * x.get();
-    }, c);
+    auto d = context.getScheduler().spawn([](const Piper::Future<int32_t>& x) { return x.get() * x.get(); }, c);
     ASSERT_EQ(d.get(), 9);
+    auto e = context.getScheduler().spawn(
+        [](const Piper::Future<int32_t>& x, const Piper::Future<int32_t>& y) { return x.get() + y.get(); }, c, c);
+    ASSERT_EQ(e.get(), 6);
+    ASSERT_EQ(count, 1);
     // exception
 }
 

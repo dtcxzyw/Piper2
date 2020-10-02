@@ -20,6 +20,7 @@
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
 #include "../../../STL/Optional.hpp"
+#include <mutex>
 #include <new>
 #include <taskflow/taskflow.hpp>
 
@@ -29,6 +30,7 @@ namespace Piper {
     struct FutureContext {
         tf::Taskflow flow;
         std::future<void> future;
+        std::once_flag flag;
     };
 
     class FutureStorage final : public FutureImpl {
@@ -83,7 +85,7 @@ namespace Piper {
         void spawnImpl(const Function<void>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                        const SharedObject<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
-            auto task = ctx.flow.emplace(func);
+            auto task = ctx.flow.emplace([flag = &ctx.flag, func] { std::call_once(*flag, func); });
             for(auto&& dep : dependencies) {
                 if(getContextHandle() == dep->getContextHandle())
                     dynamic_cast<FutureStorage*>(dep.get())->precede(ctx.flow, task);
@@ -96,6 +98,7 @@ namespace Piper {
             return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size, ready,
                                                 reinterpret_cast<ContextHandle>(this));
         }
+        void yield() noexcept override {}
         void waitAll() noexcept override {
             mExecutor.wait_for_all();
         }

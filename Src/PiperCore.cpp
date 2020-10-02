@@ -331,6 +331,7 @@ namespace Piper {
             return iter->second->newInstance(classID.substr(pos + 1), config, module);
         }
         ~ModuleLoaderImpl() {
+            // TODO:destroy order
             mModules.clear();
             while(!mHandles.empty())
                 mHandles.pop();
@@ -413,6 +414,7 @@ namespace Piper {
             return makeSharedPtr<FutureStorage>(context().getAllocator(), context(), size, getContextHandle());
         }
         void waitAll() noexcept override {}
+        void yield() noexcept override {}
         ContextHandle getContextHandle() const override {
             static char mark;
             return reinterpret_cast<ContextHandle>(&mark);

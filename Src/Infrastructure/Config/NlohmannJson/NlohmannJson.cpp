@@ -28,8 +28,12 @@ namespace Piper {
     class JsonSerializer final : public ConfigSerializer {
     public:
         PIPER_INTERFACE_CONSTRUCT(JsonSerializer, ConfigSerializer)
-        SharedObject<Config> deserialize(const StringView& path) const override {}
-        void serialize(const SharedObject<Config>& config, const StringView& path) const override {}
+        SharedObject<Config> deserialize(const StringView& path) const override {
+            throw;
+        }
+        void serialize(const SharedObject<Config>& config, const StringView& path) const override {
+            throw;
+        }
     };
     class ModuleImpl final : public Module {
     public:

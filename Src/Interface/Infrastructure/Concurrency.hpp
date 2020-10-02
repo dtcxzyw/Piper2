@@ -106,6 +106,7 @@ namespace Piper {
         };
         */
 
+    // TODO:this_thread_scheduler::yield
     class Scheduler : public ContextResource {
     protected:
         virtual void spawnImpl(const Function<void>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
@@ -157,6 +158,7 @@ namespace Piper {
             return spawnDispatch<ReturnType, Callable, Args...>(nullptr, std::forward<Callable>(callable), args...);
         }
 
+        virtual void yield() noexcept = 0;  // TODO:Coroutine
         virtual void waitAll() noexcept = 0;
 
         // parallel_for

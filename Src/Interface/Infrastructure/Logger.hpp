@@ -37,6 +37,7 @@ namespace Piper {
         virtual bool allow(const LogLevel level) const noexcept = 0;
         virtual void record(const LogLevel level, const StringView& message, const SourceLocation& sourceLocation) noexcept = 0;
         virtual void flush() noexcept = 0;
+        //maxlevel
         // virtual void bindStream()=0;
         virtual ~Logger() = 0{}
     };
