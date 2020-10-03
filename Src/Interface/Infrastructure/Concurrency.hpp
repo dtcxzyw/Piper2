@@ -26,7 +26,7 @@ namespace Piper {
     class FutureImpl : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(FutureImpl, ContextResource)
-        virtual ~FutureImpl() = 0 {}
+        virtual ~FutureImpl() = default;
         virtual bool ready() const noexcept = 0;
         virtual void wait() const = 0;
         virtual void* storage() const = 0;
@@ -142,7 +142,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(Scheduler, ContextResource)
-        virtual ~Scheduler() = 0 {}
+        virtual ~Scheduler() = default;
 
         // TODO:move
         template <typename T>
@@ -150,6 +150,12 @@ namespace Piper {
             auto res = newFutureImpl(sizeof(T), true);
             new(static_cast<T*>(res->storage())) T(value);
             return Future<T>{ res };
+        }
+
+        // TODO:zero allocation
+        Future<void> ready() {
+            auto res = newFutureImpl(0, true);
+            return Future<void>(res);
         }
 
         template <typename Callable, typename... Args>
@@ -160,6 +166,7 @@ namespace Piper {
 
         virtual void yield() noexcept = 0;  // TODO:Coroutine
         virtual void waitAll() noexcept = 0;
+        // virtual size_t getCurrentTaskID() const noexcept = 0;
 
         // parallel_for
         // reduce

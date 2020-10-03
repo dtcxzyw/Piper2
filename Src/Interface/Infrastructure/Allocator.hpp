@@ -27,9 +27,9 @@ namespace Piper {
     class MemoryProvider : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(MemoryProvider, ContextResource)
-        virtual Ptr alloc(const size_t size, const size_t align = 8) = 0;
+        virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
         virtual void free(const Ptr ptr) = 0;
-        virtual ~MemoryProvider() = 0 {}
+        virtual ~MemoryProvider() = default;
         virtual bool isThreadSafety() const noexcept = 0;
     };
     */
@@ -38,16 +38,16 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Allocator, ContextResource)
         // TODO:hardware_constructive_interference_size
-        virtual Ptr alloc(const size_t size, const size_t align = 8) = 0;
-        virtual void free(const Ptr ptr) = 0;
-        virtual ~Allocator() = 0 {}
+        virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
+        virtual void free(const Ptr ptr) noexcept = 0;
+        virtual ~Allocator() = default;
     };
 
     class MemoryArena : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(MemoryArena, ContextResource)
-        virtual Ptr alloc(const size_t size, const size_t align = 8) = 0;
-        virtual ~MemoryArena() = 0 {}
+        virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
+        virtual ~MemoryArena() = default;
     };
 
 }  // namespace Piper

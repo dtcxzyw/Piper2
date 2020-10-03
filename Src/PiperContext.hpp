@@ -34,7 +34,7 @@ namespace Piper {
         virtual FileSystem& getFileSystem() noexcept = 0;
         virtual Allocator& getAllocator() noexcept = 0;
         virtual UnitManager& getUnitManager() noexcept = 0;
-        virtual ~PiperContext() = 0 {}
+        virtual ~PiperContext() = default;
     };
     class PiperContextOwner : public PiperContext {
     public:
@@ -42,9 +42,9 @@ namespace Piper {
         virtual void setScheduler(const SharedObject<Scheduler>& scheduler) noexcept = 0;
         virtual void setFileSystem(const SharedObject<FileSystem>& filesystem) noexcept = 0;
         virtual void setAllocator(const SharedObject<Allocator>& allocator) noexcept = 0;
-        virtual ~PiperContextOwner() = 0 {}
+        virtual ~PiperContextOwner() = default;
     };
 }  // namespace Piper
 
 PIPER_API Piper::PiperContextOwner* piperCreateContext();
-PIPER_API void piperDestoryContext(Piper::PiperContextOwner* context);
+PIPER_API void piperDestroyContext(Piper::PiperContextOwner* context);

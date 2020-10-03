@@ -44,6 +44,6 @@ namespace Piper {
 
         // virtual String prepareNativeFileGroup(const StringView& path) = 0;
 
-        virtual ~FileSystem() = 0 {}
+        virtual ~FileSystem() = default;
     };
 }  // namespace Piper

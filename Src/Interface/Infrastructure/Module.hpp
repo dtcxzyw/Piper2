@@ -29,7 +29,7 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Module, Object)
         virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
                                                          const Future<void>& module) = 0;
-        virtual ~Module() = 0 {}
+        virtual ~Module() = default;
     };
 
     class ModuleLoader : public Object {
@@ -38,7 +38,7 @@ namespace Piper {
         virtual Future<void> loadModule(const SharedObject<Config>& packageDesc, const StringView& descPath) = 0;
         virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
                                                          const Future<void>& module) = 0;
-        virtual ~ModuleLoader() = 0 {}
+        virtual ~ModuleLoader() = default;
     };
 }  // namespace Piper
 

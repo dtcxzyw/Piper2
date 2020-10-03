@@ -17,6 +17,7 @@
 #define PIPER_EXPORT
 #include "Interface/Infrastructure/Allocator.hpp"
 #include "Interface/Infrastructure/Concurrency.hpp"
+#include "Interface/Infrastructure/ErrorHandler.hpp"
 #include "Interface/Infrastructure/FileSystem.hpp"
 #include "Interface/Infrastructure/Logger.hpp"
 #include "Interface/Infrastructure/Module.hpp"
@@ -41,7 +42,7 @@
 #include <shared_mutex>
 
 #ifdef PIPER_WIN32
-#define NOMAXMIN
+#define NOMINMAX
 #include <Windows.h>
 #endif
 
@@ -51,14 +52,14 @@ namespace fs = std::filesystem;
 void* allocMemory(std::size_t alignment, std::size_t size) {
     return _aligned_malloc(size, alignment);
 }
-void freeMemory(void* ptr) {
+void freeMemory(void* ptr) noexcept {
     _aligned_free(ptr);
 }
 #else
 void* allocMemory(std::size_t alignment, std::size_t size) {
     return std::aligned_malloc(alignment, size);
 }
-void freeMemory(void* ptr) {
+void freeMemory(void* ptr) noexcept {
     free(ptr);
 }
 #endif
@@ -68,6 +69,10 @@ PIPER_API int EA::StdC::Vsnprintf(char* EA_RESTRICT pDestination, size_t n, cons
 }
 
 namespace Piper {
+    StageGuard::~StageGuard() noexcept {
+        mHandler.exitStage();
+    }
+    // TODO:flags
     void* STLAllocator::allocate(size_t n, int flags) {
         return reinterpret_cast<void*>(mAllocator->alloc(n));
     }
@@ -76,7 +81,7 @@ namespace Piper {
             throw;
         return reinterpret_cast<void*>(mAllocator->alloc(n, alignment));
     }
-    void STLAllocator::deallocate(void* p, size_t) {
+    void STLAllocator::deallocate(void* p, size_t) noexcept {
         mAllocator->free(reinterpret_cast<Ptr>(p));
     }
 
@@ -93,9 +98,12 @@ namespace Piper {
         }
         Ptr alloc(const size_t size, const size_t align) override {
             static_assert(sizeof(Ptr) == sizeof(void*));
-            return reinterpret_cast<Ptr>(allocMemory(align, size));
+            auto res = reinterpret_cast<Ptr>(allocMemory(align, size));
+            if(res == 0)
+                throw;  // TODO:bad_alloc
+            return res;
         }
-        void free(const Ptr ptr) override {
+        void free(const Ptr ptr) noexcept override {
             freeMemory(reinterpret_cast<void*>(ptr));
         }
     };
@@ -265,15 +273,23 @@ namespace Piper {
             : ModuleLoader(context), mModules(context.getAllocator()), mHandles(STLAllocator{ context.getAllocator() }) {}
         Future<void> loadModule(const SharedObject<Config>& packageDesc, const StringView& descPath) override {
             auto&& info = packageDesc->viewAsObject();
-            auto iter = info.find(String("Path", context().getAllocator()));
+            auto iter = info.find(String("Name", context().getAllocator()));
+            if(iter == info.cend())
+                throw;
+            auto name = iter->second->get<String>();
+
+            {
+                std::shared_lock guard{ mMutex };
+                if(mModules.count(name))
+                    return context().getScheduler().ready();
+            }
+
+            iter = info.find(String("Path", context().getAllocator()));
             if(iter == info.cend())
                 throw;
             auto base = String(descPath, context().getAllocator()) + "/";
             auto path = iter->second->get<String>();
-            iter = info.find(String("Name", context().getAllocator()));
-            if(iter == info.cend())
-                throw;
-            auto name = iter->second->get<String>();
+
             iter = info.find("Dependencies");
             Vector<String> deps(context().getAllocator());
             if(iter != info.cend()) {
@@ -281,9 +297,10 @@ namespace Piper {
                     deps.push_back(dep->get<String>());
             }
             // TODO:filesystem
-            // TODO:multi load
+
             return context().getScheduler().spawn([this, base, name, path, deps] {
-            // TODO:checksum/utf-8/module dependices/packageDesc provider
+            // TODO:checksum:blake2sp
+            // TODO:module dependices/packageDesc provider
 #ifdef PIPER_WIN32
                 constexpr auto extension = ".dll";
 #endif  // PIPER_WIN32
@@ -324,7 +341,7 @@ namespace Piper {
         Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
                                                  const Future<void>& module) override {
             std::shared_lock<std::shared_mutex> guard{ mMutex };
-            // TODO:lazy load
+            // TODO:lazy load use packageDesc provider
             const auto pos = classID.find_last_of('.');
             const auto iter = mModules.find(String(classID.substr(0, pos), context().getAllocator()));
             if(iter == mModules.cend())
@@ -422,7 +439,6 @@ namespace Piper {
         }
     };
 
-    // TODO:File RWLock
     struct FileHandleCloser {
         void operator()(void* handle) const {
 #ifdef PIPER_WIN32
@@ -445,6 +461,8 @@ namespace Piper {
     private:
         SharedPtr<void> mHandle;
         size_t mSize, mCurrent;
+        std::mutex mMutex;
+        static constexpr DWORD readUnit = 4095U << 20U;
 
     public:
         // TODO:Async SetFileIoOverlappedrange
@@ -453,31 +471,45 @@ namespace Piper {
         size_t size() const noexcept override {
             return mSize;
         }
-        Future<Vector<std::byte>> read(const size_t offset, const size_t size) const override {
-            return context().getScheduler().spawn([offset, size, context = &context(), handle = mHandle] {
+        Future<Vector<std::byte>> read(const size_t offset, const size_t size) override {
+            // TODO:ownership
+            return context().getScheduler().spawn([offset, size, context = &context(), handle = mHandle, this] {
                 Vector<std::byte> data(size, context->getAllocator());
-                throw;
-                // TODO: thread safety
-                // SetFilePointer(handle.get(),offset );
-                // TODO:read big data
-                auto res = ReadFile(handle.get(), data.data(), static_cast<DWORD>(size), nullptr, nullptr);
-                if(!res)
-                    raiseWin32Error();
+                auto low = static_cast<LONG>(offset), high = static_cast<LONG>(offset >> 32);
+                {
+                    std::lock_guard guard{ mMutex };
+                    size_t readCount = 0;
+                    SetFilePointer(handle.get(), low, &high, FILE_BEGIN);
+                    while(readCount != size) {
+                        DWORD needRead = static_cast<DWORD>((size - readCount) % readUnit), read = 0;
+                        auto res = ReadFile(handle.get(), data.data(), needRead, &read, nullptr);
+                        if(!res || needRead != read)
+                            raiseWin32Error();
+                        readCount += needRead;
+                    }
+                }
                 return data;
             });
         }
-        Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) const override {
+        Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) override {
             return context().getScheduler().spawn(
-                [offset, context = &context(), handle = mHandle](const Future<Vector<std::byte>>& span) {
-                    throw;
-                    // thread safety
-                    // SetFilePointer(handle.get(),offset );
-                    // TODO:write big data
-                    auto res =
-                        WriteFile(handle.get(), span.get().data(), static_cast<DWORD>(span.get().size()), nullptr, nullptr);
-                    if(!res)
-                        raiseWin32Error();
-                    // TODO:update size
+                [offset, context = &context(), handle = mHandle, this](const Future<Vector<std::byte>>& span) {
+                    auto& data = span.get();
+                    auto size = data.size();
+                    auto low = static_cast<LONG>(offset), high = static_cast<LONG>(offset >> 32);
+                    {
+                        std::lock_guard guard{ mMutex };
+                        size_t writeCount = 0;
+                        SetFilePointer(handle.get(), low, &high, FILE_BEGIN);
+                        while(writeCount != size) {
+                            DWORD needWrite = static_cast<DWORD>((size - writeCount) % readUnit), write = 0;
+                            auto res = WriteFile(handle.get(), data.data(), needWrite, &write, nullptr);
+                            if(!res || needWrite != write)
+                                raiseWin32Error();
+                            writeCount += needWrite;
+                        }
+                        mSize = std::max(mSize, offset + size);
+                    }
                 },
                 data);
         }
@@ -675,6 +707,6 @@ namespace Piper {
 PIPER_API Piper::PiperContextOwner* piperCreateContext() {
     return new Piper::PiperContextImpl();
 }
-PIPER_API void piperDestoryContext(Piper::PiperContextOwner* context) {
+PIPER_API void piperDestroyContext(Piper::PiperContextOwner* context) {
     delete context;
 }

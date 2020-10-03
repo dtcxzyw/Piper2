@@ -40,7 +40,7 @@ namespace Piper {
         PiperContext& context() const noexcept {
             return mContext;
         }
-        virtual ~Object() = 0 {}
+        virtual ~Object() = default;
     };
 
 #define PIPER_INTERFACE_CONSTRUCT(NAME, FATHER) \

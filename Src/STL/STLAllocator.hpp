@@ -19,7 +19,7 @@
 #include "../PiperAPI.hpp"
 #define EASTL_USER_DEFINED_ALLOCATOR
 #define EASTLAllocatorType Piper::STLAllocator
-//TODO:throw exception
+// TODO:throw exception
 #define EASTLAllocatorDefault() nullptr
 #include "GSL.hpp"
 #include <eastl/internal/config.h>
@@ -39,10 +39,10 @@ namespace Piper {
 
         void* allocate(size_t n, int flags = 0);
         void* allocate(size_t n, size_t alignment, size_t offset, int flags = 0);
-        void deallocate(void* p, size_t n);
+        void deallocate(void* p, size_t n) noexcept;
 
         const char* get_name() const noexcept {
-            return "Unknown Allocator";
+            return "Piper Allocator";
         }
         void set_name(const char*) noexcept {}
         bool operator!=(const STLAllocator& rhs) const noexcept {

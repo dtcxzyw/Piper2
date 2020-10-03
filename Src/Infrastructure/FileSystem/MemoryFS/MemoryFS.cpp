@@ -81,12 +81,12 @@ namespace Piper {
         size_t size() const noexcept override {
             return mData.size();
         }
-        Future<Vector<std::byte>> read(const size_t offset, const size_t size) const override {
+        Future<Vector<std::byte>> read(const size_t offset, const size_t size) override {
             if(mAccess != FileAccessMode::Read)
                 throw;
             return context().getScheduler().value(Vector<std::byte>(mData.cbegin() + offset, mData.cbegin() + offset + size));
         }
-        Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) const override {
+        Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) override {
             if(mAccess != FileAccessMode::Write)
                 throw;
             return context().getScheduler().spawn(

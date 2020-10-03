@@ -112,7 +112,7 @@ namespace Piper {
     class ConfigSerializer : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(ConfigSerializer, Object);
-        virtual ~ConfigSerializer() = 0 {}
+        virtual ~ConfigSerializer() = default;
         virtual SharedObject<Config> deserialize(const StringView& path) const = 0;
         virtual void serialize(const SharedObject<Config>& config, const StringView& path) const = 0;
     };

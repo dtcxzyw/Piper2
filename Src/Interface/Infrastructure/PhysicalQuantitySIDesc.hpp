@@ -32,7 +32,7 @@ namespace Piper {
     class UnitManager : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(UnitManager, Object);
-        virtual ~UnitManager() = 0 {}
+        virtual ~UnitManager() = default;
         virtual void addTranslation(const PhysicalQuantitySIDesc& desc, const StringView& name) = 0;  // prefixPower==0
         virtual String serialize(const PhysicalQuantitySIDesc& desc, const bool forceUseSIUnit) const = 0;
         virtual PhysicalQuantitySIDesc deserialize(const StringView& name) const = 0;

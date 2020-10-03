@@ -33,3 +33,9 @@
 #else
 #error "Unsupported Platform"
 #endif
+
+#if defined(_MSC_VER)
+#define PIPER_ABI "MSVC"
+#else
+#error "Unsupported ABI"
+#endif

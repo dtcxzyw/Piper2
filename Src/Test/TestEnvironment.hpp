@@ -22,7 +22,7 @@
 
 struct ContextDeleter {
     void operator()(Piper::PiperContextOwner* ptr) const {
-        piperDestoryContext(ptr);
+        piperDestroyContext(ptr);
     }
 };
 

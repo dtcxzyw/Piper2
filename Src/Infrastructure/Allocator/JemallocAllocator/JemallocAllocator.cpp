@@ -16,10 +16,10 @@
 
 #define PIPER_EXPORT
 #include "../../../Interface/Infrastructure/Allocator.hpp"
-#include "../../../STL/UniquePtr.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
+#include "../../../STL/UniquePtr.hpp"
 #include <jemalloc/jemalloc.h>
 #include <new>
 
@@ -30,7 +30,7 @@ namespace Piper {
         Ptr alloc(const size_t size, const size_t align = 8) override {
             return reinterpret_cast<Ptr>(je_aligned_alloc(align, size));
         }
-        void free(const Ptr ptr) override {
+        void free(const Ptr ptr) noexcept override {
             je_free(reinterpret_cast<void*>(ptr));
         }
         ContextHandle getContextHandle() const {

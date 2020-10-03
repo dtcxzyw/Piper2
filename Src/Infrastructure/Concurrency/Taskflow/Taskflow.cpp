@@ -37,19 +37,16 @@ namespace Piper {
     class FutureStorage final : public FutureImpl {
     private:
         void* mPtr;
+        Optional<FutureContext> mFuture;
         ContextHandle mHandle;
 
-        Optional<FutureContext> mFuture;
-
-        void* alloc(PiperContext& context, const size_t size) {
-            if(size)
-                return reinterpret_cast<void*>(context.getAllocator().alloc(size));
-            return nullptr;
+        void* alloc(const size_t size) const {
+            return size ? reinterpret_cast<void*>(context().getAllocator().alloc(size)) : nullptr;
         }
 
     public:
         FutureStorage(PiperContext& context, const size_t size, const bool ready, const ContextHandle handle)
-            : FutureImpl(context), mPtr(alloc(context, size)), mFuture(eastl::nullopt), mHandle(handle) {
+            : FutureImpl(context), mPtr(alloc(size)), mFuture(eastl::nullopt), mHandle(handle) {
             if(!ready)
                 mFuture.emplace();
         }

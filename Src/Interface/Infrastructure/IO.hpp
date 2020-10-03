@@ -25,11 +25,11 @@ namespace Piper {
     class Stream : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Stream, Object)
-        virtual ~Stream() = 0 {}
+        virtual ~Stream() = default;
         virtual size_t size() const noexcept = 0;
         // TODO:FutureSequence/reduce copy
-        virtual Future<Vector<std::byte>> read(const size_t offset, const size_t size) const = 0;
-        virtual Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) const = 0;
+        virtual Future<Vector<std::byte>> read(const size_t offset, const size_t size) = 0;
+        virtual Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) = 0;
     };
 
     class MappedSpan : public Object {

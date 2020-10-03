@@ -41,6 +41,6 @@ namespace Piper {
     class Accelerator : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(Accelerator, ContextResource)
-        virtual ~Accelerator() = 0 {}
+        virtual ~Accelerator() = default;
     };
 }  // namespace Piper
