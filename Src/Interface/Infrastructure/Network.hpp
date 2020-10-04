@@ -21,9 +21,10 @@ namespace Piper {
         uint64_t low;
         uint64_t high;
     };
+    // TODO:TransmitFile
     class Network : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Network, Object);
-        virtual ~Network() = 0{}
+        virtual ~Network() = default;
     };
 }  // namespace Piper

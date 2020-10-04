@@ -37,6 +37,7 @@ namespace Piper {
         virtual ~ErrorHandler() = default;
 
         // for coding error
+        // TODO:error information
         enum class CheckLevel {
             InterfaceArgument = 1,  // caller
             RightSideEffect = 2,    // callee

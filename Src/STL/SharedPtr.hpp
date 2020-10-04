@@ -22,9 +22,18 @@ namespace Piper {
     template <typename T>
     using SharedPtr = eastl::shared_ptr<T>;
 
+    template <typename T>
+    struct DefaultDeleter final {
+        STLAllocator allocator;
+        void operator()(T* ptr) noexcept {
+            ptr->~T();
+            allocator.deallocate(ptr, sizeof(T));
+        }
+    };
+
     // TODO:make_shared
-    template <typename T, typename Deleter, typename... Args>
-    SharedPtr<T> makeSharedPtr(STLAllocator allocator, Deleter&& deleter, Args&&... args) {
+    template <typename T, typename... Args>
+    SharedPtr<T> makeSharedPtr(STLAllocator allocator, Args&&... args) {
         auto ptr = reinterpret_cast<T*>(allocator.allocate(sizeof(T)));
         try {
             new(ptr) T(std::forward<Args>(args)...);
@@ -32,6 +41,6 @@ namespace Piper {
             allocator.deallocate(ptr, sizeof(T));
             throw;
         }
-        return SharedPtr<T>(ptr, std::forward<Deleter>(deleter), allocator);
+        return SharedPtr<T>(ptr, DefaultDeleter<T>{ allocator }, allocator);
     }
 }  // namespace Piper

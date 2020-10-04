@@ -31,14 +31,12 @@ namespace Piper {
     struct FutureContext {
         tf::Taskflow flow;
         std::future<void> future;
-        std::once_flag flag;
     };
 
     class FutureStorage final : public FutureImpl {
     private:
         void* mPtr;
         Optional<FutureContext> mFuture;
-        ContextHandle mHandle;
 
         void* alloc(const size_t size) const {
             return size ? reinterpret_cast<void*>(context().getAllocator().alloc(size)) : nullptr;
@@ -46,16 +44,12 @@ namespace Piper {
 
     public:
         FutureStorage(PiperContext& context, const size_t size, const bool ready, const ContextHandle handle)
-            : FutureImpl(context), mPtr(alloc(size)), mFuture(eastl::nullopt), mHandle(handle) {
+            : FutureImpl(context), mPtr(alloc(size)), mFuture(eastl::nullopt) {
             if(!ready)
                 mFuture.emplace();
         }
         FutureContext& getFutureContext() {
             return mFuture.value();
-        }
-        void precede(tf::Taskflow& flow, tf::Task& task) {
-            if(mFuture.has_value())
-                flow.composed_of(mFuture.value().flow).precede(task);
         }
         bool ready() const noexcept override {
             return !mFuture.has_value() || mFuture.value().future.wait_for(0ns) == std::future_status::ready;
@@ -66,41 +60,41 @@ namespace Piper {
                 mFuture.value().future.wait();
         }
 
-        void* storage() const override {
+        const void* storage() const override {
             return mPtr;
         }
-
-        ContextHandle getContextHandle() const override {
-            return mHandle;
-        }
     };
+    static auto genCheck(const SharedObject<FutureImpl>& impl) -> Function<void, tf::Subflow&> {
+        return [impl](tf::Subflow& flow) {
+            if(!impl->ready())
+                flow.emplace(genCheck(impl));
+        };
+    };
+
     class SchedulerTaskflow final : public Scheduler {
     private:
         tf::Executor mExecutor;
 
     public:
-        PIPER_INTERFACE_CONSTRUCT(SchedulerTaskflow, Scheduler)
-        void spawnImpl(const Function<void>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        explicit SchedulerTaskflow(PiperContext& context)
+            : Scheduler(context), mExecutor(std::thread::hardware_concurrency()) {}  // TODO:thread num from config
+        void spawnImpl(Function<void>&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                        const SharedObject<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
-            auto task = ctx.flow.emplace([flag = &ctx.flag, func] { std::call_once(*flag, func); });
+            auto task = ctx.flow.emplace(std::move(func));
             for(auto&& dep : dependencies) {
-                if(getContextHandle() == dep->getContextHandle())
-                    dynamic_cast<FutureStorage*>(dep.get())->precede(ctx.flow, task);
-                else
-                    ctx.flow.emplace([dep] { dep->wait(); }).precede(task);
+                if(!dep || dep->ready())
+                    continue;
+
+                ctx.flow.emplace(genCheck(dep)).precede(task);
             }
             ctx.future = mExecutor.run(ctx.flow);
         }
         SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) override {
             return makeSharedObject<FutureStorage>(context(), size, ready, reinterpret_cast<ContextHandle>(this));
         }
-        void yield() noexcept override {}
         void waitAll() noexcept override {
             mExecutor.wait_for_all();
-        }
-        ContextHandle getContextHandle() const override {
-            return reinterpret_cast<ContextHandle>(this);
         }
     };
     class ModuleImpl final : public Module {

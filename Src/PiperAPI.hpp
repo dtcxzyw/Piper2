@@ -28,14 +28,12 @@
 #endif
 #endif
 
-#ifdef _WIN32
-#define PIPER_WIN32
-#else
-#error "Unsupported Platform"
-#endif
+#define PIPER_INTERFACE "0"
 
 #if defined(_MSC_VER)
 #define PIPER_ABI "MSVC"
 #else
 #error "Unsupported ABI"
 #endif
+
+#define PIPER_STL "EASTL"

@@ -23,13 +23,13 @@ namespace Piper {
     template <typename T>
     class DataView;
 
-    class FutureImpl : public ContextResource {
+    class FutureImpl : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(FutureImpl, ContextResource)
+        PIPER_INTERFACE_CONSTRUCT(FutureImpl, Object)
         virtual ~FutureImpl() = default;
         virtual bool ready() const noexcept = 0;
         virtual void wait() const = 0;
-        virtual void* storage() const = 0;
+        virtual const void* storage() const = 0;
     };
 
     template <typename T>
@@ -48,13 +48,21 @@ namespace Piper {
         void wait() const {
             return mImpl->wait();
         }
-        T& get() {
+        const T& get() const& {
             mImpl->wait();
-            return *reinterpret_cast<T*>(mImpl->storage());
+            return *reinterpret_cast<const T*>(mImpl->storage());
         }
-        const T& get() const {
+        const T& get() const&& {
             mImpl->wait();
-            return *reinterpret_cast<T*>(mImpl->storage());
+            return *reinterpret_cast<const T*>(mImpl->storage());
+        }
+        T& get() & {
+            mImpl->wait();
+            return *reinterpret_cast<T*>(const_cast<void*>(mImpl->storage()));
+        }
+        T&& get() && {
+            mImpl->wait();
+            return std::move(*reinterpret_cast<T*>(const_cast<void*>(mImpl->storage())));
         }
     };
 
@@ -69,10 +77,11 @@ namespace Piper {
             return mImpl;
         }
         bool ready() const noexcept {
-            return mImpl->ready();
+            return !mImpl || mImpl->ready();
         }
         void wait() const {
-            return mImpl->wait();
+            if(mImpl)
+                return mImpl->wait();
         }
     };
 
@@ -106,67 +115,76 @@ namespace Piper {
         };
         */
 
-    // TODO:this_thread_scheduler::yield
-    class Scheduler : public ContextResource {
+    class Scheduler : public Object {
     protected:
-        virtual void spawnImpl(const Function<void>& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        virtual void spawnImpl(Function<void>&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                                const SharedObject<FutureImpl>& res) = 0;
         virtual SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) = 0;
 
         template <typename ReturnType, typename Callable, typename... Args>
-        auto spawnDispatch(std::enable_if_t<std::is_void_v<ReturnType>>*, Callable&& callable, const Future<Args>&... args) {
+        auto spawnDispatch(std::enable_if_t<std::is_void_v<ReturnType>>*, Callable&& callable, Args&&... args) {
             auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
-            auto tuple = std::make_tuple(args...);
-            spawnImpl(Function<void>([call = std::forward<Callable>(callable), tuple] { std::apply(call, tuple); }), depSpan,
-                      result);
-
-            return Future<ReturnType>(result);
-        }
-
-        template <typename ReturnType, typename Callable, typename... Args>
-        auto spawnDispatch(std::enable_if_t<!std::is_void_v<ReturnType>>*, Callable&& callable, const Future<Args>&... args) {
-            auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
-            auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
-            auto result = newFutureImpl(sizeof(ReturnType), false);
-            auto tuple = std::make_tuple(args...);
-
-            spawnImpl(Function<void>([call = std::forward<Callable>(callable), tuple, ptr = result->storage()] {
-                          new(reinterpret_cast<ReturnType*>(ptr)) ReturnType(std::move(std::apply(call, tuple)));
-                      }),
+            spawnImpl(Function<void>(
+                          [call = std::forward<Callable>(callable),
+                           tuple = std::forward_as_tuple<Args...>(std::forward<Args>(args)...)] { std::apply(call, tuple); }),
                       depSpan, result);
 
             return Future<ReturnType>(result);
         }
 
+        template <typename ReturnType, typename Callable, typename... Args>
+        auto spawnDispatch(std::enable_if_t<!std::is_void_v<ReturnType>>*, Callable&& callable, Args&&... args) {
+            auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
+            auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
+            auto result = newFutureImpl(sizeof(ReturnType), false);
+
+            spawnImpl(
+                Function<void>([call = std::forward<Callable>(callable),
+                                tuple = std::forward_as_tuple<Args...>(std::forward<Args>(args)...), ptr = result->storage()] {
+                    new(reinterpret_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(std::apply(call, tuple));
+                }),
+                depSpan, result);
+
+            return Future<ReturnType>(result);
+        }
+
+        template <typename... T>
+        struct FutureChecker {
+            static constexpr bool value = false;
+        };
+
+        template <typename... T>
+        struct FutureChecker<Future<T>...> {
+            static constexpr bool value = true;
+        };
+
     public:
-        PIPER_INTERFACE_CONSTRUCT(Scheduler, ContextResource)
+        PIPER_INTERFACE_CONSTRUCT(Scheduler, Object)
         virtual ~Scheduler() = default;
 
-        // TODO:move
         template <typename T>
-        auto value(const T& value) {
-            auto res = newFutureImpl(sizeof(T), true);
-            new(static_cast<T*>(res->storage())) T(value);
-            return Future<T>{ res };
+        auto value(T&& value) {
+            using StorageType = std::decay_t<T>;
+            auto res = newFutureImpl(sizeof(StorageType), true);
+            new(static_cast<StorageType*>(const_cast<void*>(res->storage()))) StorageType(std::forward<T>(value));
+            return Future<StorageType>{ res };
         }
 
-        // TODO:zero allocation
         Future<void> ready() {
-            auto res = newFutureImpl(0, true);
-            return Future<void>(res);
+            return Future<void>(nullptr);
         }
 
-        template <typename Callable, typename... Args>
-        auto spawn(Callable&& callable, const Future<Args>&... args) {
+        template <typename Callable, typename... Args, typename = std::enable_if_t<FutureChecker<std::decay_t<Args>...>::value>>
+        auto spawn(Callable&& callable, Args&&... args) {
             using ReturnType = std::invoke_result_t<Callable, decltype(args)...>;
-            return spawnDispatch<ReturnType, Callable, Args...>(nullptr, std::forward<Callable>(callable), args...);
+            return spawnDispatch<ReturnType, Callable, Args...>(nullptr, std::forward<Callable>(callable),
+                                                                std::forward<Args>(args)...);
         }
 
-        virtual void yield() noexcept = 0;  // TODO:Coroutine
+        virtual void notify(FutureImpl* event) noexcept {}
         virtual void waitAll() noexcept = 0;
-        // virtual size_t getCurrentTaskID() const noexcept = 0;
 
         // parallel_for
         // reduce

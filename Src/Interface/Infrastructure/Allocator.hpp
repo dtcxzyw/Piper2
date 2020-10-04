@@ -38,6 +38,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Allocator, ContextResource)
         // TODO:hardware_constructive_interference_size
+        // http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0154r1.html
         virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
         virtual void free(const Ptr ptr) noexcept = 0;
         virtual ~Allocator() = default;

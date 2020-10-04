@@ -42,16 +42,20 @@ namespace Piper {
     };
 }  // namespace Piper
 
-#define PIPER_INIT_MODULE_IMPL(CLASS)                                                                                 \
-    extern "C" PIPER_API Piper::Module* initModule(Piper::PiperContext& context, Piper::Allocator& allocator) {       \
-        struct Deleter {                                                                                              \
-            Piper::Allocator& allocator;                                                                              \
-            void operator()(CLASS* ptr) const {                                                                       \
-                allocator.free(reinterpret_cast<Piper::Ptr>(ptr));                                                    \
-            }                                                                                                         \
-        };                                                                                                            \
-        Piper::UniquePtr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))), \
-                                                Deleter{ allocator } };                                               \
-        new(ptr.get()) CLASS(context);                                                                                \
-        return ptr.release();                                                                                         \
-    }\
+#define PIPER_INIT_MODULE_IMPL(CLASS)                                                                                \
+    extern "C" PIPER_API Piper::Module* piperInitModule(Piper::PiperContext& context, Piper::Allocator& allocator) { \
+        struct Deleter {                                                                                             \
+            Piper::Allocator& allocator;                                                                             \
+            void operator()(CLASS* ptr) const {                                                                      \
+                allocator.free(reinterpret_cast<Piper::Ptr>(ptr));                                                   \
+            }                                                                                                        \
+        };                                                                                                           \
+        Piper::UniquePtr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))),           \
+                                                 Deleter{ allocator } };                                             \
+        new(ptr.get()) CLASS(context);                                                                               \
+        return ptr.release();                                                                                        \
+    }                                                                                                                \
+    extern "C" PIPER_API const char* piperGetCompatibilityFeature() {                                                \
+        return PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;                                                          \
+    }                                                                                                                \
+    \

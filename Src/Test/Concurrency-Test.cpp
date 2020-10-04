@@ -50,7 +50,41 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
     ASSERT_EQ(count, 1);
     // exception
 
-    // zero-copy
+    // zero-copy+initialize once
+    // compilation time
+    /*
+    {
+        struct UncopyValue final {
+            size_t value;
+            explicit UncopyValue(size_t val) : value(val) {}
+            UncopyValue(const UncopyValue& rhs) = delete;
+            UncopyValue& operator=(const UncopyValue& rhs) = delete;
+        };
+        UncopyValue val{ 5 };
+        auto trans = context.getScheduler().spawn([](Piper::Future<UncopyValue>&& x) { return std::move(x).get(); },
+                                                  context.getScheduler().value(val));
+        ASSERT_EQ(trans.get().value, 5);
+    }
+    */
+    // runtime
+    {
+        struct CopyCount final {
+            size_t copyCount;
+            CopyCount() : copyCount(0) {}
+            CopyCount(const CopyCount& rhs) : copyCount(rhs.copyCount + 1) {}
+            CopyCount& operator=(const CopyCount&) {
+                throw;
+            }
+            CopyCount(CopyCount&& rhs) = default;
+            CopyCount& operator=(CopyCount&&) = default;
+        };
+        CopyCount val;
+        auto trans = context.getScheduler().spawn([](Piper::Future<CopyCount>& x) { return std::move(x).get(); },
+                                                  context.getScheduler().value(std::move(val)));
+        ASSERT_EQ(trans.get().copyCount, 0);
+    }
+    // event
+    // event+notify
 }
 
 TEST_F(PiperCoreEnvironment, Taskflow) {

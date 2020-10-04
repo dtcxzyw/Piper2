@@ -21,7 +21,7 @@ namespace Piper {
     class FloatingPointLibrary : public Object {
     public:
         enum class Flag { TraceException = 1, TraceError = 2, HighestSupportedPrecise = 4 };
-        enum class Instruction { Float16, Float32, Float64, Common };
+        enum class Instruction { Float16,BFloat16, Float32, Float64, Common };
         PIPER_INTERFACE_CONSTRUCT(FloatingPointLibrary, Object)
         virtual void traceError(bool trace) = 0;
         virtual void setFlag(Flag flag) = 0;
