@@ -378,7 +378,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(SchedulerImpl, Scheduler)
 
-        void spawnImpl(Function<void>&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        void spawnImpl(Closure&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                        const SharedObject<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
                 if(dep)

@@ -27,7 +27,7 @@ namespace Piper {
         STLAllocator allocator;
         void operator()(T* ptr) noexcept {
             ptr->~T();
-            allocator.deallocate(ptr, sizeof(T));
+            allocator.deallocate(ptr, 0);
         }
     };
 

@@ -15,13 +15,16 @@
 */
 
 #pragma once
+#include "../../PiperContext.hpp"
 #include "../../STL/Function.hpp"
-#include "../ContextResource.hpp"
+#include "../../STL/UniquePtr.hpp"
+#include <future>
 
 namespace Piper {
-    class DataSpan;
-    template <typename T>
-    class DataView;
+
+    // class DataSpan;
+    // template <typename T>
+    // class DataView;
 
     class FutureImpl : public Object {
     public:
@@ -39,7 +42,9 @@ namespace Piper {
 
     public:
         explicit Future(const SharedObject<FutureImpl>& impl) noexcept : mImpl(impl) {}
-        SharedObject<FutureImpl> raw() const {
+        explicit Future(SharedObject<FutureImpl>&& impl) noexcept : mImpl(std::move(impl)) {}
+
+        const SharedObject<FutureImpl>& raw() const {
             return mImpl;
         }
         bool ready() const noexcept {
@@ -73,7 +78,9 @@ namespace Piper {
 
     public:
         explicit Future(const SharedObject<FutureImpl>& impl) noexcept : mImpl(impl) {}
-        SharedObject<FutureImpl> raw() const {
+        explicit Future(SharedObject<FutureImpl>&& impl) noexcept : mImpl(std::move(impl)) {}
+
+        const SharedObject<FutureImpl>& raw() const {
             return mImpl;
         }
         bool ready() const noexcept {
@@ -115,20 +122,77 @@ namespace Piper {
         };
         */
 
+    class ClosureStorage : public Unmovable {
+    public:
+        virtual ~ClosureStorage() = default;
+        virtual void apply() = 0;
+    };
+    template <typename Callable>
+    class ClosureStorageImpl : public ClosureStorage {
+    private:
+        Callable mFunc;
+
+    public:
+        explicit ClosureStorageImpl(Callable&& func) : mFunc(std::move(func)) {}
+        void apply() override {
+            mFunc();
+        }
+    };
+    class Closure final {
+    private:
+        UniquePtr<ClosureStorage> mFunc;
+
+        template <typename Callable>
+        Owner<ClosureStorage*> alloc(STLAllocator allocator, Callable&& func) {
+            auto ptr = reinterpret_cast<ClosureStorageImpl<Callable>*>(allocator.allocate(sizeof(ClosureStorageImpl<Callable>)));
+            return new(ptr) ClosureStorageImpl<Callable>(std::move(func));
+        }
+
+    public:
+        Closure() = delete;
+        template <typename Callable>
+        Closure(STLAllocator allocator, Callable&& func)
+            : mFunc(alloc<Callable>(allocator, std::move(func)), DefaultDeleter<ClosureStorage>{ allocator }) {}
+        Closure(const Closure& rhs) : mFunc(std::move(const_cast<UniquePtr<ClosureStorage>&>(rhs.mFunc))) {}
+        void operator()() {
+            if(mFunc) {
+                mFunc->apply();
+                mFunc.reset();
+            } else
+                throw;
+        }
+    };
+
+    namespace detail {
+        template <class Callable, class Tuple, size_t... Indices>
+        constexpr decltype(auto) moveApplyImpl(Callable&& func, Tuple&& args, std::index_sequence<Indices...>) {
+            return std::invoke(std::forward<Callable>(func), std::move(std::get<Indices>(std::forward<Tuple>(args)))...);
+        }
+
+        template <class Callable, class Tuple>
+        constexpr decltype(auto) moveApply(Callable&& func, Tuple&& args) {
+            return moveApplyImpl(std::forward<Callable>(func), std::forward<Tuple>(args),
+                                 std::make_index_sequence<std::tuple_size_v<std::decay_t<Tuple>>>{});
+        }
+    }  // namespace detail
+
     class Scheduler : public Object {
     protected:
-        virtual void spawnImpl(Function<void>&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        virtual void spawnImpl(Closure&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                                const SharedObject<FutureImpl>& res) = 0;
         virtual SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) = 0;
 
+        // TODO:zero argument optimization
         template <typename ReturnType, typename Callable, typename... Args>
         auto spawnDispatch(std::enable_if_t<std::is_void_v<ReturnType>>*, Callable&& callable, Args&&... args) {
             auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
-            spawnImpl(Function<void>(
-                          [call = std::forward<Callable>(callable),
-                           tuple = std::forward_as_tuple<Args...>(std::forward<Args>(args)...)] { std::apply(call, tuple); }),
+            spawnImpl(Closure{ context().getAllocator(),
+                               [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)] {
+                                   detail::moveApply(std::move(call),
+                                                     std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)));
+                               } },
                       depSpan, result);
 
             return Future<ReturnType>(result);
@@ -140,12 +204,13 @@ namespace Piper {
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(sizeof(ReturnType), false);
 
-            spawnImpl(
-                Function<void>([call = std::forward<Callable>(callable),
-                                tuple = std::forward_as_tuple<Args...>(std::forward<Args>(args)...), ptr = result->storage()] {
-                    new(reinterpret_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(std::apply(call, tuple));
-                }),
-                depSpan, result);
+            spawnImpl(Closure{ context().getAllocator(),
+                               [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
+                                ptr = result->storage()] {
+                                   new(reinterpret_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(detail::moveApply(
+                                       std::move(call), std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple))));
+                               } },
+                      depSpan, result);
 
             return Future<ReturnType>(result);
         }
@@ -169,7 +234,7 @@ namespace Piper {
             using StorageType = std::decay_t<T>;
             auto res = newFutureImpl(sizeof(StorageType), true);
             new(static_cast<StorageType*>(const_cast<void*>(res->storage()))) StorageType(std::forward<T>(value));
-            return Future<StorageType>{ res };
+            return Future<StorageType>{ std::move(res) };
         }
 
         Future<void> ready() {
@@ -178,9 +243,9 @@ namespace Piper {
 
         template <typename Callable, typename... Args, typename = std::enable_if_t<FutureChecker<std::decay_t<Args>...>::value>>
         auto spawn(Callable&& callable, Args&&... args) {
-            using ReturnType = std::invoke_result_t<Callable, decltype(args)...>;
-            return spawnDispatch<ReturnType, Callable, Args...>(nullptr, std::forward<Callable>(callable),
-                                                                std::forward<Args>(args)...);
+            using ReturnType = std::invoke_result_t<std::decay_t<Callable>, std::decay_t<Args>...>;
+            // TODO:move SFINAE to return type
+            return spawnDispatch<ReturnType>(nullptr, std::forward<Callable>(callable), std::forward<Args>(args)...);
         }
 
         virtual void notify(FutureImpl* event) noexcept {}

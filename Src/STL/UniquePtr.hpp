@@ -19,11 +19,13 @@
 #include <EASTL/unique_ptr.h>
 
 namespace Piper {
-    template <typename T, typename Deleter>
+    template <typename T, typename Deleter = DefaultDeleter<T>>
     using UniquePtr = eastl::unique_ptr<T, Deleter>;
 
     template <typename T, typename... Args>
-    inline auto makeUniquePtr(Args&&... args) {
-        return unique_ptr<T>(alloc(T(eastl::forward<Args>(args)...)));
+    inline auto makeUniquePtr(STLAllocator allocator, Args&&... args) {
+        auto ptr = reinterpret_cast<T*>(allocator.allocate(sizeof(T)));
+        new(ptr) T(std::forward<Args>(args)...);
+        return UniquePtr<T>{ ptr, DefaultDeleter<T>{ allocator } };
     }
 }  // namespace Piper

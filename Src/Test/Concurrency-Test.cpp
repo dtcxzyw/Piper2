@@ -50,22 +50,21 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
     ASSERT_EQ(count, 1);
     // exception
 
-    // zero-copy+initialize once
+    // zero-copy
     // compilation time
-    /*
     {
-        struct UncopyValue final {
+        struct UncopyableValue final {
             size_t value;
-            explicit UncopyValue(size_t val) : value(val) {}
-            UncopyValue(const UncopyValue& rhs) = delete;
-            UncopyValue& operator=(const UncopyValue& rhs) = delete;
+            explicit UncopyableValue(size_t val) : value(val) {}
+            UncopyableValue(const UncopyableValue& rhs) = delete;
+            UncopyableValue& operator=(const UncopyableValue& rhs) = delete;
+            UncopyableValue(UncopyableValue&& rhs) = default;
+            UncopyableValue& operator=(UncopyableValue&& rhs) = delete;
         };
-        UncopyValue val{ 5 };
-        auto trans = context.getScheduler().spawn([](Piper::Future<UncopyValue>&& x) { return std::move(x).get(); },
-                                                  context.getScheduler().value(val));
+        auto trans = context.getScheduler().spawn([](Piper::Future<UncopyableValue>&& x) { return std::move(x.get()); },
+                                                  context.getScheduler().value(UncopyableValue{ 5 }));
         ASSERT_EQ(trans.get().value, 5);
     }
-    */
     // runtime
     {
         struct CopyCount final {
@@ -78,10 +77,18 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
             CopyCount(CopyCount&& rhs) = default;
             CopyCount& operator=(CopyCount&&) = default;
         };
-        CopyCount val;
-        auto trans = context.getScheduler().spawn([](Piper::Future<CopyCount>& x) { return std::move(x).get(); },
-                                                  context.getScheduler().value(std::move(val)));
+        auto trans = context.getScheduler().spawn([](Piper::Future<CopyCount>&& x) { return std::move(x.get()); },
+                                                  context.getScheduler().value(CopyCount{}));
         ASSERT_EQ(trans.get().copyCount, 0);
+    }
+    // ownership
+    {
+        auto src = std::make_unique<int>(5);
+        auto trans = context.getScheduler().spawn([](Piper::Future<std::unique_ptr<int32_t>>&& x) { return std::move(x.get()); },
+                                                  context.getScheduler().value(std::move(src)));
+        ASSERT_FALSE(src.get());
+        ASSERT_TRUE(trans.get().get());
+        ASSERT_EQ(*trans.get(), 5);
     }
     // event
     // event+notify

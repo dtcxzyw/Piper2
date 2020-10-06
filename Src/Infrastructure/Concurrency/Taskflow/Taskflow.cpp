@@ -64,12 +64,6 @@ namespace Piper {
             return mPtr;
         }
     };
-    static auto genCheck(const SharedObject<FutureImpl>& impl) -> Function<void, tf::Subflow&> {
-        return [impl](tf::Subflow& flow) {
-            if(!impl->ready())
-                flow.emplace(genCheck(impl));
-        };
-    };
 
     class SchedulerTaskflow final : public Scheduler {
     private:
@@ -78,15 +72,18 @@ namespace Piper {
     public:
         explicit SchedulerTaskflow(PiperContext& context)
             : Scheduler(context), mExecutor(std::thread::hardware_concurrency()) {}  // TODO:thread num from config
-        void spawnImpl(Function<void>&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        void spawnImpl(Closure&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
                        const SharedObject<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
+            auto src = ctx.flow.emplace([] {});
             auto task = ctx.flow.emplace(std::move(func));
             for(auto&& dep : dependencies) {
                 if(!dep || dep->ready())
                     continue;
 
-                ctx.flow.emplace(genCheck(dep)).precede(task);
+                auto cond = ctx.flow.emplace([dep] { return dep->ready(); });
+                cond.precede(cond, task);
+                src.precede(cond);
             }
             ctx.future = mExecutor.run(ctx.flow);
         }
