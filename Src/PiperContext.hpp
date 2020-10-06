@@ -25,6 +25,7 @@ namespace Piper {
     class FileSystem;
     class Allocator;
     class UnitManager;
+    class ErrorHandler;
 
     class PiperContext : private Unmovable {
     public:
@@ -34,6 +35,7 @@ namespace Piper {
         virtual FileSystem& getFileSystem() noexcept = 0;
         virtual Allocator& getAllocator() noexcept = 0;
         virtual UnitManager& getUnitManager() noexcept = 0;
+        virtual ErrorHandler& getErrorHandler() noexcept = 0;
         virtual ~PiperContext() = default;
     };
     class PiperContextOwner : public PiperContext {

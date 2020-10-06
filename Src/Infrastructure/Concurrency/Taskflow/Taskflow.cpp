@@ -21,7 +21,6 @@
 #include "../../../PiperContext.hpp"
 #include "../../../STL/Optional.hpp"
 #include "../../../STL/UniquePtr.hpp"
-#include <mutex>
 #include <new>
 #include <taskflow/taskflow.hpp>
 

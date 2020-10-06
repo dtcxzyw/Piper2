@@ -182,24 +182,38 @@ namespace Piper {
                                const SharedObject<FutureImpl>& res) = 0;
         virtual SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) = 0;
 
-        // TODO:zero argument optimization
+        template <typename... Args>
+        struct NoArgument final {
+            static constexpr bool value = false;
+        };
+
+        template <>
+        struct NoArgument<> final {
+            static constexpr bool value = true;
+        };
+
         template <typename ReturnType, typename Callable, typename... Args>
-        auto spawnDispatch(std::enable_if_t<std::is_void_v<ReturnType>>*, Callable&& callable, Args&&... args) {
+        std::enable_if_t<std::is_void_v<ReturnType>, Future<void>> spawnDispatch(Callable&& callable, Args&&... args) {
             auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
-            spawnImpl(Closure{ context().getAllocator(),
-                               [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)] {
-                                   detail::moveApply(std::move(call),
-                                                     std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)));
-                               } },
-                      depSpan, result);
 
+            if constexpr(NoArgument<Args...>::value) {
+                spawnImpl(Closure{ context().getAllocator(), std::forward<Callable>(callable) }, {}, result);
+            } else {
+                spawnImpl(
+                    Closure{ context().getAllocator(),
+                             [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)] {
+                                 detail::moveApply(std::move(call),
+                                                   std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)));
+                             } },
+                    depSpan, result);
+            }
             return Future<ReturnType>(result);
         }
 
         template <typename ReturnType, typename Callable, typename... Args>
-        auto spawnDispatch(std::enable_if_t<!std::is_void_v<ReturnType>>*, Callable&& callable, Args&&... args) {
+        std::enable_if_t<!std::is_void_v<ReturnType>, Future<ReturnType>> spawnDispatch(Callable&& callable, Args&&... args) {
             auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(sizeof(ReturnType), false);
@@ -244,8 +258,7 @@ namespace Piper {
         template <typename Callable, typename... Args, typename = std::enable_if_t<FutureChecker<std::decay_t<Args>...>::value>>
         auto spawn(Callable&& callable, Args&&... args) {
             using ReturnType = std::invoke_result_t<std::decay_t<Callable>, std::decay_t<Args>...>;
-            // TODO:move SFINAE to return type
-            return spawnDispatch<ReturnType>(nullptr, std::forward<Callable>(callable), std::forward<Args>(args)...);
+            return spawnDispatch<ReturnType>(std::forward<Callable>(callable), std::forward<Args>(args)...);
         }
 
         virtual void notify(FutureImpl* event) noexcept {}
@@ -253,6 +266,6 @@ namespace Piper {
 
         // parallel_for
         // reduce
-    };  // namespace Piper
+    };
 
 }  // namespace Piper
