@@ -95,14 +95,8 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
 }
 
 TEST_F(PiperCoreEnvironment, Taskflow) {
-    auto desc = Piper::makeSharedObject<Piper::Config>(*context);
-    desc->at("Path").set("Infrastructure/Concurrency/Taskflow");
-    desc->at("Name").set("Piper.Infrastructure.Concurrency.Taskflow");
-    auto&& loader = context->getModuleLoader();
-    const auto mod = loader.loadModule(desc, ".");
-    auto inst = loader
-                    .newInstance("Piper.Infrastructure.Concurrency.Taskflow.Scheduler",
-                                 Piper::makeSharedObject<Piper::Config>(*context), mod)
+    auto inst = context->getModuleLoader()
+                    .newInstance("Piper.Infrastructure.Taskflow.Scheduler", Piper::makeSharedObject<Piper::Config>(*context))
                     .get();
     contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst));
     generalConcurrencyTest(*context);

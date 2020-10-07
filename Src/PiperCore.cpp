@@ -63,6 +63,7 @@ namespace Piper {
         mHandler.exitStage();
         mHandler.enterStageImpl(stage, loc);
     }
+    // TODO:overload
     void StageGuard::switchToStatic(const CString stage, const SourceLocation& loc) {
         mHandler.exitStage();
         // TODO:no allocation stroage
@@ -241,16 +242,18 @@ namespace Piper {
     class ModuleLoaderImpl final : public ModuleLoader {
     private:
         UMap<String, SharedObject<Module>> mModules;
+        UMap<String, Pair<SharedObject<Config>, String>> mModuleDesc;
         Stack<DLLHandle> mHandles;
         // USet<String> mClasses; TODO:Cache
         std::shared_mutex mMutex;
 
     public:
         explicit ModuleLoaderImpl(PiperContext& context)
-            : ModuleLoader(context), mModules(context.getAllocator()), mHandles(STLAllocator{ context.getAllocator() }) {}
-        Future<void> loadModule(const SharedObject<Config>& packageDesc, const StringView& descPath) override {
+            : ModuleLoader(context), mModules(context.getAllocator()), mHandles(STLAllocator{ context.getAllocator() }),
+              mModuleDesc(context.getAllocator()) {}
+        Future<void> loadModule(const SharedObject<Config>& moduleDesc, const String& descPath) override {
             auto stage = context().getErrorHandler().enterStageStatic("parse package description", PIPER_SOURCE_LOCATION());
-            auto&& info = packageDesc->viewAsObject();
+            auto&& info = moduleDesc->viewAsObject();
             auto iter = info.find(String("Name", context().getAllocator()));
             if(iter == info.cend())
                 throw;
@@ -265,7 +268,7 @@ namespace Piper {
             iter = info.find(String("Path", context().getAllocator()));
             if(iter == info.cend())
                 throw;
-            auto base = String(descPath, context().getAllocator()) + "/";
+            auto base = descPath + "/";
             auto path = iter->second->get<String>();
 
             iter = info.find("Dependencies");
@@ -280,7 +283,7 @@ namespace Piper {
 
             return context().getScheduler().spawn([this, base, name, path, deps] {
                 // TODO:checksum:blake2sp
-                // TODO:module dependences/packageDesc provider
+                // TODO:module dependences/moduleDesc provider
                 for(auto&& dep : deps) {
                     auto stage =
                         context().getErrorHandler().enterStage("load third-party dependence " + dep, PIPER_SOURCE_LOCATION());
@@ -316,20 +319,53 @@ namespace Piper {
         };
         Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
                                                  const Future<void>& module) override {
+            // TODO:asynchronous module loading
+            module.wait();
+
             auto stage = context().getErrorHandler().enterStage("new instance of " + String(classID, context().getAllocator()),
                                                                 PIPER_SOURCE_LOCATION());
-            std::shared_lock<std::shared_mutex> guard{ mMutex };
-            // TODO:lazy load use packageDesc provider
             const auto pos = classID.find_last_of('.');
+            if(pos == String::npos)
+                throw;
+
+            std::shared_lock<std::shared_mutex> guard{ mMutex };
             const auto iter = mModules.find(String(classID.substr(0, pos), context().getAllocator()));
             if(iter == mModules.cend())
                 throw;
             return iter->second->newInstance(classID.substr(pos + 1), config, module);
         }
+        Future<void> loadModule(const String& moduleID) override {
+            if(mModules.count(moduleID))
+                return context().getScheduler().ready();
+            auto iter = mModuleDesc.find(moduleID);
+            if(iter == mModuleDesc.cend())
+                throw;
+            return loadModule(iter->second.first, iter->second.second);
+        }
+        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config) override {
+            auto stage = context().getErrorHandler().enterStage("new instance of " + String(classID, context().getAllocator()),
+                                                                PIPER_SOURCE_LOCATION());
+            const auto pos = classID.find_last_of('.');
+            if(pos == String::npos)
+                throw;
+
+            auto module = loadModule(String{ classID.substr(0, pos), context().getAllocator() });
+            // TODO:reduce split time
+            return newInstance(classID, config, module);
+        }
+        void addModuleDescription(const SharedObject<Config>& moduleDesc, const String& descPath) override {
+            auto&& obj = moduleDesc->viewAsObject();
+            auto iter = obj.find(String{ "Name", context().getAllocator() });
+            if(iter == obj.cend())
+                throw;
+            mModuleDesc.insert(makePair(iter->second->get<String>(), makePair(moduleDesc, descPath)));
+        }
+
         ~ModuleLoaderImpl() {
             // TODO:fix destroy order in context
             // auto stage = context().getErrorHandler().enterStage("destroy modules", PIPER_SOURCE_LOCATION());
             // TODO:destroy order
+            mModuleDesc.clear();
             mModules.clear();
             while(!mHandles.empty())
                 mHandles.pop();
@@ -536,7 +572,7 @@ namespace Piper {
 
     PiperContextImpl::PiperContextImpl()
         : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator), mModuleLoader(*this), mUnitManager(*this),
-          mLifeTimeRecorder(STLAllocator{ getAllocator() }), mErrorHandler(*this) {
+          mErrorHandler(*this), mLifeTimeRecorder(STLAllocator{ getAllocator() }) {
         setLogger(makeSharedObject<LoggerImpl>(*this));
         auto stage = mErrorHandler.enterStageStatic("create Piper context", PIPER_SOURCE_LOCATION());
         setScheduler(makeSharedObject<SchedulerImpl>(*this));

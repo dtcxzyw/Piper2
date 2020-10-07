@@ -17,18 +17,10 @@
 #include "../ContextResource.hpp"
 
 namespace Piper {
-    class DataSpan : ContextResource {
+    class Accelerator final : public ContextResource {
     public:
-        PIPER_INTERFACE_CONSTRUCT(DataSpan, ContextResource)
-        virtual ~DataSpan() = 0 {}
-        virtual size_t size() const noexcept = 0;
-    };
+        PIPER_INTERFACE_CONSTRUCT(Accelerator, ContextResource);
+        virtual ~Accelerator() = default;
 
-    template <typename T>
-    class DataView final {
-    private:
-        UniqueObject<DataSpan> mSpan;
-
-    public:
     };
 }  // namespace Piper

@@ -15,6 +15,7 @@
 */
 
 #pragma once
+#include "../../PiperContext.hpp"
 #include "../../STL/GSL.hpp"
 #include "../../STL/String.hpp"
 #include "../Object.hpp"

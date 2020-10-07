@@ -33,6 +33,19 @@ protected:
     void SetUp() override {
         contextOwner.reset(piperCreateContext());
         context = contextOwner.get();
+        auto base = Piper::String{ ".", context->getAllocator() };
+        auto name = Piper::makeSharedObject<Piper::Config>(*context, "Piper.Infrastructure.NlohmannJson");
+        auto path = Piper::makeSharedObject<Piper::Config>(*context, "Infrastructure/Config/NlohmannJson");
+        Piper::UMap<Piper::String, Piper::SharedObject<Piper::Config>> desc{ context->getAllocator() };
+        desc.insert(Piper::makePair(Piper::String{ "Name", context->getAllocator() }, name));
+        desc.insert(Piper::makePair(Piper::String{ "Path", context->getAllocator() }, path));
+        auto mod = context->getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(*context, std::move(desc)), base);
+        auto parser = eastl::dynamic_shared_pointer_cast<Piper::ConfigSerializer>(
+            context->getModuleLoader().newInstance("Piper.Infrastructure.NlohmannJson.JsonSerializer", nullptr, mod).get());
+        auto modules = parser->deserialize(Piper::String{ "Module.json", context->getAllocator() });
+
+        for(auto&& desc : modules->viewAsArray())
+            context->getModuleLoader().addModuleDescription(desc, base);
     }
 
     void TearDown() override {

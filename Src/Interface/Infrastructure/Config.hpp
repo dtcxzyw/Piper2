@@ -29,6 +29,7 @@ namespace Piper {
     enum class NodeType { FloatingPoint, String, SignedInteger, UnsignedInteger, Boolean, Array, Object, Null };
     template <typename T>
     struct DefaultTag;
+
     class Config final : public Object {
     private:
         Variant<double, String, intmax_t, uintmax_t, bool, Vector<SharedObject<Config>>, UMap<String, SharedObject<Config>>,
@@ -39,42 +40,30 @@ namespace Piper {
         Config(PiperContext& context) : Object(context), mValue(MonoState{}) {}
 
         template <typename T>
-        Config(PiperContext& context, T&& value) : Object(context), mValue(value) {}
+        Config(PiperContext& context, T&& value,
+               DefaultTag<std::enable_if_t<!(std::is_floating_point_v<T> || (std::is_integral_v<T> && !std::is_same_v<T, bool>) ||
+                                             std::is_same_v<T, StringView> || std::is_same_v<std::remove_const_t<T>, char8_t>)>>*
+                   unused = nullptr)
+            : Object(context), mValue(std::forward<T>(value)) {}
 
-        void set(const StringView& value) {
-            mValue = Piper::String(value, context().getAllocator());
-        }
+        Config(PiperContext& context, const StringView& value) : Config(context, String{ value, context.getAllocator() }) {}
 
-        void set(const char8_t* value) {
-            mValue = Piper::String(value, context().getAllocator());
-        }
-
-        template <typename T>
-        void
-        set(T&& value,
-            DefaultTag<std::enable_if_t<!(std::is_floating_point_v<T> || (std::is_integral_v<T> && !std::is_same_v<T, bool>) ||
-                                          std::is_same_v<T, StringView> || std::is_same_v<std::remove_const_t<T>, char8_t>)>>*
-                unused = nullptr) {
-            mValue = std::forward<T>(value);
-        }
+        Config(PiperContext& context, const CString value) : Config(context, String{ value, context.getAllocator() }) {}
 
         template <typename T>
-        void set(T value, DefaultTag<std::enable_if_t<std::is_floating_point_v<T>>>* unused = nullptr) {
-            mValue = static_cast<double>(value);
-        }
+        Config(PiperContext& context, T value, DefaultTag<std::enable_if_t<std::is_floating_point_v<T>>>* unused = nullptr)
+            : Object(context), mValue(static_cast<double>(value)) {}
 
         template <typename T>
-        void
-        set(T value,
-            DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool>>>* unused =
-                nullptr) {
-            mValue = static_cast<uintmax_t>(value);
-        }
+        Config(PiperContext& context, T value,
+               DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool>>>* unused =
+                   nullptr)
+            : Object(context), mValue(static_cast<uintmax_t>(value)) {}
 
         template <typename T>
-        void set(T value, DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>>>* unused = nullptr) {
-            mValue = static_cast<intmax_t>(value);
-        }
+        Config(PiperContext& context, T value,
+               DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>>>* unused = nullptr)
+            : Object(context), mValue(static_cast<intmax_t>(value)) {}
 
         template <typename T>
         T get() const {
@@ -90,18 +79,17 @@ namespace Piper {
             return Piper::get<Vector<SharedObject<Config>>>(mValue);
         };
 
-        //TODO:remove shared_ptr
-        const Config& at(const StringView& key) const {
-            return *(viewAsObject().find(String(key, context().getAllocator()))->second);
+        const SharedObject<Config>& at(const StringView& key) const {
+            return viewAsObject().find(String(key, context().getAllocator()))->second;
         }
-        Config& at(const StringView& key) {
+        SharedObject<Config>& at(const StringView& key) {
             if(type() == NodeType::Null)
                 mValue = UMap<String, SharedObject<Config>>{ context().getAllocator() };
             auto&& map = Piper::get<UMap<String, SharedObject<Config>>>(mValue);
             auto& res = map[String(key, context().getAllocator())];
             if(!res)
                 res = makeSharedObject<Config>(context());
-            return *res;
+            return res;
         }
 
         NodeType type() const noexcept {
@@ -113,7 +101,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(ConfigSerializer, Object);
         virtual ~ConfigSerializer() = default;
-        virtual SharedObject<Config> deserialize(const StringView& path) const = 0;
-        virtual void serialize(const SharedObject<Config>& config, const StringView& path) const = 0;
+        virtual SharedObject<Config> deserialize(const String& path) const = 0;
+        virtual void serialize(const SharedObject<Config>& config, const String& path) const = 0;
     };
 }  // namespace Piper

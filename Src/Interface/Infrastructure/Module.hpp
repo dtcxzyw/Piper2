@@ -35,9 +35,13 @@ namespace Piper {
     class ModuleLoader : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleLoader, Object)
-        virtual Future<void> loadModule(const SharedObject<Config>& packageDesc, const StringView& descPath) = 0;
+        virtual Future<void> loadModule(const SharedObject<Config>& moduleDesc, const String& descPath) = 0;
         virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
                                                          const Future<void>& module) = 0;
+
+        virtual Future<void> loadModule(const String& moduleID) = 0;
+        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config) = 0;
+        virtual void addModuleDescription(const SharedObject<Config>& moduleDesc, const String& descPath) = 0;
         virtual ~ModuleLoader() = default;
     };
 }  // namespace Piper
@@ -57,5 +61,5 @@ namespace Piper {
     }                                                                                                                \
     extern "C" PIPER_API const char* piperGetCompatibilityFeature() {                                                \
         return PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;                                                          \
-    }                                                                                                                \
-    \
+    }
+\

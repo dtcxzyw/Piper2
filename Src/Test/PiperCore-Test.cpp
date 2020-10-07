@@ -40,47 +40,47 @@ TEST_F(PiperCoreEnvironment, ConcurrencyTest) {
 }
 
 TEST_F(PiperCoreEnvironment, ConfigTest) {
-    auto config = Piper::makeSharedObject<Piper::Config>(*context);
-
     // integer
-    config->set(1);
+    auto config = Piper::makeSharedObject<Piper::Config>(*context, 1);
     ASSERT_EQ(config->type(), Piper::NodeType::SignedInteger);
-    config->set(1U);
+    config = Piper::makeSharedObject<Piper::Config>(*context, 1U);
     ASSERT_EQ(config->type(), Piper::NodeType::UnsignedInteger);
-    config->set(1LL);
+    config = Piper::makeSharedObject<Piper::Config>(*context, 1LL);
     ASSERT_EQ(config->type(), Piper::NodeType::SignedInteger);
-    config->set(1ULL);
+    config = Piper::makeSharedObject<Piper::Config>(*context, 1ULL);
     ASSERT_EQ(config->type(), Piper::NodeType::UnsignedInteger);
     // floating point
-    config->set(1.0f);
+    config = Piper::makeSharedObject<Piper::Config>(*context, 1.0f);
     ASSERT_EQ(config->type(), Piper::NodeType::FloatingPoint);
-    config->set(1.0);
+    config = Piper::makeSharedObject<Piper::Config>(*context, 1.0);
     ASSERT_EQ(config->type(), Piper::NodeType::FloatingPoint);
     // string
-    config->set(Piper::String("Piper", context->getAllocator()));
+    config = Piper::makeSharedObject<Piper::Config>(*context, Piper::String{ "Piper", context->getAllocator() });
     ASSERT_EQ(config->type(), Piper::NodeType::String);
-    config->set("Piper");
+    config = Piper::makeSharedObject<Piper::Config>(*context, "Piper");
     ASSERT_EQ(config->type(), Piper::NodeType::String);
-    config->set(Piper::StringView("Piper"));
+    config = Piper::makeSharedObject<Piper::Config>(*context, Piper::StringView{ "Piper" });
     ASSERT_EQ(config->type(), Piper::NodeType::String);
     // boolean
-    config->set(true);
+    config = Piper::makeSharedObject<Piper::Config>(*context, true);
     ASSERT_EQ(config->type(), Piper::NodeType::Boolean);
     // null
-    config->set(Piper::MonoState{});
+    config = Piper::makeSharedObject<Piper::Config>(*context, Piper::MonoState{});
     ASSERT_EQ(config->type(), Piper::NodeType::Null);
 
     // object
-    config->at("Name").set("Piper");
+    config->at("Name") = Piper::makeSharedObject<Piper::Config>(*context, "Piper");
     ASSERT_EQ(config->type(), Piper::NodeType::Object);
-    ASSERT_EQ("Piper", config->at("Name").get<Piper::String>());
+    ASSERT_EQ("Piper", config->at("Name")->get<Piper::String>());
     Piper::UMap<Piper::String, Piper::SharedObject<Piper::Config>> map{ context->getAllocator() };
     map.insert(Piper::makePair(Piper::String("Name", context->getAllocator()), Piper::makeSharedObject<Piper::Config>(*context)));
-    config->set(map);
+    config = Piper::makeSharedObject<Piper::Config>(*context, std::move(map));
     ASSERT_EQ(config->type(), Piper::NodeType::Object);
     // array
-    config->set(Piper::Vector<Piper::SharedObject<Piper::Config>>({ Piper::makeSharedObject<Piper::Config>(*context) },
-                                                                  context->getAllocator()));
+    config = Piper::makeSharedObject<Piper::Config>(
+        *context,
+        Piper::Vector<Piper::SharedObject<Piper::Config>>({ Piper::makeSharedObject<Piper::Config>(*context) },
+                                                          context->getAllocator()));
     ASSERT_EQ(config->type(), Piper::NodeType::Array);
     ASSERT_EQ(config->viewAsArray()[0]->type(), Piper::NodeType::Null);
 }
@@ -100,15 +100,9 @@ TEST_F(PiperCoreEnvironment, UnitManagerTest) {
 }
 
 TEST_F(PiperCoreEnvironment, ModuleLoaderTest) {
-    auto desc = Piper::makeSharedObject<Piper::Config>(*context);
-    desc->at("Path").set("Infrastructure/FileSystem/MemoryFS");
-    desc->at("Name").set("Piper.Infrastructure.FileSystem.MemoryFS");
     auto&& loader = context->getModuleLoader();
-    const auto mod = loader.loadModule(desc, ".");
-    auto inst = loader
-                    .newInstance("Piper.Infrastructure.FileSystem.MemoryFS.MemoryFS",
-                                 Piper::makeSharedObject<Piper::Config>(*context), mod)
-                    .get();
+    auto inst =
+        loader.newInstance("Piper.Infrastructure.MemoryFS.MemoryFS", Piper::makeSharedObject<Piper::Config>(*context)).get();
     ASSERT_EQ(context, &inst->context());
     inst.reset();
 }
