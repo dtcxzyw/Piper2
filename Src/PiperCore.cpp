@@ -264,6 +264,7 @@ namespace Piper {
                 if(mModules.count(name))
                     return context().getScheduler().ready();
             }
+            // TODO:double checked locking
 
             iter = info.find(String("Path", context().getAllocator()));
             if(iter == info.cend())

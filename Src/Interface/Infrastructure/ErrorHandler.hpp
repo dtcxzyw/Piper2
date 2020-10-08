@@ -41,7 +41,7 @@ namespace Piper {
         virtual ~ErrorHandler() = default;
 
         // for runtime error
-        virtual void raiseException(const StringView& message, const SourceLocation& loc) = 0;
+        [[noreturn]] virtual void raiseException(const StringView& message, const SourceLocation& loc) = 0;
 
         // for coding error
         // TODO:error information

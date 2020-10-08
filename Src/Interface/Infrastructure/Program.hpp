@@ -15,32 +15,33 @@
 */
 
 #pragma once
+#include "../../STL/String.hpp"
+#include "../../STL/Vector.hpp"
 #include "../ContextResource.hpp"
+#include "Concurrency.hpp"
 
 namespace Piper {
-
-    class PlatformIndependentTranslationUnit : public Object {
+    // PlatformIndependentTranslationUnit
+    // TODO:output
+    class PITU : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(PlatformIndependentTranslationUnit, Object)
-        virtual ~PlatformIndependentTranslationUnit() = 0{}
+        PIPER_INTERFACE_CONSTRUCT(PITU, Object)
+        virtual ~PITU() = default;
+        virtual Future<Vector<std::byte>> generateLinkable(const Vector<CString>& acceptableFormat) const = 0;
     };
 
-    class LinkableProgram : public ContextResource {
+    // TODO:Optimize
+    class PITUManager : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(LinkableProgram, ContextResource)
-        virtual ~LinkableProgram() = 0{}
+        PIPER_INTERFACE_CONSTRUCT(PITUManager, Object);
+        virtual ~PITUManager() = default;
+        virtual Future<SharedObject<PITU>> loadPITU(const String& path) const = 0;
+        virtual Future<SharedObject<PITU>> mergePITU(const Future<Vector<SharedObject<PITU>>>& pitus) const = 0;
     };
 
-    // entry,resource binding
     class RunnableProgram : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(RunnableProgram, ContextResource)
-        virtual ~RunnableProgram() = 0{}
-    };
-
-    class Accelerator : public ContextResource {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Accelerator, ContextResource)
-        virtual ~Accelerator() = default;
+        virtual ~RunnableProgram() = default;
     };
 }  // namespace Piper

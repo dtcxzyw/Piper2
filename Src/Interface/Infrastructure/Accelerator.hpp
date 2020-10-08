@@ -14,13 +14,32 @@
    limitations under the License.
 */
 
+#include "../../STL/String.hpp"
+#include "../../STL/Vector.hpp"
 #include "../ContextResource.hpp"
+#include "Allocator.hpp"
+#include "Concurrency.hpp"
 
 namespace Piper {
-    class Accelerator final : public ContextResource {
+    struct Dim3 final {
+        uint32_t x, y, z;
+    };
+
+    class RunnableProgram;
+    class LinkableProgram;
+
+    using CommandQueue = uint64_t;
+
+    class Accelerator : public ContextResource {
     public:
         PIPER_INTERFACE_CONSTRUCT(Accelerator, ContextResource);
         virtual ~Accelerator() = default;
-
+        virtual const Vector<CString>& getSupportedLinkableFormat() const = 0;
+        virtual Future<SharedObject<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
+                                                                    const String& entry /*resource access*/);
+        virtual void runKernel(const Dim3& dim, const Future<SharedObject<RunnableProgram>>& entry) = 0;
+        virtual void input() = 0;
+        virtual void output() = 0;
+        virtual void apply(Function<void, CommandQueue>) = 0;
     };
 }  // namespace Piper
