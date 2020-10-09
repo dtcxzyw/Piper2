@@ -1,24 +1,32 @@
 [
-    {
-        "Name": "Piper.Infrastructure.JemallocAllocator",
-        "Path": "Infrastructure/Allocator/JemallocAllocator",
-        "Dependencies": [
-            "Infrastructure/Allocator/jemalloc"
-        ]
-    },
-    {
-        "Name": "Piper.Infrastructure.Taskflow",
-        "Path": "Infrastructure/Concurrency/Taskflow"
-    },
-    {
-        "Name": "Piper.Infrastructure.MemoryFS",
-        "Path": "Infrastructure/FileSystem/MemoryFS"
-    },
-    {
-        "Name": "Piper.Infrastructure.Spdlog",
-        "Path": "Infrastructure/Logger/Spdlog",
-        "Dependencies": [
-            "Infrastructure/Logger/fmt"
-        ]
-    }
+  {
+    "Name": "Piper.Infrastructure.JemallocAllocator",
+    "Path": "Infrastructure/Allocator/JemallocAllocator",
+    "Dependencies": [
+      "Infrastructure/Allocator/jemalloc"
+    ]
+  },
+  {
+    "Name": "Piper.Infrastructure.Taskflow",
+    "Path": "Infrastructure/Concurrency/Taskflow"
+  },
+  {
+    "Name": "Piper.Infrastructure.MemoryFS",
+    "Path": "Infrastructure/FileSystem/MemoryFS"
+  },
+  {
+    "Name": "Piper.Infrastructure.Spdlog",
+    "Path": "Infrastructure/Logger/Spdlog",
+    "Dependencies": [
+      "Infrastructure/Logger/fmt"
+    ]
+  },
+  {
+    "Name": "Piper.Infrastructure.LLVMIR",
+    "Path": "Infrastructure/Program/LLVMIR"
+  },
+  {
+    "Name": "Piper.Infrastructure.Parallel",
+    "Path": "Infrastructure/Accelerator/Parallel"
+  }
 ]

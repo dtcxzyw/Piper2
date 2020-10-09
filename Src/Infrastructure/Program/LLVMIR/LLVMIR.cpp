@@ -25,6 +25,7 @@
 #include "../../../STL/UniquePtr.hpp"
 #pragma warning(push, 0)
 #include <llvm/Bitcode/BitcodeReader.h>
+#include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/IR/LLVMContext.h>
 // TODO:use new PassManager
 //#include <llvm/IR/PassManager.h>
@@ -74,9 +75,19 @@ namespace Piper {
         std::unique_ptr<llvm::Module> cloneModule() const {
             return llvm::CloneModule(*mModule);
         }
-        Future<Vector<std::byte>> generateLinkable(const Vector<CString>& acceptableFormat) const override {
+        Future<Vector<std::byte>> generateLinkable(const Span<const CString>& acceptableFormat) const override {
             std::string error;
             for(auto&& format : acceptableFormat) {
+                if(StringView{ format } == "LLVM IR") {
+                    // TODO:lazy parse linkable and directly return data
+                    return context().getScheduler().spawn([thisData = shared_from_this()] {
+                        Vector<std::byte> data{ thisData->context().getAllocator() };
+                        LLVMStream stream(data);
+                        llvm::WriteBitcodeToFile(*(thisData->mModule), stream);
+                        stream.flush();
+                        return std::move(data);
+                    });
+                }
                 auto target = llvm::TargetRegistry::lookupTarget(format, error);
                 if(target) {
                     return context().getScheduler().spawn([target, format, thisData = shared_from_this()] {
@@ -116,7 +127,8 @@ namespace Piper {
         SharedPtr<llvm::LLVMContext> mContext;
 
     public:
-        PIPER_INTERFACE_CONSTRUCT(LLVMIRManager, PITUManager);
+        explicit LLVMIRManager(PiperContext& context)
+            : PITUManager(context), mContext(makeSharedPtr<llvm::LLVMContext>(context.getAllocator())) {}
         Future<SharedObject<PITU>> loadPITU(const String& path) const override {
             return context().getScheduler().spawn([ctx = &context(), path, llvmctx = mContext] {
                 auto stage = ctx->getErrorHandler().enterStage("load PITU " + path, PIPER_SOURCE_LOCATION());

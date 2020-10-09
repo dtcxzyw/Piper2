@@ -33,10 +33,6 @@ namespace Piper {
         void free(const Ptr ptr) noexcept override {
             je_free(reinterpret_cast<void*>(ptr));
         }
-        ContextHandle getContextHandle() const {
-            static char mark;
-            return reinterpret_cast<ContextHandle>(&mark);
-        }
     };
     class ModuleImpl final : public Module {
     public:

@@ -16,8 +16,10 @@
 
 #pragma once
 #include "../../PiperContext.hpp"
-#include "../../STL/Function.hpp"
 #include "../../STL/UniquePtr.hpp"
+#include "../../STL/Variant.hpp"
+#include "../../STL/Vector.hpp"
+
 #include <future>
 
 namespace Piper {
@@ -92,71 +94,45 @@ namespace Piper {
         }
     };
 
-    /*
-        class FutureGroupImpl : public ContextResource {
-        public:
-            PIPER_INTERFACE_CONSTRUCT(FutureGroupImpl, ContextResource)
-            virtual ~FutureGroupImpl() = 0;
-            virtual const DataSpan& get(const size_t beg, const size_t end) const = 0;
-            virtual size_t size() const noexcept = 0;
-            DataSpan& get(const size_t beg, const size_t end) final {
-                return const_cast<DataSpan&>(const_cast<const FutureGroupImpl*>(this)->get(beg, end));
-            }
-        };
-
-        template <typename T>
-        class FutureGroup final : private Unmovable {
-        private:
-            SharedObject<FutureGroupImpl> mImpl;
-
-        public:
-            FutureGroup() = delete;
-            explicit FutureGroup(SharedObject<FutureGroup>&& impl) noexcept : mImpl(impl) {}
-            SharedObject<FutureGroupImpl> raw() const;
-            DataView<T> get(const size_t beg, const size_t end) {
-                return mImpl->get(beg, end);
-            }
-            DataView<T> get(const size_t beg, const size_t end) const {
-                return mImpl->get(beg, end);
-            }
-        };
-        */
-
+    // void/index
+    template <typename... Args>
     class ClosureStorage : public Unmovable {
     public:
         virtual ~ClosureStorage() = default;
-        virtual void apply() = 0;
+        virtual void apply(Args... args) = 0;
     };
-    template <typename Callable>
-    class ClosureStorageImpl : public ClosureStorage {
+    template <typename Callable, typename... Args>
+    class ClosureStorageImpl : public ClosureStorage<Args...> {
     private:
         Callable mFunc;
 
     public:
         explicit ClosureStorageImpl(Callable&& func) : mFunc(std::move(func)) {}
-        void apply() override {
-            mFunc();
+        void apply(Args... args) override {
+            mFunc(args...);
         }
     };
+    template <typename... Args>
     class Closure final {
     private:
-        UniquePtr<ClosureStorage> mFunc;
+        UniquePtr<ClosureStorage<Args...>> mFunc;
 
         template <typename Callable>
-        Owner<ClosureStorage*> alloc(STLAllocator allocator, Callable&& func) {
-            auto ptr = reinterpret_cast<ClosureStorageImpl<Callable>*>(allocator.allocate(sizeof(ClosureStorageImpl<Callable>)));
-            return new(ptr) ClosureStorageImpl<Callable>(std::move(func));
+        Owner<ClosureStorage<Args...>*> alloc(STLAllocator allocator, Callable&& func) {
+            auto ptr = reinterpret_cast<ClosureStorageImpl<Callable, Args...>*>(
+                allocator.allocate(sizeof(ClosureStorageImpl<Callable, Args...>)));
+            return new(ptr) ClosureStorageImpl<Callable, Args...>(std::move(func));
         }
 
     public:
         Closure() = delete;
         template <typename Callable>
         Closure(STLAllocator allocator, Callable&& func)
-            : mFunc(alloc<Callable>(allocator, std::move(func)), DefaultDeleter<ClosureStorage>{ allocator }) {}
-        Closure(const Closure& rhs) : mFunc(std::move(const_cast<UniquePtr<ClosureStorage>&>(rhs.mFunc))) {}
-        void operator()() {
+            : mFunc(alloc<Callable>(allocator, std::move(func)), DefaultDeleter<ClosureStorage<Args...>>{ allocator }) {}
+        Closure(const Closure& rhs) : mFunc(std::move(const_cast<UniquePtr<ClosureStorage<Args...>>&>(rhs.mFunc))) {}
+        void operator()(Args... args) {
             if(mFunc) {
-                mFunc->apply();
+                mFunc->apply(args...);
                 mFunc.reset();
             } else
                 throw;
@@ -176,13 +152,16 @@ namespace Piper {
         }
     }  // namespace detail
 
-    // TODO:support future instance
+    // TODO:support pipe
     class Scheduler : public Object {
-    protected:
-        virtual void spawnImpl(Closure&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+    public:
+        virtual void spawnImpl(Variant<MonoState, Closure<>> func, const Span<const SharedObject<FutureImpl>>& dependencies,
                                const SharedObject<FutureImpl>& res) = 0;
+        virtual void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedObject<FutureImpl>>& dependencies,
+                                     const SharedObject<FutureImpl>& res) = 0;
         virtual SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) = 0;
 
+    private:
         template <typename... Args>
         struct NoArgument final {
             static constexpr bool value = false;
@@ -262,11 +241,59 @@ namespace Piper {
             return spawnDispatch<ReturnType>(std::forward<Callable>(callable), std::forward<Args>(args)...);
         }
 
+        template <typename T>
+        auto wrap(Vector<Future<T>> futures) -> std::enable_if_t<!std::is_void_v<T>, Future<Vector<T>>> {
+            auto result = newFutureImpl(sizeof(Vector<T>), false);
+            Vector<const SharedObject<FutureImpl>> dep;
+            dep.reserve(futures.size());
+            for(auto&& future : futures)
+                dep.push_back(future.raw());
+            spawnImpl(Closure{ context().getAllocator(),
+                               [fs = std::move(futures), ptr = result->storage()] {
+                                   auto vec = reinterpret_cast<Vector<T>*>(const_cast<void*>(ptr));
+                                   new(vec) Vector<T>();
+                                   vec->reserve(fs.size());
+                                   for(auto&& future : const_cast<Vector<Future<T>>&>(fs))
+                                       // TODO:ownership
+                                       vec->emplace_back(std::move(std::move(future).get()));
+                               } },
+                      Span<const SharedObject<FutureImpl>>{ dep.data(), dep.size() }, result);
+            return Future<Vector<T>>{ result };
+        }
+
+        template <typename T>
+        auto wrap(const Vector<Future<T>>& futures) -> std::enable_if_t<std::is_void_v<T>, Future<void>> {
+            auto result = newFutureImpl(0, false);
+            Vector<const SharedObject<FutureImpl>> dep;
+            dep.reserve(futures.size());
+            for(auto&& future : futures)
+                dep.push_back(future.raw());
+            spawnImpl(MonoState{}, Span<const SharedObject<FutureImpl>>{ dep.data(), dep.size() }, result);
+            return Future<void>{ result };
+        }
+
         virtual void notify(FutureImpl* event) noexcept {}
         virtual void waitAll() noexcept = 0;
 
-        // parallel_for
-        // reduce
+        // TODO:hint for schedule strategy
+        template <typename Callable, typename... Args, typename = std::enable_if_t<FutureChecker<std::decay_t<Args>...>::value>>
+        Future<void> parallelFor(uint32_t n, Callable&& callable, Args&&... args) {
+            auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
+            auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
+            auto result = newFutureImpl(0, false);
+
+            // TODO:copy?
+            parallelForImpl(
+                n,
+                Closure<uint32_t>{
+                    context().getAllocator(),
+                    [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
+                     ptr = result->storage()](uint32_t idx) { std::apply(call, std::tuple_cat(std::make_tuple(idx), tuple)); } },
+                depSpan, result);
+
+            return Future<void>(result);
+        }
+        // TODO: reduce
     };
 
 }  // namespace Piper

@@ -85,9 +85,6 @@ namespace Piper {
     class DefaultAllocator final : public Allocator {
     public:
         explicit DefaultAllocator(PiperContext& view) : Allocator(view) {}
-        ContextHandle getContextHandle() const {
-            return 0;
-        }
         Ptr alloc(const size_t size, const size_t align) override {
             static_assert(sizeof(Ptr) == sizeof(void*));
             auto res = reinterpret_cast<Ptr>(allocMemory(align, size));
@@ -434,12 +431,21 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(SchedulerImpl, Scheduler)
 
-        void spawnImpl(Closure&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
+        void spawnImpl(Variant<MonoState, Closure<>> func, const Span<const SharedObject<FutureImpl>>& dependencies,
                        const SharedObject<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
                 if(dep)
                     dep->wait();
-            func();
+            if(func.index())
+                get<Closure<>>(func)();
+        }
+        void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedObject<FutureImpl>>& dependencies,
+                             const SharedObject<FutureImpl>& res) override {
+            for(auto&& dep : dependencies)
+                if(dep)
+                    dep->wait();
+            for(uint32_t i = 0; i < n; ++i)
+                func(i);
         }
         SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool) override {
             return makeSharedObject<FutureStorage>(context(), size);

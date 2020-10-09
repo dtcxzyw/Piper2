@@ -15,12 +15,12 @@
 */
 
 #pragma once
-#include "../ContextResource.hpp"
+#include "../Object.hpp"
 
 namespace Piper {
-    class Profiler : public ContextResource {
+    class Profiler : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Profiler, ContextResource)
+        PIPER_INTERFACE_CONSTRUCT(Profiler, Object)
         virtual ~Profiler() = 0{}
     };
 }  // namespace Piper

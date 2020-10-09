@@ -15,7 +15,7 @@
 */
 
 #pragma once
-#include "../ContextResource.hpp"
+#include "../Object.hpp"
 #include <cstdint>
 #include <new>
 
@@ -24,9 +24,9 @@ namespace Piper {
     using Ptr = uint64_t;
 
     /*
-    class MemoryProvider : public ContextResource {
+    class MemoryProvider : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(MemoryProvider, ContextResource)
+        PIPER_INTERFACE_CONSTRUCT(MemoryProvider, Object)
         virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
         virtual void free(const Ptr ptr) = 0;
         virtual ~MemoryProvider() = default;
@@ -34,9 +34,9 @@ namespace Piper {
     };
     */
 
-    class Allocator : public ContextResource {
+    class Allocator : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Allocator, ContextResource)
+        PIPER_INTERFACE_CONSTRUCT(Allocator, Object)
         // TODO:hardware_constructive_interference_size
         // http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0154r1.html
         virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
@@ -44,9 +44,9 @@ namespace Piper {
         virtual ~Allocator() = default;
     };
 
-    class MemoryArena : public ContextResource {
+    class MemoryArena : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(MemoryArena, ContextResource)
+        PIPER_INTERFACE_CONSTRUCT(MemoryArena, Object)
         virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
         virtual ~MemoryArena() = default;
     };

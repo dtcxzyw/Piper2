@@ -42,7 +42,7 @@ namespace Piper {
         }
 
     public:
-        FutureStorage(PiperContext& context, const size_t size, const bool ready, const ContextHandle handle)
+        FutureStorage(PiperContext& context, const size_t size, const bool ready)
             : FutureImpl(context), mPtr(alloc(size)), mFuture(eastl::nullopt) {
             if(!ready)
                 mFuture.emplace();
@@ -68,14 +68,8 @@ namespace Piper {
     private:
         tf::Executor mExecutor;
 
-    public:
-        explicit SchedulerTaskflow(PiperContext& context)
-            : Scheduler(context), mExecutor(std::thread::hardware_concurrency()) {}  // TODO:thread num from config
-        void spawnImpl(Closure&& func, const Span<const SharedObject<FutureImpl>>& dependencies,
-                       const SharedObject<FutureImpl>& res) override {
-            auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
-            auto src = ctx.flow.emplace([] {});
-            auto task = ctx.flow.emplace(std::move(func));
+        void commit(FutureContext& ctx, const tf::Task& task, const Span<const SharedObject<FutureImpl>>& dependencies) {
+            auto src = ctx.flow.placeholder();
             for(auto&& dep : dependencies) {
                 if(!dep || dep->ready())
                     continue;
@@ -86,8 +80,24 @@ namespace Piper {
             }
             ctx.future = mExecutor.run(ctx.flow);
         }
+
+    public:
+        explicit SchedulerTaskflow(PiperContext& context)
+            : Scheduler(context), mExecutor(std::thread::hardware_concurrency()) {}  // TODO:thread num from config
+        void spawnImpl(Variant<MonoState, Closure<>> func, const Span<const SharedObject<FutureImpl>>& dependencies,
+                       const SharedObject<FutureImpl>& res) override {
+            auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
+            auto task = (func.index() ? ctx.flow.emplace(std::move(get<Closure<>>(func))) : ctx.flow.placeholder());
+            commit(ctx, task, dependencies);
+        }
+        void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedObject<FutureImpl>>& dependencies,
+                             const SharedObject<FutureImpl>& res) override {
+            auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
+            auto task = ctx.flow.for_each_index_static(static_cast<uint32_t>(0), n, static_cast<uint32_t>(1), std::move(func));
+            commit(ctx, task, dependencies);
+        }
         SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) override {
-            return makeSharedObject<FutureStorage>(context(), size, ready, reinterpret_cast<ContextHandle>(this));
+            return makeSharedObject<FutureStorage>(context(), size, ready);
         }
         void waitAll() noexcept override {
             mExecutor.wait_for_all();

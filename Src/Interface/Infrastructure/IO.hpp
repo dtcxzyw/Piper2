@@ -16,7 +16,7 @@
 
 #pragma once
 #include "../../STL/Vector.hpp"
-#include "../ContextResource.hpp"
+#include "../Object.hpp"
 #include "Concurrency.hpp"
 
 namespace Piper {

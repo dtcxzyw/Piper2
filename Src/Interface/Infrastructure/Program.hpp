@@ -17,7 +17,7 @@
 #pragma once
 #include "../../STL/String.hpp"
 #include "../../STL/Vector.hpp"
-#include "../ContextResource.hpp"
+#include "../Object.hpp"
 #include "Concurrency.hpp"
 
 namespace Piper {
@@ -27,21 +27,23 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(PITU, Object)
         virtual ~PITU() = default;
-        virtual Future<Vector<std::byte>> generateLinkable(const Vector<CString>& acceptableFormat) const = 0;
+        virtual Future<Vector<std::byte>> generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
     };
 
     // TODO:Optimize
     class PITUManager : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(PITUManager, Object);
+        PIPER_INTERFACE_CONSTRUCT(PITUManager, Object)
         virtual ~PITUManager() = default;
         virtual Future<SharedObject<PITU>> loadPITU(const String& path) const = 0;
         virtual Future<SharedObject<PITU>> mergePITU(const Future<Vector<SharedObject<PITU>>>& pitus) const = 0;
     };
 
-    class RunnableProgram : public ContextResource {
+    // TODO:LinkableProgram
+
+    class RunnableProgram : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(RunnableProgram, ContextResource)
+        PIPER_INTERFACE_CONSTRUCT(RunnableProgram, Object)
         virtual ~RunnableProgram() = default;
     };
 }  // namespace Piper
