@@ -112,6 +112,7 @@ namespace Piper {
             mFunc(args...);
         }
     };
+    // TODO:execution count limit check
     template <typename... Args>
     class Closure final {
     private:
@@ -131,11 +132,8 @@ namespace Piper {
             : mFunc(alloc<Callable>(allocator, std::move(func)), DefaultDeleter<ClosureStorage<Args...>>{ allocator }) {}
         Closure(const Closure& rhs) : mFunc(std::move(const_cast<UniquePtr<ClosureStorage<Args...>>&>(rhs.mFunc))) {}
         void operator()(Args... args) {
-            if(mFunc) {
+            if(mFunc)
                 mFunc->apply(args...);
-                mFunc.reset();
-            } else
-                throw;
         }
     };
 
@@ -153,6 +151,8 @@ namespace Piper {
     }  // namespace detail
 
     // TODO:support pipe
+    // TODO:support future<instance>'s member function spawn before construction
+    // TODO:support future of future(return future in spawn function)
     class Scheduler : public Object {
     public:
         virtual void spawnImpl(Variant<MonoState, Closure<>> func, const Span<const SharedObject<FutureImpl>>& dependencies,
@@ -244,14 +244,14 @@ namespace Piper {
         template <typename T>
         auto wrap(Vector<Future<T>> futures) -> std::enable_if_t<!std::is_void_v<T>, Future<Vector<T>>> {
             auto result = newFutureImpl(sizeof(Vector<T>), false);
-            Vector<const SharedObject<FutureImpl>> dep;
+            Vector<const SharedObject<FutureImpl>> dep{ context().getAllocator() };
             dep.reserve(futures.size());
             for(auto&& future : futures)
                 dep.push_back(future.raw());
             spawnImpl(Closure{ context().getAllocator(),
-                               [fs = std::move(futures), ptr = result->storage()] {
+                               [fs = std::move(futures), ptr = result->storage(), allocator = &context().getAllocator()] {
                                    auto vec = reinterpret_cast<Vector<T>*>(const_cast<void*>(ptr));
-                                   new(vec) Vector<T>();
+                                   new(vec) Vector<T>(*allocator);
                                    vec->reserve(fs.size());
                                    for(auto&& future : const_cast<Vector<Future<T>>&>(fs))
                                        // TODO:ownership

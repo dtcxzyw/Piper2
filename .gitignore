@@ -349,6 +349,8 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
-node_modules
+#Piper2
+*.bc
+*.ll
 Build
 Install

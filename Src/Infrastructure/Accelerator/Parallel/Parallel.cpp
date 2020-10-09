@@ -33,12 +33,17 @@
 #include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/ExecutionEngine/GenericValue.h>
+
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Transforms/Utils/Cloning.h>
+// to link OrcJIT
+//#include <llvm/ExecutionEngine/OrcMCJITReplacement.h>
+// to link Interpreter
+#include <llvm/ExecutionEngine/Interpreter.h>
 #pragma warning(pop)
 
 namespace Piper {
@@ -179,6 +184,54 @@ namespace Piper {
         }
     };
 
+    class BufferImpl final : public Buffer {
+    private:
+        Ptr mData;
+        size_t mSize;
+        Allocator& mAllocator;
+        SharedObject<ResourceImpl> mResource;
+
+    public:
+        BufferImpl(PiperContext& context, Ptr data, const size_t size, Allocator& allocator,
+                   const SharedObject<ResourceImpl>& res)
+            : Buffer(context), mData(data), mSize(size), mAllocator(allocator), mResource(res) {}
+        size_t size() const noexcept override {
+            return mSize;
+        }
+        void upload(const void* data) override {
+            auto& scheduler = context().getScheduler();
+            auto res = scheduler.newFutureImpl(0, false);
+            auto dep = std::initializer_list<const SharedObject<FutureImpl>>{ mResource->getFuture() };
+            scheduler.spawnImpl(
+                Closure<>{ context().getAllocator(),
+                           [dest = mData, src = data, size = mSize] { memcpy(reinterpret_cast<void*>(dest), src, size); } },
+                Span<const SharedObject<FutureImpl>>{ dep.begin(), dep.end() }, res);
+            mResource->setFuture(res);
+        }
+        Future<Vector<std::byte>> download() const override {
+            auto& scheduler = context().getScheduler();
+            // TODO:ownership?
+            return scheduler.spawn(
+                [this](const Future<void>&) {
+                    auto beg = reinterpret_cast<const std::byte*>(mData), end = beg + mSize;
+                    return Vector<std::byte>{ beg, end, context().getAllocator() };
+                },
+                Future<void>{ mResource->getFuture() });
+        }
+        void reset() override {
+            auto& scheduler = context().getScheduler();
+            auto res = scheduler.newFutureImpl(0, false);
+            auto dep = std::initializer_list<const SharedObject<FutureImpl>>{ mResource->getFuture() };
+            scheduler.spawnImpl(Closure<>{ context().getAllocator(),
+                                           [dest = mData, size = mSize] { memset(reinterpret_cast<void*>(dest), 0x00, size); } },
+                                Span<const SharedObject<FutureImpl>>{ dep.begin(), dep.end() }, res);
+            mResource->setFuture(res);
+        }
+        SharedObject<Resource> ref() const override {
+            return eastl::static_shared_pointer_cast<Resource>(mResource);
+        }
+    };
+
     class ParallelAccelerator final : public Accelerator {
     private:
         CString mSupportedLinkable;
@@ -201,7 +254,7 @@ namespace Piper {
         }
         Future<SharedObject<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
                                                             const String& entry) override {
-            Vector<Future<std::unique_ptr<llvm::Module>>> modules;
+            Vector<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
             modules.reserve(linkable.size());
             auto& scheduler = context().getScheduler();
             // TODO:use parallel_for?
@@ -235,8 +288,17 @@ namespace Piper {
                 scheduler.wrap(modules));
             return scheduler.spawn(
                 [entry, ctx = &context()](Future<std::unique_ptr<llvm::Module>> func) {
-                    return eastl::static_shared_pointer_cast<RunnableProgram>(makeSharedObject<LLVMProgram>(
-                        *ctx, llvm::EngineBuilder{ std::move(std::move(func).get()) }.create(), entry));
+                    auto mod = std::move(std::move(func).get());
+                    std::string error;
+                    auto engine = llvm::EngineBuilder{ std::move(mod) }
+                                      .setEngineKind(llvm::EngineKind::Interpreter)
+                                      .setErrorStr(&error)
+                                      .setOptLevel(llvm::CodeGenOpt::Aggressive)
+                                      .create();
+                    if(engine)
+                        return eastl::static_shared_pointer_cast<RunnableProgram>(
+                            makeSharedObject<LLVMProgram>(*ctx, engine, entry));
+                    ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
                 },
                 std::move(kernel));
         }
@@ -273,6 +335,12 @@ namespace Piper {
             if(!res)
                 context().getErrorHandler().raiseException("Unrecognized Resource", PIPER_SOURCE_LOCATION());
             return Future<void>{ res->getFuture() };
+        }
+        SharedObject<Buffer> createBuffer(size_t size, size_t alignment) override {
+            auto& allocator = context().getAllocator();
+            Ptr data = allocator.alloc(size, alignment);
+            return eastl::static_shared_pointer_cast<Buffer>(
+                makeSharedObject<BufferImpl>(context(), data, size, allocator, makeSharedObject<ResourceImpl>(context(), data)));
         }
     };
     class ModuleImpl final : public Module {

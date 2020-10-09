@@ -505,7 +505,8 @@ namespace Piper {
             locate().push(makePair(stage, loc));
             auto&& logger = context().getLogger();
             if(logger.allow(LogLevel::Debug))
-                logger.record(LogLevel::Debug, stage, loc);
+                logger.record(LogLevel::Debug,
+                              "(Stage Layer " + toString(context().getAllocator(), locate().size()) + ") " + stage, loc);
         }
         void exitStage() noexcept override {
             locate().pop();

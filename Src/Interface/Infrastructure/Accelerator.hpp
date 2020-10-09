@@ -74,23 +74,41 @@ namespace Piper {
         virtual void addExtraOutput(const SharedObject<Resource>& resource) = 0;
     };
 
+    class Buffer : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Buffer, Object);
+        virtual ~Buffer() = default;
+        virtual size_t size() const noexcept = 0;
+        // TODO:data holder?
+        virtual void upload(const void* data) = 0;
+        virtual Future<Vector<std::byte>> download() const = 0;
+        virtual void reset() = 0;
+        // TODO:immutable access limitation?
+        virtual SharedObject<Resource> ref() const = 0;
+    };
+
     // TODO:share resource between Accelerators(CPU/GPU)
     // TODO:Allocator support
-    // TODO: compiled kernel cache
+    // TODO:compiled kernel cache
     class Accelerator : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Accelerator, Object);
         virtual ~Accelerator() = default;
+
         virtual Span<const CString> getSupportedLinkableFormat() const = 0;
         virtual SharedObject<ResourceBinding> createResourceBinding() const = 0;
         virtual SharedObject<Parameter> createParameters() const = 0;
         // TODO:Resource Name
-        virtual SharedObject<Resource> createResource(const ResourceHandle handle) const = 0;
+        virtual SharedObject<Resource> createResource(ResourceHandle handle) const = 0;
         virtual Future<SharedObject<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
                                                                     const String& entry) = 0;
         virtual void runKernel(uint32_t n, const Future<SharedObject<RunnableProgram>>& kernel,
                                const SharedObject<Parameter>& params) = 0;
         virtual void apply(Function<void, Context, CommandQueue> func, const SharedObject<ResourceBinding>& binding) = 0;
         virtual Future<void> available(const SharedObject<Resource>& resource) = 0;
+
+        // TODO:page lock memory for CUDA
+        // TODO:reduce copy for CPU or DMA
+        virtual SharedObject<Buffer> createBuffer(size_t size, size_t alignment) = 0;
     };
 }  // namespace Piper

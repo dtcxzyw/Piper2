@@ -2,7 +2,7 @@ cmake_minimum_required (VERSION 3.8)
 
 find_package(GTest CONFIG REQUIRED)
 
-# function
+#TODO separate from Bin
 set_output_path(./)
 
 function(add_piper_test name)
@@ -14,3 +14,6 @@ endfunction()
 add_piper_test(PiperCore)
 add_piper_test(Allocator)
 add_piper_test(Concurrency)
+add_piper_test(Accelerator)
+
+add_custom_command(TARGET Accelerator-Test PRE_BUILD COMMAND clang -emit-llvm saxpy.cpp -c -O3 -o ${CMAKE_BINARY_DIR}/Bin/saxpy.bc WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
