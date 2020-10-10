@@ -15,7 +15,6 @@
 */
 
 #include "../Interface/Infrastructure/Accelerator.hpp"
-#include "../Interface/Infrastructure/Allocator.hpp"
 #include "../Interface/Infrastructure/Config.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
 #include "../Interface/Infrastructure/Program.hpp"
@@ -31,16 +30,17 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedObject<Pi
     std::mt19937_64 RNG(Clock::now().time_since_epoch().count());
     std::uniform_real_distribution<float> URD{ 0.0f, 1.0f };
     // saxpy:Z[i]=alpha*X[i]+Y[i]
-    constexpr size_t count = 1000000;
+    constexpr size_t count = 100000000, repeat = 10;
     constexpr auto alpha = 5.0f;
     Piper::Vector<float> X(count, context.getAllocator()), Y(count, context.getAllocator());
     std::generate(X.begin(), X.end(), [&] { return URD(RNG); });
     std::generate(Y.begin(), Y.end(), [&] { return URD(RNG); });
-    auto devX = accelerator->createBuffer(X.size() * sizeof(float), 64);
+    auto devX = accelerator->createBuffer(count * sizeof(float), 64);
     devX->upload(X.data());
-    auto devY = accelerator->createBuffer(Y.size() * sizeof(float), 64);
+    auto devY = accelerator->createBuffer(count * sizeof(float), 64);
     devY->upload(Y.data());
     auto devZ = accelerator->createBuffer(count * sizeof(float), 64);
+    devZ->reset();
 
     // TODO:concurrency
     auto saxpy = manager->loadPITU("saxpy.bc").get();
@@ -48,21 +48,30 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedObject<Pi
     auto kernel = accelerator->compileKernel(
         Piper::Vector<Piper::Future<Piper::Vector<std::byte>>>{ { linkable }, context.getAllocator() }, "saxpy");
     auto params = accelerator->createParameters();
-    params->bindFloat32(0, alpha);
-    params->bindInput(1, devX->ref());
-    params->bindInput(2, devY->ref());
-    params->bindOutput(3, devZ->ref());
-    accelerator->runKernel(count, kernel, params);
 
+    params->appendInput(devX->ref());
+    params->appendInput(devY->ref());
+    params->appendAccumulate(devZ->ref());
+    params->append(alpha);
+
+    auto beg = Clock::now();
+    for(size_t i = 0; i < repeat; ++i)
+        accelerator->runKernel(count, kernel, params);
     auto dataZ = devZ->download().get();
+    auto end = Clock::now();
+    auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(end - beg).count();
+    if(context.getLogger().allow(Piper::LogLevel::Debug))
+        context.getLogger().record(Piper::LogLevel::Debug, "Duration : " + Piper::toString(context.getAllocator(), dur) + " ms",
+                                   PIPER_SOURCE_LOCATION());
+
     auto Z = reinterpret_cast<const float*>(dataZ.data());
     for(Piper::Index i = 0; i < count; ++i)
-        ASSERT_FLOAT_EQ(Z[i], alpha * X[i] + Y[i]);
+        ASSERT_FLOAT_EQ(Z[i], repeat * (alpha * X[i] + Y[i]));
 }
 
 TEST_F(PiperCoreEnvironment, LLVM_CPU) {
     auto scheduler = context->getModuleLoader().newInstance("Piper.Infrastructure.Taskflow.Scheduler", nullptr).get();
-    //contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(scheduler));
+    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(scheduler));
     auto accelerator = context->getModuleLoader().newInstance("Piper.Infrastructure.Parallel.Accelerator", nullptr);
     auto manager = context->getModuleLoader().newInstance("Piper.Infrastructure.LLVMIR.LLVMIRManager", nullptr);
     generalAcceleratorTest(*context, eastl::dynamic_shared_pointer_cast<Piper::Accelerator>(accelerator.get()),

@@ -335,6 +335,7 @@ namespace Piper {
         Future<void> loadModule(const String& moduleID) override {
             if(mModules.count(moduleID))
                 return context().getScheduler().ready();
+            // TODO:lock module desc
             auto iter = mModuleDesc.find(moduleID);
             if(iter == mModuleDesc.cend())
                 throw;
@@ -348,7 +349,7 @@ namespace Piper {
                 throw;
 
             auto module = loadModule(String{ classID.substr(0, pos), context().getAllocator() });
-            // TODO:reduce split time
+            // TODO:reduce classID split time
             return newInstance(classID, config, module);
         }
         void addModuleDescription(const SharedObject<Config>& moduleDesc, const String& descPath) override {

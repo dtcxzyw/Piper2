@@ -28,6 +28,7 @@
 namespace Piper {
     class Allocator;
 
+    // TODO:alignment
     class PIPER_API STLAllocator {
     private:
         Allocator* mAllocator;

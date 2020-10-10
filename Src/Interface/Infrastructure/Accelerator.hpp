@@ -57,17 +57,14 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Parameter, Object);
         virtual ~Parameter() = default;
-        virtual void bindInput(uint32_t slot, const SharedObject<Resource>& resource) = 0;
-        virtual void bindOutput(uint32_t slot, const SharedObject<Resource>& resource) = 0;
-        virtual void bindFloat32(uint32_t slot, const float value) = 0;
-        virtual void bindFloat64(uint32_t slot, const double value) = 0;
-        virtual void bindInt(uint32_t slot, const intmax_t value, const uint32_t bits) = 0;
-        virtual void bindUInt(uint32_t slot, const uintmax_t value, const uint32_t bits) = 0;
-        virtual void bindStructure(uint32_t slot, const void* data, const size_t size) = 0;
+        virtual void appendInput(const SharedObject<Resource>& resource) = 0;
+        virtual void appendOutput(const SharedObject<Resource>& resource) = 0;
+        virtual void appendAccumulate(const SharedObject<Resource>& resource) = 0;
+        virtual void append(const void* data, size_t size, const size_t alignment) = 0;
 
-        template <typename T>
-        void bindStructure(uint32_t slot, const T& data) {
-            bindStructure(slot, &data, sizeof(data));
+        template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
+        void append(const T& data) {
+            append(&data, sizeof(T), alignof(T));
         }
 
         virtual void addExtraInput(const SharedObject<Resource>& resource) = 0;

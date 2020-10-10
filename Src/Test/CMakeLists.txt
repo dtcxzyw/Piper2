@@ -16,4 +16,5 @@ add_piper_test(Allocator)
 add_piper_test(Concurrency)
 add_piper_test(Accelerator)
 
+#TODO update saxpy.bc
 add_custom_command(TARGET Accelerator-Test PRE_BUILD COMMAND clang -emit-llvm saxpy.cpp -c -O3 -o ${CMAKE_BINARY_DIR}/Bin/saxpy.bc WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

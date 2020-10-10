@@ -15,7 +15,9 @@
 */
 
 #pragma once
+#include "../../Interface/Infrastructure/Logger.hpp"
 #include "../../PiperContext.hpp"
+#include "../../STL/String.hpp"
 #include "../../STL/UniquePtr.hpp"
 #include "../../STL/Variant.hpp"
 #include "../../STL/Vector.hpp"
@@ -71,6 +73,11 @@ namespace Piper {
             mImpl->wait();
             return std::move(*reinterpret_cast<T*>(const_cast<void*>(mImpl->storage())));
         }
+        ~Future() {
+            // TODO:formal check
+            if(mImpl.unique() && !ready())
+                throw;
+        }
     };
 
     template <>
@@ -91,6 +98,11 @@ namespace Piper {
         void wait() const {
             if(mImpl)
                 return mImpl->wait();
+        }
+        ~Future() {
+            // TODO:formal check
+            if(mImpl.unique() && !ready())
+                throw;
         }
     };
 
@@ -116,7 +128,9 @@ namespace Piper {
     template <typename... Args>
     class Closure final {
     private:
+        PiperContext& mContext;
         UniquePtr<ClosureStorage<Args...>> mFunc;
+        std::atomic_size_t mCount;
 
         template <typename Callable>
         Owner<ClosureStorage<Args...>*> alloc(STLAllocator allocator, Callable&& func) {
@@ -128,12 +142,26 @@ namespace Piper {
     public:
         Closure() = delete;
         template <typename Callable>
-        Closure(STLAllocator allocator, Callable&& func)
-            : mFunc(alloc<Callable>(allocator, std::move(func)), DefaultDeleter<ClosureStorage<Args...>>{ allocator }) {}
-        Closure(const Closure& rhs) : mFunc(std::move(const_cast<UniquePtr<ClosureStorage<Args...>>&>(rhs.mFunc))) {}
+        Closure(PiperContext& context, STLAllocator allocator, Callable&& func)
+            : mContext(context),
+              mFunc(alloc<Callable>(allocator, std::move(func)), DefaultDeleter<ClosureStorage<Args...>>{ allocator }),
+              mCount(0) {}
+        Closure(const Closure& rhs)
+            : mContext(rhs.mContext), mFunc(std::move(const_cast<UniquePtr<ClosureStorage<Args...>>&>(rhs.mFunc))), mCount(0) {}
         void operator()(Args... args) {
-            if(mFunc)
+            if(mFunc) {
                 mFunc->apply(args...);
+                ++mCount;
+            }
+        }
+        ~Closure() {
+            if(mCount > 1) {
+                auto& logger = mContext.getLogger();
+                if(logger.allow(LogLevel::Debug))
+                    logger.record(LogLevel::Debug,
+                                  "Execute Count = " + toString(mContext.getAllocator(), static_cast<size_t>(mCount)),
+                                  PIPER_SOURCE_LOCATION());
+            }
         }
     };
 
@@ -179,14 +207,14 @@ namespace Piper {
             auto result = newFutureImpl(0, false);
 
             if constexpr(NoArgument<Args...>::value) {
-                spawnImpl(Closure{ context().getAllocator(), std::forward<Callable>(callable) }, {}, result);
+                spawnImpl(Closure<>{ context(), context().getAllocator(), std::forward<Callable>(callable) }, {}, result);
             } else {
                 spawnImpl(
-                    Closure{ context().getAllocator(),
-                             [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)] {
-                                 detail::moveApply(std::move(call),
-                                                   std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)));
-                             } },
+                    Closure<>{ context(), context().getAllocator(),
+                               [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)] {
+                                   detail::moveApply(std::move(call),
+                                                     std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)));
+                               } },
                     depSpan, result);
             }
             return Future<ReturnType>(result);
@@ -198,7 +226,7 @@ namespace Piper {
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(sizeof(ReturnType), false);
 
-            spawnImpl(Closure{ context().getAllocator(),
+            spawnImpl(Closure{ context(), context().getAllocator(),
                                [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
                                 ptr = result->storage()] {
                                    new(reinterpret_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(detail::moveApply(
@@ -248,7 +276,7 @@ namespace Piper {
             dep.reserve(futures.size());
             for(auto&& future : futures)
                 dep.push_back(future.raw());
-            spawnImpl(Closure{ context().getAllocator(),
+            spawnImpl(Closure{ context(), context().getAllocator(),
                                [fs = std::move(futures), ptr = result->storage(), allocator = &context().getAllocator()] {
                                    auto vec = reinterpret_cast<Vector<T>*>(const_cast<void*>(ptr));
                                    new(vec) Vector<T>(*allocator);
@@ -264,7 +292,7 @@ namespace Piper {
         template <typename T>
         auto wrap(const Vector<Future<T>>& futures) -> std::enable_if_t<std::is_void_v<T>, Future<void>> {
             auto result = newFutureImpl(0, false);
-            Vector<const SharedObject<FutureImpl>> dep;
+            Vector<const SharedObject<FutureImpl>> dep{ context().getAllocator() };
             dep.reserve(futures.size());
             for(auto&& future : futures)
                 dep.push_back(future.raw());
@@ -286,7 +314,7 @@ namespace Piper {
             parallelForImpl(
                 n,
                 Closure<uint32_t>{
-                    context().getAllocator(),
+                    context(), context().getAllocator(),
                     [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
                      ptr = result->storage()](uint32_t idx) { std::apply(call, std::tuple_cat(std::make_tuple(idx), tuple)); } },
                 depSpan, result);
