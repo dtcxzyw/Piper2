@@ -59,7 +59,7 @@ namespace Piper {
         new(ptr.get()) CLASS(context);                                                                               \
         return ptr.release();                                                                                        \
     }                                                                                                                \
-    extern "C" PIPER_API const char* piperGetCompatibilityFeature() {                                                \
+    extern "C" PIPER_API const char* piperGetProtocol() {                                                \
         return PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;                                                          \
     }
 \

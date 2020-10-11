@@ -30,6 +30,7 @@ namespace Piper {
     // template <typename T>
     // class DataView;
 
+    // TODO:process report
     class FutureImpl : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(FutureImpl, Object)
@@ -45,8 +46,7 @@ namespace Piper {
         SharedObject<FutureImpl> mImpl;
 
     public:
-        explicit Future(const SharedObject<FutureImpl>& impl) noexcept : mImpl(impl) {}
-        explicit Future(SharedObject<FutureImpl>&& impl) noexcept : mImpl(std::move(impl)) {}
+        explicit Future(SharedObject<FutureImpl> impl) noexcept : mImpl(std::move(impl)) {}
 
         const SharedObject<FutureImpl>& raw() const {
             return mImpl;
@@ -86,8 +86,7 @@ namespace Piper {
         SharedObject<FutureImpl> mImpl;
 
     public:
-        explicit Future(const SharedObject<FutureImpl>& impl) noexcept : mImpl(impl) {}
-        explicit Future(SharedObject<FutureImpl>&& impl) noexcept : mImpl(std::move(impl)) {}
+        explicit Future(SharedObject<FutureImpl> impl) noexcept : mImpl(std::move(impl)) {}
 
         const SharedObject<FutureImpl>& raw() const {
             return mImpl;
@@ -181,6 +180,7 @@ namespace Piper {
     // TODO:support pipe
     // TODO:support future<instance>'s member function spawn before construction
     // TODO:support future of future(return future in spawn function)
+    // TODO:asynchronous destruction
     class Scheduler : public Object {
     public:
         virtual void spawnImpl(Variant<MonoState, Closure<>> func, const Span<const SharedObject<FutureImpl>>& dependencies,
@@ -206,6 +206,7 @@ namespace Piper {
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
 
+            // zero argument optimization
             if constexpr(NoArgument<Args...>::value) {
                 spawnImpl(Closure<>{ context(), context().getAllocator(), std::forward<Callable>(callable) }, {}, result);
             } else {
@@ -220,8 +221,19 @@ namespace Piper {
             return Future<ReturnType>(result);
         }
 
+        template <typename... T>
+        struct IsFuture {
+            static constexpr bool value = false;
+        };
+
+        template <typename... T>
+        struct IsFuture<Future<T>...> {
+            static constexpr bool value = true;
+        };
+
         template <typename ReturnType, typename Callable, typename... Args>
-        std::enable_if_t<!std::is_void_v<ReturnType>, Future<ReturnType>> spawnDispatch(Callable&& callable, Args&&... args) {
+        std::enable_if_t<!std::is_void_v<ReturnType> && !IsFuture<ReturnType>::value, Future<ReturnType>>
+        spawnDispatch(Callable&& callable, Args&&... args) {
             auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(sizeof(ReturnType), false);
@@ -236,16 +248,6 @@ namespace Piper {
 
             return Future<ReturnType>(result);
         }
-
-        template <typename... T>
-        struct FutureChecker {
-            static constexpr bool value = false;
-        };
-
-        template <typename... T>
-        struct FutureChecker<Future<T>...> {
-            static constexpr bool value = true;
-        };
 
     public:
         PIPER_INTERFACE_CONSTRUCT(Scheduler, Object)
@@ -263,7 +265,7 @@ namespace Piper {
             return Future<void>(nullptr);
         }
 
-        template <typename Callable, typename... Args, typename = std::enable_if_t<FutureChecker<std::decay_t<Args>...>::value>>
+        template <typename Callable, typename... Args, typename = std::enable_if_t<IsFuture<std::decay_t<Args>...>::value>>
         auto spawn(Callable&& callable, Args&&... args) {
             using ReturnType = std::invoke_result_t<std::decay_t<Callable>, std::decay_t<Args>...>;
             return spawnDispatch<ReturnType>(std::forward<Callable>(callable), std::forward<Args>(args)...);
@@ -276,15 +278,15 @@ namespace Piper {
             dep.reserve(futures.size());
             for(auto&& future : futures)
                 dep.push_back(future.raw());
-            spawnImpl(Closure{ context(), context().getAllocator(),
-                               [fs = std::move(futures), ptr = result->storage(), allocator = &context().getAllocator()] {
-                                   auto vec = reinterpret_cast<Vector<T>*>(const_cast<void*>(ptr));
-                                   new(vec) Vector<T>(*allocator);
-                                   vec->reserve(fs.size());
-                                   for(auto&& future : const_cast<Vector<Future<T>>&>(fs))
-                                       // TODO:ownership
-                                       vec->emplace_back(std::move(std::move(future).get()));
-                               } },
+            spawnImpl(Closure<>{ context(), context().getAllocator(),
+                                 [fs = std::move(futures), ptr = result->storage(), allocator = &context().getAllocator()] {
+                                     auto vec = reinterpret_cast<Vector<T>*>(const_cast<void*>(ptr));
+                                     new(vec) Vector<T>(*allocator);
+                                     vec->reserve(fs.size());
+                                     for(auto&& future : const_cast<Vector<Future<T>>&>(fs))
+                                         // TODO:ownership
+                                         vec->emplace_back(std::move(std::move(future).get()));
+                                 } },
                       Span<const SharedObject<FutureImpl>>{ dep.data(), dep.size() }, result);
             return Future<Vector<T>>{ result };
         }
@@ -304,7 +306,7 @@ namespace Piper {
         virtual void waitAll() noexcept = 0;
 
         // TODO:hint for schedule strategy
-        template <typename Callable, typename... Args, typename = std::enable_if_t<FutureChecker<std::decay_t<Args>...>::value>>
+        template <typename Callable, typename... Args, typename = std::enable_if_t<IsFuture<std::decay_t<Args>...>::value>>
         Future<void> parallelFor(uint32_t n, Callable&& callable, Args&&... args) {
             auto dependencies = std::initializer_list<SharedObject<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedObject<FutureImpl>>(dependencies.begin(), dependencies.end());

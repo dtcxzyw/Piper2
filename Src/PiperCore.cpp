@@ -295,10 +295,10 @@ namespace Piper {
                 auto handle = reinterpret_cast<void*>(::loadModule(fs::u8path((base + path + getModuleExtension()).c_str())));
                 DLLHandle lib{ handle };
                 stage.switchToStatic("check module feature", PIPER_SOURCE_LOCATION());
-                static const StringView coreFeature = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
-                using FeatureFunc = const char* (*)();
-                auto feature = reinterpret_cast<FeatureFunc>(lib.getFunctionAddress("piperGetCompatibilityFeature"));
-                if(StringView{ feature() } != coreFeature)
+                static const StringView coreProtocol = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
+                using ProtocolFunc = const char* (*)();
+                auto protocol = reinterpret_cast<ProtocolFunc>(lib.getFunctionAddress("piperGetProtocol"));
+                if(StringView{ protocol() } != coreProtocol)
                     throw;
                 stage.switchToStatic("init module", PIPER_SOURCE_LOCATION());
                 using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator);

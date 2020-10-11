@@ -37,6 +37,7 @@
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #pragma warning(pop)
+#include <llvm/Support/ManagedStatic.h>
 #include <mutex>
 #include <new>
 #include <utility>
@@ -170,6 +171,8 @@ namespace Piper {
     class ModuleImpl final : public Module {
     public:
         explicit ModuleImpl(PiperContext& context) : Module(context) {
+            if(!llvm::llvm_is_multithreaded())
+                throw;
             // TODO:reduce
             llvm::InitializeAllTargetInfos();
             llvm::InitializeAllTargets();
@@ -184,6 +187,9 @@ namespace Piper {
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<LLVMIRManager>(context())));
             }
             throw;
+        }
+        ~ModuleImpl() {
+            llvm::llvm_shutdown();
         }
     };
 }  // namespace Piper

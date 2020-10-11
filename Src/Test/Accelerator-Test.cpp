@@ -30,15 +30,18 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedObject<Pi
     std::mt19937_64 RNG(Clock::now().time_since_epoch().count());
     std::uniform_real_distribution<float> URD{ 0.0f, 1.0f };
     // saxpy:Z[i]=alpha*X[i]+Y[i]
-    constexpr size_t count = 100000000, repeat = 10;
+    constexpr size_t count = 10000000, repeat = 10;
     constexpr auto alpha = 5.0f;
-    Piper::Vector<float> X(count, context.getAllocator()), Y(count, context.getAllocator());
-    std::generate(X.begin(), X.end(), [&] { return URD(RNG); });
-    std::generate(Y.begin(), Y.end(), [&] { return URD(RNG); });
+    auto X = Piper::makeSharedPtr<Piper::Vector<float>>(context.getAllocator(), count, context.getAllocator());
+    std::generate(X->begin(), X->end(), [&] { return URD(RNG); });
+    auto Y = Piper::makeSharedPtr<Piper::Vector<float>>(context.getAllocator(), count, context.getAllocator());
+    std::generate(Y->begin(), Y->end(), [&] { return URD(RNG); });
+    auto beg = Clock::now();
+    auto& scheduler = context.getScheduler();
     auto devX = accelerator->createBuffer(count * sizeof(float), 64);
-    devX->upload(X.data());
+    devX->upload(scheduler.value(Piper::DataHolder{ X, X->data() }));
     auto devY = accelerator->createBuffer(count * sizeof(float), 64);
-    devY->upload(Y.data());
+    devY->upload(scheduler.value(Piper::DataHolder{ Y, Y->data() }));
     auto devZ = accelerator->createBuffer(count * sizeof(float), 64);
     devZ->reset();
 
@@ -47,16 +50,15 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedObject<Pi
     auto linkable = saxpy->generateLinkable(accelerator->getSupportedLinkableFormat());
     auto kernel = accelerator->compileKernel(
         Piper::Vector<Piper::Future<Piper::Vector<std::byte>>>{ { linkable }, context.getAllocator() }, "saxpy");
-    auto params = accelerator->createParameters();
+    auto args = accelerator->createArgument();
 
-    params->appendInput(devX->ref());
-    params->appendInput(devY->ref());
-    params->appendAccumulate(devZ->ref());
-    params->append(alpha);
+    args->appendInput(devX->ref());
+    args->appendInput(devY->ref());
+    args->appendInputOutput(devZ->ref());
+    args->append(alpha);
 
-    auto beg = Clock::now();
     for(size_t i = 0; i < repeat; ++i)
-        accelerator->runKernel(count, kernel, params);
+        accelerator->runKernel(count, kernel, args);
     auto dataZ = devZ->download().get();
     auto end = Clock::now();
     auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(end - beg).count();
@@ -66,7 +68,7 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedObject<Pi
 
     auto Z = reinterpret_cast<const float*>(dataZ.data());
     for(Piper::Index i = 0; i < count; ++i)
-        ASSERT_FLOAT_EQ(Z[i], repeat * (alpha * X[i] + Y[i]));
+        ASSERT_FLOAT_EQ(Z[i], repeat * (alpha * (*X)[i] + (*Y)[i]));
 }
 
 TEST_F(PiperCoreEnvironment, LLVM_CPU) {

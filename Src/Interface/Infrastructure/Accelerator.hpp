@@ -52,14 +52,15 @@ namespace Piper {
     };
 
     // TODO:type check in edge
-    // TODO:Parameter or Argument?
-    class Parameter : public Object {
+    // TODO:stateless
+    // TODO:rename:Payload
+    class Argument : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Parameter, Object);
-        virtual ~Parameter() = default;
+        PIPER_INTERFACE_CONSTRUCT(Argument, Object);
+        virtual ~Argument() = default;
         virtual void appendInput(const SharedObject<Resource>& resource) = 0;
         virtual void appendOutput(const SharedObject<Resource>& resource) = 0;
-        virtual void appendAccumulate(const SharedObject<Resource>& resource) = 0;
+        virtual void appendInputOutput(const SharedObject<Resource>& resource) = 0;
         virtual void append(const void* data, size_t size, const size_t alignment) = 0;
 
         template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
@@ -71,13 +72,27 @@ namespace Piper {
         virtual void addExtraOutput(const SharedObject<Resource>& resource) = 0;
     };
 
+    class DataHolder {
+    private:
+        SharedPtr<void> mHolder;
+        void* mPtr;
+
+    public:
+        template <typename T>
+        DataHolder(SharedPtr<T> holder, void* ptr) : mHolder(std::move(holder)), mPtr(ptr) {}
+
+        void* get() const noexcept {
+            return mPtr;
+        }
+    };
+
     class Buffer : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Buffer, Object);
         virtual ~Buffer() = default;
         virtual size_t size() const noexcept = 0;
-        // TODO:data holder?
-        virtual void upload(const void* data) = 0;
+        virtual void upload(Future<DataHolder> data) = 0;
+        // TODO:provide destination
         virtual Future<Vector<std::byte>> download() const = 0;
         virtual void reset() = 0;
         // TODO:immutable access limitation?
@@ -94,13 +109,13 @@ namespace Piper {
 
         virtual Span<const CString> getSupportedLinkableFormat() const = 0;
         virtual SharedObject<ResourceBinding> createResourceBinding() const = 0;
-        virtual SharedObject<Parameter> createParameters() const = 0;
+        virtual SharedObject<Argument> createArgument() const = 0;
         // TODO:Resource Name
         virtual SharedObject<Resource> createResource(ResourceHandle handle) const = 0;
         virtual Future<SharedObject<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
                                                                     const String& entry) = 0;
         virtual void runKernel(uint32_t n, const Future<SharedObject<RunnableProgram>>& kernel,
-                               const SharedObject<Parameter>& params) = 0;
+                               const SharedObject<Argument>& args) = 0;
         virtual void apply(Function<void, Context, CommandQueue> func, const SharedObject<ResourceBinding>& binding) = 0;
         virtual Future<void> available(const SharedObject<Resource>& resource) = 0;
 

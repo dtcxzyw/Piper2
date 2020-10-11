@@ -120,8 +120,8 @@ namespace Piper {
         void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedObject<FutureImpl>>& dependencies,
                              const SharedObject<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
-            // auto task = ctx.flow.for_each_index_static(static_cast<uint32_t>(0), n, static_cast<uint32_t>(1), std::move(func));
-
+            // TODO:performance
+            // auto task = ctx.flow.for_each_index_static(static_cast<uint32_t>(0), n, static_cast<uint32_t>(1),std::move(func));
             auto call = makeSharedPtr<Closure<uint32_t>>(context().getAllocator(), std::move(func));
             auto node = ctx.flow.placeholder();
             auto worker = static_cast<uint32_t>(mExecutor.num_workers());
