@@ -130,7 +130,7 @@ namespace Piper {
     public:
         explicit LLVMIRManager(PiperContext& context)
             : PITUManager(context), mContext(makeSharedPtr<llvm::LLVMContext>(context.getAllocator())) {}
-        Future<SharedObject<PITU>> loadPITU(const String& path) const override {
+        Future<SharedPtr<PITU>> loadPITU(const String& path) const override {
             return context().getScheduler().spawn([ctx = &context(), path, llvmctx = mContext] {
                 auto stage = ctx->getErrorHandler().enterStage("load PITU " + path, PIPER_SOURCE_LOCATION());
                 auto file = ctx->getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
@@ -146,9 +146,9 @@ namespace Piper {
                 ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
             });
         }
-        Future<SharedObject<PITU>> mergePITU(const Future<Vector<SharedObject<PITU>>>& pitus) const override {
+        Future<SharedPtr<PITU>> mergePITU(const Future<Vector<SharedPtr<PITU>>>& pitus) const override {
             return context().getScheduler().spawn(
-                [ctx = &context(), llvmctx = mContext](const Future<Vector<SharedObject<PITU>>>& pitus) {
+                [ctx = &context(), llvmctx = mContext](const Future<Vector<SharedPtr<PITU>>>& pitus) {
                     auto stage = ctx->getErrorHandler().enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
                     auto& submod = pitus.get();
 
@@ -180,7 +180,7 @@ namespace Piper {
             llvm::InitializeAllAsmParsers();
             llvm::InitializeAllAsmPrinters();
         }
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                  const Future<void>& module) override {
             if(classID == "LLVMIRManager") {
                 return context().getScheduler().value(

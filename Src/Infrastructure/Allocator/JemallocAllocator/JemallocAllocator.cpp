@@ -37,7 +37,7 @@ namespace Piper {
     class ModuleImpl final : public Module {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                  const Future<void>& module) override {
             if(classID == "Allocator") {
                 return context().getScheduler().value(

@@ -36,7 +36,7 @@ protected:
         auto base = Piper::String{ ".", context->getAllocator() };
         auto name = Piper::makeSharedObject<Piper::Config>(*context, "Piper.Infrastructure.NlohmannJson");
         auto path = Piper::makeSharedObject<Piper::Config>(*context, "Infrastructure/Config/NlohmannJson");
-        Piper::UMap<Piper::String, Piper::SharedObject<Piper::Config>> desc{ context->getAllocator() };
+        Piper::UMap<Piper::String, Piper::SharedPtr<Piper::Config>> desc{ context->getAllocator() };
         desc.insert(Piper::makePair(Piper::String{ "Name", context->getAllocator() }, name));
         desc.insert(Piper::makePair(Piper::String{ "Path", context->getAllocator() }, path));
         auto mod = context->getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(*context, std::move(desc)), base);

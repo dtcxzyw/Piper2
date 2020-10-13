@@ -48,6 +48,7 @@ namespace Piper {
     private:
         void* mPtr;
         Optional<FutureContext> mFuture;
+        mutable bool mFastReady;
 
         void* alloc(const size_t size) const {
             return size ? reinterpret_cast<void*>(context().getAllocator().alloc(size)) : nullptr;
@@ -55,15 +56,20 @@ namespace Piper {
 
     public:
         FutureStorage(PiperContext& context, const size_t size, const bool ready)
-            : FutureImpl(context), mPtr(alloc(size)), mFuture(eastl::nullopt) {
+            : FutureImpl(context), mPtr(alloc(size)), mFuture(eastl::nullopt), mFastReady(ready) {
             if(!ready)
                 mFuture.emplace();
         }
         FutureContext& getFutureContext() {
             return mFuture.value();
         }
+        bool fastReady() const noexcept override {
+            return mFastReady;
+        }
         bool ready() const noexcept override {
-            return !mFuture.has_value() || Piper::ready(mFuture.value());
+            if(!mFastReady && (!mFuture.has_value() || Piper::ready(mFuture.value())))
+                mFastReady = true;
+            return mFastReady;
         }
 
         void wait() const override {
@@ -86,10 +92,11 @@ namespace Piper {
     private:
         tf::Executor mExecutor;
 
-        void commit(FutureContext& ctx, const tf::Task& task, const Span<const SharedObject<FutureImpl>>& dependencies) {
+        void commit(FutureContext& ctx, const tf::Task& task, const Span<const SharedPtr<FutureImpl>>& dependencies) {
             auto src = ctx.flow.placeholder();
+            // TODO:check overhead
             for(auto&& dep : dependencies) {
-                if(!dep || dep->ready())
+                if(!dep || dep->fastReady())
                     continue;
 
                 auto cond = ctx.flow.emplace([dep] { return dep->ready(); });
@@ -111,21 +118,24 @@ namespace Piper {
                 logger.record(LogLevel::Info, "Taskflow workers : " + toString(context.getAllocator(), mExecutor.num_workers()),
                               PIPER_SOURCE_LOCATION());
         }
-        void spawnImpl(Variant<MonoState, Closure<>> func, const Span<const SharedObject<FutureImpl>>& dependencies,
-                       const SharedObject<FutureImpl>& res) override {
+        void spawnImpl(Optional<Closure<>> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+                       const SharedPtr<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
-            auto task = (func.index() ? ctx.flow.emplace(std::move(get<Closure<>>(func))) : ctx.flow.placeholder());
+            auto task = (func.has_value() ? ctx.flow.emplace(std::move(func.value())) : ctx.flow.placeholder());
             commit(ctx, task, dependencies);
         }
-        void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedObject<FutureImpl>>& dependencies,
-                             const SharedObject<FutureImpl>& res) override {
+        void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+                             const SharedPtr<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
             // TODO:performance
-            // auto task = ctx.flow.for_each_index_static(static_cast<uint32_t>(0), n, static_cast<uint32_t>(1),std::move(func));
-            auto call = makeSharedPtr<Closure<uint32_t>>(context().getAllocator(), std::move(func));
-            auto node = ctx.flow.placeholder();
             auto worker = static_cast<uint32_t>(mExecutor.num_workers());
             auto chunkSize = std::max(1U, n / (worker * 5));
+            // auto task =
+            //    ctx.flow.for_each_index_static(static_cast<uint32_t>(0), n, static_cast<uint32_t>(1), std::move(func),
+            //    chunkSize);
+            auto call = makeSharedPtr<Closure<uint32_t>>(context().getAllocator(), std::move(func));
+            // TODO:remove node
+            auto node = ctx.flow.placeholder();
             for(uint32_t beg = 0; beg < n; beg += chunkSize) {
                 auto end = std::min(beg + chunkSize, n);
                 auto task = ctx.flow.emplace([call, beg, end] {
@@ -136,18 +146,15 @@ namespace Piper {
             }
             commit(ctx, node, dependencies);
         }
-        SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool ready) override {
+        SharedPtr<FutureImpl> newFutureImpl(const size_t size, const bool ready) override {
             return makeSharedObject<FutureStorage>(context(), size, ready);
-        }
-        void waitAll() noexcept override {
-            mExecutor.wait_for_all();
         }
     };
     class ModuleImpl final : public Module {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
-                                                 const Future<void>& module) override {
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
+                                              const Future<void>& module) override {
             if(classID == "Scheduler") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<SchedulerTaskflow>(context())));

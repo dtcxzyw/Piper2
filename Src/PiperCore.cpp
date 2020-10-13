@@ -238,8 +238,8 @@ namespace Piper {
 
     class ModuleLoaderImpl final : public ModuleLoader {
     private:
-        UMap<String, SharedObject<Module>> mModules;
-        UMap<String, Pair<SharedObject<Config>, String>> mModuleDesc;
+        UMap<String, SharedPtr<Module>> mModules;
+        UMap<String, Pair<SharedPtr<Config>, String>> mModuleDesc;
         Stack<DLLHandle> mHandles;
         // USet<String> mClasses; TODO:Cache
         std::shared_mutex mMutex;
@@ -248,7 +248,7 @@ namespace Piper {
         explicit ModuleLoaderImpl(PiperContext& context)
             : ModuleLoader(context), mModules(context.getAllocator()), mHandles(STLAllocator{ context.getAllocator() }),
               mModuleDesc(context.getAllocator()) {}
-        Future<void> loadModule(const SharedObject<Config>& moduleDesc, const String& descPath) override {
+        Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) override {
             auto stage = context().getErrorHandler().enterStageStatic("parse package description", PIPER_SOURCE_LOCATION());
             auto&& info = moduleDesc->viewAsObject();
             auto iter = info.find(String("Name", context().getAllocator()));
@@ -294,7 +294,7 @@ namespace Piper {
                 auto stage = context().getErrorHandler().enterStage("load module " + path, PIPER_SOURCE_LOCATION());
                 auto handle = reinterpret_cast<void*>(::loadModule(fs::u8path((base + path + getModuleExtension()).c_str())));
                 DLLHandle lib{ handle };
-                stage.switchToStatic("check module feature", PIPER_SOURCE_LOCATION());
+                stage.switchToStatic("check module protocol", PIPER_SOURCE_LOCATION());
                 static const StringView coreProtocol = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
                 using ProtocolFunc = const char* (*)();
                 auto protocol = reinterpret_cast<ProtocolFunc>(lib.getFunctionAddress("piperGetProtocol"));
@@ -304,8 +304,8 @@ namespace Piper {
                 using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator);
                 auto init = reinterpret_cast<InitFunc>(lib.getFunctionAddress("piperInitModule"));
                 auto& allocator = context().getAllocator();
-                auto mod = SharedObject<Module>{ init(context(), allocator), DefaultDeleter<Module>{ allocator },
-                                                 STLAllocator{ allocator } };
+                auto mod = SharedPtr<Module>{ init(context(), allocator), DefaultDeleter<Module>{ allocator },
+                                              STLAllocator{ allocator } };
                 if(!mod)
                     throw;
                 {
@@ -315,8 +315,8 @@ namespace Piper {
                 }
             });
         };
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
-                                                 const Future<void>& module) override {
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
+                                              const Future<void>& module) override {
             // TODO:asynchronous module loading
             module.wait();
 
@@ -341,7 +341,7 @@ namespace Piper {
                 throw;
             return loadModule(iter->second.first, iter->second.second);
         }
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config) override {
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config) override {
             auto stage = context().getErrorHandler().enterStage("new instance of " + String(classID, context().getAllocator()),
                                                                 PIPER_SOURCE_LOCATION());
             const auto pos = classID.find_last_of('.');
@@ -352,7 +352,7 @@ namespace Piper {
             // TODO:reduce classID split time
             return newInstance(classID, config, module);
         }
-        void addModuleDescription(const SharedObject<Config>& moduleDesc, const String& descPath) override {
+        void addModuleDescription(const SharedPtr<Config>& moduleDesc, const String& descPath) override {
             auto&& obj = moduleDesc->viewAsObject();
             auto iter = obj.find(String{ "Name", context().getAllocator() });
             if(iter == obj.cend())
@@ -422,6 +422,9 @@ namespace Piper {
         bool ready() const noexcept override {
             return true;
         }
+        bool fastReady() const noexcept override {
+            return true;
+        }
         const void* storage() const override {
             return mPtr;
         }
@@ -432,26 +435,25 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(SchedulerImpl, Scheduler)
 
-        void spawnImpl(Variant<MonoState, Closure<>> func, const Span<const SharedObject<FutureImpl>>& dependencies,
-                       const SharedObject<FutureImpl>& res) override {
+        void spawnImpl(Optional<Closure<>> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+                       const SharedPtr<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
                 if(dep)
                     dep->wait();
-            if(func.index())
-                get<Closure<>>(func)();
+            if(func.has_value())
+                func.value()();
         }
-        void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedObject<FutureImpl>>& dependencies,
-                             const SharedObject<FutureImpl>& res) override {
+        void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+                             const SharedPtr<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
                 if(dep)
                     dep->wait();
             for(uint32_t i = 0; i < n; ++i)
                 func(i);
         }
-        SharedObject<FutureImpl> newFutureImpl(const size_t size, const bool) override {
+        SharedPtr<FutureImpl> newFutureImpl(const size_t size, const bool) override {
             return makeSharedObject<FutureStorage>(context(), size);
         }
-        void waitAll() noexcept override {}
     };
 
     class ErrorHandlerImpl final : public ErrorHandler {
@@ -518,15 +520,15 @@ namespace Piper {
     private:
         DefaultAllocator mDefaultAllocator;
         Allocator* mAllocator;
-        SharedObject<Logger> mLogger;
+        SharedPtr<Logger> mLogger;
         ModuleLoaderImpl mModuleLoader;
-        SharedObject<Scheduler> mScheduler;
-        SharedObject<FileSystem> mFileSystem;
-        SharedObject<Allocator> mUserAllocator;
+        SharedPtr<Scheduler> mScheduler;
+        SharedPtr<FileSystem> mFileSystem;
+        SharedPtr<Allocator> mUserAllocator;
         UnitManagerImpl mUnitManager;
         ErrorHandlerImpl mErrorHandler;
 
-        Stack<SharedObject<Object>> mLifeTimeRecorder;
+        Stack<SharedPtr<Object>> mLifeTimeRecorder;
 
     public:
         PiperContextImpl();
@@ -553,19 +555,19 @@ namespace Piper {
             return mErrorHandler;
         }
 
-        void setLogger(const SharedObject<Logger>& logger) noexcept override {
+        void setLogger(const SharedPtr<Logger>& logger) noexcept override {
             mLifeTimeRecorder.push(logger);
             mLogger = logger;
         }
-        void setScheduler(const SharedObject<Scheduler>& scheduler) noexcept override {
+        void setScheduler(const SharedPtr<Scheduler>& scheduler) noexcept override {
             mLifeTimeRecorder.push(scheduler);
             mScheduler = scheduler;
         }
-        void setFileSystem(const SharedObject<FileSystem>& filesystem) noexcept override {
+        void setFileSystem(const SharedPtr<FileSystem>& filesystem) noexcept override {
             mLifeTimeRecorder.push(filesystem);
             mFileSystem = filesystem;
         }
-        void setAllocator(const SharedObject<Allocator>& allocator) noexcept override {
+        void setAllocator(const SharedPtr<Allocator>& allocator) noexcept override {
             mLifeTimeRecorder.push(allocator);
             mUserAllocator = allocator;
             mAllocator = mUserAllocator.get();
@@ -573,7 +575,6 @@ namespace Piper {
         ~PiperContextImpl() {
             auto stage = mErrorHandler.enterStageStatic("destroy Piper context", PIPER_SOURCE_LOCATION());
             mLogger->flush();
-            mScheduler->waitAll();
             while(!mLifeTimeRecorder.empty())
                 mLifeTimeRecorder.pop();
         }

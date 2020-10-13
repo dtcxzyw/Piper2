@@ -35,8 +35,8 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(PITUManager, Object)
         virtual ~PITUManager() = default;
-        virtual Future<SharedObject<PITU>> loadPITU(const String& path) const = 0;
-        virtual Future<SharedObject<PITU>> mergePITU(const Future<Vector<SharedObject<PITU>>>& pitus) const = 0;
+        virtual Future<SharedPtr<PITU>> loadPITU(const String& path) const = 0;
+        virtual Future<SharedPtr<PITU>> mergePITU(const Future<Vector<SharedPtr<PITU>>>& pitus) const = 0;
     };
 
     // TODO:LinkableProgram

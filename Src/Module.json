@@ -28,5 +28,9 @@
   {
     "Name": "Piper.Infrastructure.Parallel",
     "Path": "Infrastructure/Accelerator/Parallel"
+  },
+  {
+    "Name": "Piper.Infrastructure.Squirrel",
+    "Path": "Infrastructure/Concurrency/Squirrel"
   }
 ]

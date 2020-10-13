@@ -40,10 +40,10 @@ namespace Piper {
     };
     class PiperContextOwner : public PiperContext {
     public:
-        virtual void setLogger(const SharedObject<Logger>& logger) noexcept = 0;
-        virtual void setScheduler(const SharedObject<Scheduler>& scheduler) noexcept = 0;
-        virtual void setFileSystem(const SharedObject<FileSystem>& filesystem) noexcept = 0;
-        virtual void setAllocator(const SharedObject<Allocator>& allocator) noexcept = 0;
+        virtual void setLogger(const SharedPtr<Logger>& logger) noexcept = 0;
+        virtual void setScheduler(const SharedPtr<Scheduler>& scheduler) noexcept = 0;
+        virtual void setFileSystem(const SharedPtr<FileSystem>& filesystem) noexcept = 0;
+        virtual void setAllocator(const SharedPtr<Allocator>& allocator) noexcept = 0;
         virtual ~PiperContextOwner() = default;
     };
 }  // namespace Piper

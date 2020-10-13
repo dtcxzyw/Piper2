@@ -36,7 +36,6 @@ TEST_F(PiperCoreEnvironment, ConcurrencyTest) {
     ASSERT_EQ(b.get(), 2);
     auto c = scheduler.spawn([](const Piper::Future<int>& x, const Piper::Future<int>& y) { return x.get() + y.get(); }, a, b);
     ASSERT_EQ(c.get(), 3);
-    scheduler.waitAll();
 }
 
 TEST_F(PiperCoreEnvironment, ConfigTest) {
@@ -72,14 +71,14 @@ TEST_F(PiperCoreEnvironment, ConfigTest) {
     config->at("Name") = Piper::makeSharedObject<Piper::Config>(*context, "Piper");
     ASSERT_EQ(config->type(), Piper::NodeType::Object);
     ASSERT_EQ("Piper", config->at("Name")->get<Piper::String>());
-    Piper::UMap<Piper::String, Piper::SharedObject<Piper::Config>> map{ context->getAllocator() };
+    Piper::UMap<Piper::String, Piper::SharedPtr<Piper::Config>> map{ context->getAllocator() };
     map.insert(Piper::makePair(Piper::String("Name", context->getAllocator()), Piper::makeSharedObject<Piper::Config>(*context)));
     config = Piper::makeSharedObject<Piper::Config>(*context, std::move(map));
     ASSERT_EQ(config->type(), Piper::NodeType::Object);
     // array
     config = Piper::makeSharedObject<Piper::Config>(
         *context,
-        Piper::Vector<Piper::SharedObject<Piper::Config>>({ Piper::makeSharedObject<Piper::Config>(*context) },
+        Piper::Vector<Piper::SharedPtr<Piper::Config>>({ Piper::makeSharedObject<Piper::Config>(*context) },
                                                           context->getAllocator()));
     ASSERT_EQ(config->type(), Piper::NodeType::Array);
     ASSERT_EQ(config->viewAsArray()[0]->type(), Piper::NodeType::Null);

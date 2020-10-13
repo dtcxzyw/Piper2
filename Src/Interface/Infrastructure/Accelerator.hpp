@@ -47,8 +47,8 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(ResourceBinding, Object);
         virtual ~ResourceBinding() = default;
-        virtual void addInput(const SharedObject<Resource>& resource) = 0;
-        virtual void addOutput(const SharedObject<Resource>& resource) = 0;
+        virtual void addInput(const SharedPtr<Resource>& resource) = 0;
+        virtual void addOutput(const SharedPtr<Resource>& resource) = 0;
     };
 
     // TODO:type check in edge
@@ -58,9 +58,9 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Argument, Object);
         virtual ~Argument() = default;
-        virtual void appendInput(const SharedObject<Resource>& resource) = 0;
-        virtual void appendOutput(const SharedObject<Resource>& resource) = 0;
-        virtual void appendInputOutput(const SharedObject<Resource>& resource) = 0;
+        virtual void appendInput(const SharedPtr<Resource>& resource) = 0;
+        virtual void appendOutput(const SharedPtr<Resource>& resource) = 0;
+        virtual void appendInputOutput(const SharedPtr<Resource>& resource) = 0;
         virtual void append(const void* data, size_t size, const size_t alignment) = 0;
 
         template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
@@ -68,8 +68,8 @@ namespace Piper {
             append(&data, sizeof(T), alignof(T));
         }
 
-        virtual void addExtraInput(const SharedObject<Resource>& resource) = 0;
-        virtual void addExtraOutput(const SharedObject<Resource>& resource) = 0;
+        virtual void addExtraInput(const SharedPtr<Resource>& resource) = 0;
+        virtual void addExtraOutput(const SharedPtr<Resource>& resource) = 0;
     };
 
     class DataHolder {
@@ -96,7 +96,7 @@ namespace Piper {
         virtual Future<Vector<std::byte>> download() const = 0;
         virtual void reset() = 0;
         // TODO:immutable access limitation?
-        virtual SharedObject<Resource> ref() const = 0;
+        virtual SharedPtr<Resource> ref() const = 0;
     };
 
     // TODO:share resource between Accelerators(CPU/GPU)
@@ -108,19 +108,19 @@ namespace Piper {
         virtual ~Accelerator() = default;
 
         virtual Span<const CString> getSupportedLinkableFormat() const = 0;
-        virtual SharedObject<ResourceBinding> createResourceBinding() const = 0;
-        virtual SharedObject<Argument> createArgument() const = 0;
+        virtual SharedPtr<ResourceBinding> createResourceBinding() const = 0;
+        virtual SharedPtr<Argument> createArgument() const = 0;
         // TODO:Resource Name
-        virtual SharedObject<Resource> createResource(ResourceHandle handle) const = 0;
-        virtual Future<SharedObject<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
+        virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
+        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
                                                                     const String& entry) = 0;
-        virtual void runKernel(uint32_t n, const Future<SharedObject<RunnableProgram>>& kernel,
-                               const SharedObject<Argument>& args) = 0;
-        virtual void apply(Function<void, Context, CommandQueue> func, const SharedObject<ResourceBinding>& binding) = 0;
-        virtual Future<void> available(const SharedObject<Resource>& resource) = 0;
+        virtual void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
+                               const SharedPtr<Argument>& args) = 0;
+        virtual void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) = 0;
+        virtual Future<void> available(const SharedPtr<Resource>& resource) = 0;
 
         // TODO:page lock memory for CUDA
         // TODO:reduce copy for CPU or DMA
-        virtual SharedObject<Buffer> createBuffer(size_t size, size_t alignment) = 0;
+        virtual SharedPtr<Buffer> createBuffer(size_t size, size_t alignment) = 0;
     };
 }  // namespace Piper

@@ -32,7 +32,7 @@ namespace Piper {
 
     class Config final : public Object {
     private:
-        Variant<double, String, intmax_t, uintmax_t, bool, Vector<SharedObject<Config>>, UMap<String, SharedObject<Config>>,
+        Variant<double, String, intmax_t, uintmax_t, bool, Vector<SharedPtr<Config>>, UMap<String, SharedPtr<Config>>,
                 MonoState>
             mValue;
 
@@ -71,21 +71,21 @@ namespace Piper {
         }
 
         // TODO:move to core
-        const UMap<String, SharedObject<Config>>& viewAsObject() const {
-            return Piper::get<UMap<String, SharedObject<Config>>>(mValue);
+        const UMap<String, SharedPtr<Config>>& viewAsObject() const {
+            return Piper::get<UMap<String, SharedPtr<Config>>>(mValue);
         }
 
-        const Vector<SharedObject<Config>>& viewAsArray() const {
-            return Piper::get<Vector<SharedObject<Config>>>(mValue);
+        const Vector<SharedPtr<Config>>& viewAsArray() const {
+            return Piper::get<Vector<SharedPtr<Config>>>(mValue);
         };
 
-        const SharedObject<Config>& at(const StringView& key) const {
+        const SharedPtr<Config>& at(const StringView& key) const {
             return viewAsObject().find(String(key, context().getAllocator()))->second;
         }
-        SharedObject<Config>& at(const StringView& key) {
+        SharedPtr<Config>& at(const StringView& key) {
             if(type() == NodeType::Null)
-                mValue = UMap<String, SharedObject<Config>>{ context().getAllocator() };
-            auto&& map = Piper::get<UMap<String, SharedObject<Config>>>(mValue);
+                mValue = UMap<String, SharedPtr<Config>>{ context().getAllocator() };
+            auto&& map = Piper::get<UMap<String, SharedPtr<Config>>>(mValue);
             auto& res = map[String(key, context().getAllocator())];
             if(!res)
                 res = makeSharedObject<Config>(context());
@@ -101,7 +101,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(ConfigSerializer, Object);
         virtual ~ConfigSerializer() = default;
-        virtual SharedObject<Config> deserialize(const String& path) const = 0;
-        virtual void serialize(const SharedObject<Config>& config, const String& path) const = 0;
+        virtual SharedPtr<Config> deserialize(const String& path) const = 0;
+        virtual void serialize(const SharedPtr<Config>& config, const String& path) const = 0;
     };
 }  // namespace Piper

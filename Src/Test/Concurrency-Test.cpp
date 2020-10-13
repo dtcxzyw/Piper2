@@ -35,12 +35,13 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
     auto c = context.getScheduler().spawn(
         [&count](const Piper::Future<int32_t>& x, const Piper::Future<int32_t>& y) {
             ++count;
+            // simulate long computation
             std::this_thread::sleep_for(1000ms);
             return x.get() + y.get();
         },
         a, b);
     ASSERT_FALSE(c.ready());
-    context.getScheduler().waitAll();
+    c.wait();
     ASSERT_TRUE(c.ready());
     auto d = context.getScheduler().spawn([](const Piper::Future<int32_t>& x) { return x.get() * x.get(); }, c);
     ASSERT_EQ(d.get(), 9);
@@ -98,6 +99,14 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
 TEST_F(PiperCoreEnvironment, Taskflow) {
     auto inst = context->getModuleLoader()
                     .newInstance("Piper.Infrastructure.Taskflow.Scheduler", Piper::makeSharedObject<Piper::Config>(*context))
+                    .get();
+    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst));
+    generalConcurrencyTest(*context);
+}
+
+TEST_F(PiperCoreEnvironment, Squirrel) {
+    auto inst = context->getModuleLoader()
+                    .newInstance("Piper.Infrastructure.Squirrel.Scheduler", Piper::makeSharedObject<Piper::Config>(*context))
                     .get();
     contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst));
     generalConcurrencyTest(*context);

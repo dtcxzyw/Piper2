@@ -30,12 +30,12 @@ using Json = nlohmann::json;
 namespace Piper {
     class JsonSerializer final : public ConfigSerializer {
     private:
-        SharedObject<Config> buildFromJson(const Json& json) const {
+        SharedPtr<Config> buildFromJson(const Json& json) const {
             switch(json.type()) {
                 case Json::value_t::null:
                     return makeSharedObject<Config>(context(), MonoState{});
                 case Json::value_t::object: {
-                    UMap<String, SharedObject<Config>> attrs{ context().getAllocator() };
+                    UMap<String, SharedPtr<Config>> attrs{ context().getAllocator() };
                     for(const auto& attr : json.items()) {
                         auto&& key = attr.key();
                         attrs.insert(makePair(String{ StringView{ key.c_str(), key.size() }, context().getAllocator() },
@@ -44,7 +44,7 @@ namespace Piper {
                     return makeSharedObject<Config>(context(), std::move(attrs));
                 }
                 case Json::value_t::array: {
-                    Vector<SharedObject<Config>> elements{ context().getAllocator() };
+                    Vector<SharedPtr<Config>> elements{ context().getAllocator() };
                     elements.reserve(json.size());
                     for(const auto& element : json)
                         elements.push_back(buildFromJson(element));
@@ -70,7 +70,7 @@ namespace Piper {
             // TODO:disable warining C4715
         }
 
-        Json buildJson(const SharedObject<Config>& config) const {
+        Json buildJson(const SharedPtr<Config>& config) const {
             switch(config->type()) {
                 case NodeType::FloatingPoint:
                     return config->get<double>();
@@ -102,7 +102,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(JsonSerializer, ConfigSerializer)
-        SharedObject<Config> deserialize(const String& path) const override {
+        SharedPtr<Config> deserialize(const String& path) const override {
             auto stage = context().getErrorHandler().enterStage("parse configuration " + path, PIPER_SOURCE_LOCATION());
             auto file = context().getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
             auto map = file->map(0, file->size());
@@ -113,7 +113,7 @@ namespace Piper {
             stage.switchToStatic("build from json", PIPER_SOURCE_LOCATION());
             return buildFromJson(json);
         }
-        void serialize(const SharedObject<Config>& config, const String& path) const override {
+        void serialize(const SharedPtr<Config>& config, const String& path) const override {
             auto stage = context().getErrorHandler().enterStageStatic("build json from configuration", PIPER_SOURCE_LOCATION());
             auto content = buildJson(config).dump();
             stage.switchTo("output json to " + path, PIPER_SOURCE_LOCATION());
@@ -126,7 +126,7 @@ namespace Piper {
     class ModuleImpl final : public Module {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                  const Future<void>& module) override {
             if(classID == "JsonSerializer") {
                 return context().getScheduler().value(

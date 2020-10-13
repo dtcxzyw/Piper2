@@ -88,6 +88,9 @@ namespace Piper {
         ReadFuture(PiperContext& context, const STLAllocator& allocator, const size_t size)
             : FutureImpl(context),
               data(makeSharedPtr<Pair<bool, Vector<std::byte>>>(allocator, false, Vector<std::byte>{ size, allocator })) {}
+        bool fastReady() const noexcept override {
+            return data->first;
+        }
         bool ready() const noexcept {
             return data->first;
         }
@@ -229,7 +232,7 @@ namespace Piper {
         size_t alignment() const noexcept override {
             return getMemoryAlignment();
         }
-        SharedObject<MappedSpan> map(const size_t offset, const size_t size) const override {
+        SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
             size_t end = offset + size;
             size_t rem = offset % getMemoryAlignment();
             size_t roffset = offset - rem;
@@ -318,12 +321,11 @@ namespace Piper {
             for(auto&& t : mWorkers)
                 t.join();
         }
-        SharedObject<Stream> openFileStream(const StringView& path, const FileAccessMode access,
-                                            const FileCacheHint hint) override {
+        SharedPtr<Stream> openFileStream(const StringView& path, const FileAccessMode access, const FileCacheHint hint) override {
             return makeSharedObject<StreamImpl>(context(), openFile(path, access, hint, true));
         }
-        SharedObject<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint,
-                                           const size_t maxSize) override {
+        SharedPtr<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint,
+                                        const size_t maxSize) override {
             return makeSharedObject<MappedMemoryImpl>(context(), openFile(path, access, hint, false), access, maxSize);
         }
         void removeFile(const StringView& path) override {

@@ -29,9 +29,9 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(FileSystem, Object)
         // TODO:enumerate files
-        virtual SharedObject<Stream> openFileStream(const StringView& path, const FileAccessMode access,
+        virtual SharedPtr<Stream> openFileStream(const StringView& path, const FileAccessMode access,
                                                     const FileCacheHint hint) = 0;
-        virtual SharedObject<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint,
+        virtual SharedPtr<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint,
                                                    const size_t maxSize = 0) = 0;
         virtual void removeFile(const StringView& path) = 0;
 

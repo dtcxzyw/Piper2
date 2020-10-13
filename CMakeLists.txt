@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 add_compile_definitions("UNICODE")
 add_compile_definitions("_UNICODE")
 add_compile_options("/utf-8")
+#DEBUG
+#add_link_options("/PROFILE")
 
 function(set_output_path REPATH)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Lib/${REPATH} PARENT_SCOPE)

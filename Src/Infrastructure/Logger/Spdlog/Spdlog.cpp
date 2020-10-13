@@ -31,7 +31,7 @@ namespace Piper {
         LogLevel mLevel;
 
     public:
-        explicit Spdlog(PiperContext& context, const SharedObject<Config>& config)
+        explicit Spdlog(PiperContext& context, const SharedPtr<Config>& config)
             : Logger(context), mLevel(static_cast<LogLevel>(0)) {
             static const std::map<size_t, LogLevel> map{ { hashStringView("Debug"), LogLevel::Debug },
                                                          { hashStringView("Error"), LogLevel::Error },
@@ -85,7 +85,7 @@ namespace Piper {
     class ModuleImpl final : public Module {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                  const Future<void>& module) override {
             if(classID == "Spdlog") {
                 return context().getScheduler().value(

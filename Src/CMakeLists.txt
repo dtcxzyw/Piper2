@@ -11,6 +11,8 @@ add_subdirectory("Test")
 set_output_path(./)
 add_library(PiperCore SHARED PiperCore.cpp PiperCoreWin32.cpp)
 target_link_libraries(PiperCore PRIVATE EABase EASTL Microsoft.GSL::GSL)
+
+#TODO:auto update
 file(COPY Module.json DESTINATION  ${CMAKE_BINARY_DIR}/Bin)
 
 set_output_path(./)

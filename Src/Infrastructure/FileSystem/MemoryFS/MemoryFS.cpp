@@ -27,17 +27,17 @@ namespace Piper {
 
     class StorageUnit final : public Object {
     private:
-        Variant<UMap<String, SharedObject<StorageUnit>>, Vector<std::byte>> mData;
+        Variant<UMap<String, SharedPtr<StorageUnit>>, Vector<std::byte>> mData;
         auto& viewAsDir() {
             if(isFile())
                 throw;
-            return get<UMap<String, SharedObject<StorageUnit>>>(mData);
+            return get<UMap<String, SharedPtr<StorageUnit>>>(mData);
         }
 
     public:
         StorageUnit(PiperContext& context, FileTag) : Object(context), mData(Vector<std::byte>{ context.getAllocator() }) {}
         StorageUnit(PiperContext& context, DirTag)
-            : Object(context), mData(UMap<String, SharedObject<StorageUnit>>{ context.getAllocator() }) {}
+            : Object(context), mData(UMap<String, SharedPtr<StorageUnit>>{ context.getAllocator() }) {}
         bool isFile() const noexcept {
             return mData.index() == 1;
         }
@@ -55,7 +55,7 @@ namespace Piper {
                 }
             throw;
         }
-        void insert(const String& key, const SharedObject<StorageUnit>& unit) {
+        void insert(const String& key, const SharedPtr<StorageUnit>& unit) {
             auto& dir = viewAsDir();
             if(dir.count(key))
                 throw;
@@ -124,7 +124,7 @@ namespace Piper {
         size_t alignment() const noexcept override {
             return 1 << 16;
         }
-        SharedObject<MappedSpan> map(const size_t offset, const size_t size) const override {
+        SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
             if(this->size() <= offset + size)
                 throw;
             if(mData.size() <= offset + size)
@@ -201,10 +201,10 @@ namespace Piper {
     public:
         explicit MemoryFS(PiperContext& context) : FileSystem(context), mRoot(context, DirTag{}) {}
         // TODO:memory protection
-        SharedObject<Stream> openFileStream(const StringView& path, const FileAccessMode access, const FileCacheHint) {
+        SharedPtr<Stream> openFileStream(const StringView& path, const FileAccessMode access, const FileCacheHint) {
             return makeSharedObject<StreamImpl>(context(), openFile(path, access), access);
         }
-        SharedObject<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint,
+        SharedPtr<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint,
                                            const size_t maxSize) override {
             return makeSharedObject<MappedMemoryImpl>(
                 context(), openFile(path, access), access == FileAccessMode::Read ? std::numeric_limits<size_t>::max() : maxSize);
@@ -242,7 +242,7 @@ namespace Piper {
     class ModuleImpl final : public Module {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                  const Future<void>& module) override {
             if(classID == "MemoryFS") {
                 return context().getScheduler().value(

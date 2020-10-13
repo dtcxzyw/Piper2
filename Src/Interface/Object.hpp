@@ -46,15 +46,9 @@ namespace Piper {
 #define PIPER_INTERFACE_CONSTRUCT(NAME, FATHER) \
     explicit NAME(PiperContext& context) noexcept : FATHER(context) {}
 
-    template <typename T>
-    using SharedObject = eastl::shared_ptr<T>;
-
     template <typename T, typename... Args>
     auto makeSharedObject(PiperContext& context, Args&&... args) {
         auto& allocator = context.getAllocator();
         return makeSharedPtr<T>(allocator,context, std::forward<Args>(args)...);
     }
-
-    template <typename T>
-    using UniqueObject = eastl::unique_ptr<T, DefaultDeleter<T>>;
 }  // namespace Piper

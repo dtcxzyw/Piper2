@@ -27,7 +27,7 @@ namespace Piper {
     class Module : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Module, Object)
-        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+        virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                          const Future<void>& module) = 0;
         virtual ~Module() = default;
     };
@@ -35,13 +35,13 @@ namespace Piper {
     class ModuleLoader : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleLoader, Object)
-        virtual Future<void> loadModule(const SharedObject<Config>& moduleDesc, const String& descPath) = 0;
-        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config,
+        virtual Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) = 0;
+        virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                          const Future<void>& module) = 0;
 
         virtual Future<void> loadModule(const String& moduleID) = 0;
-        virtual Future<SharedObject<Object>> newInstance(const StringView& classID, const SharedObject<Config>& config) = 0;
-        virtual void addModuleDescription(const SharedObject<Config>& moduleDesc, const String& descPath) = 0;
+        virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config) = 0;
+        virtual void addModuleDescription(const SharedPtr<Config>& moduleDesc, const String& descPath) = 0;
         virtual ~ModuleLoader() = default;
     };
 }  // namespace Piper

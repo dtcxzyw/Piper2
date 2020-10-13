@@ -43,6 +43,6 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(MappedMemory, Object)
         virtual size_t size() const noexcept = 0;
         virtual size_t alignment() const noexcept = 0;
-        virtual SharedObject<MappedSpan> map(const size_t offset, const size_t size) const = 0;
+        virtual SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const = 0;
     };
 }  // namespace Piper
