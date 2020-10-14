@@ -54,13 +54,9 @@ namespace Piper {
     // TODO:type check in edge
     // TODO:stateless
     // TODO:rename:Payload
-    class Argument : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Argument, Object);
-        virtual ~Argument() = default;
-        virtual void appendInput(const SharedPtr<Resource>& resource) = 0;
-        virtual void appendOutput(const SharedPtr<Resource>& resource) = 0;
-        virtual void appendInputOutput(const SharedPtr<Resource>& resource) = 0;
+    class Payload : public Object {
+    private:
+        friend class Accelerator;
         virtual void append(const void* data, size_t size, const size_t alignment) = 0;
 
         template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
@@ -70,6 +66,10 @@ namespace Piper {
 
         virtual void addExtraInput(const SharedPtr<Resource>& resource) = 0;
         virtual void addExtraOutput(const SharedPtr<Resource>& resource) = 0;
+
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Payload, Object);
+        virtual ~Payload() = default;
     };
 
     class DataHolder {
@@ -99,23 +99,87 @@ namespace Piper {
         virtual SharedPtr<Resource> ref() const = 0;
     };
 
+    struct ExtraInputResource {
+        const SharedPtr<Resource>& res;
+    };
+
+    struct ExtraOutputResource {
+        const SharedPtr<Resource>& res;
+    };
+
+    struct ExtraInputOutputResource {
+        const SharedPtr<Resource>& res;
+    };
+
+    struct InputResource final : public ExtraInputResource {};
+
+    struct OutputResource final : public ExtraOutputResource {};
+
+    struct InputOutputResource final : public ExtraInputOutputResource {};
+
     // TODO:share resource between Accelerators(CPU/GPU)
     // TODO:Allocator support
     // TODO:compiled kernel cache
     class Accelerator : public Object {
+    private:
+        virtual SharedPtr<Payload> createPayloadImpl() const = 0;
+
+        void append(const SharedPtr<Payload>&) const {}
+
+        template <typename First, typename... Args>
+        auto append(const SharedPtr<Payload>& payload, const First& first, const Args&... args) const
+            -> std::enable_if_t<std::is_base_of_v<ExtraInputResource, First>> {
+            payload->addExtraInput(first.res);
+            if constexpr(std::is_same_v<InputResource, First>)
+                payload->append(first.res->getHandle());
+            append(payload, args...);
+        }
+
+        template <typename First, typename... Args>
+        auto append(const SharedPtr<Payload>& payload, const First& first, const Args&... args) const
+            -> std::enable_if_t<std::is_base_of_v<ExtraOutputResource, First>> {
+            payload->addExtraOutput(first.res);
+            if constexpr(std::is_same_v<OutputResource, First>)
+                payload->append(first.res->getHandle());
+            append(payload, args...);
+        }
+
+        template <typename First, typename... Args>
+        auto append(const SharedPtr<Payload>& payload, const First& first, const Args&... args) const
+            -> std::enable_if_t<std::is_base_of_v<ExtraInputOutputResource, First>> {
+            payload->addExtraInput(first.res);
+            payload->addExtraOutput(first.res);
+            if constexpr(std::is_same_v<InputOutputResource, First>)
+                payload->append(first.res->getHandle());
+            append(payload, args...);
+        }
+
+        template <typename First, typename... Args>
+        auto append(const SharedPtr<Payload>& payload, const First& first, const Args&... args) const
+            -> std::enable_if_t<std::is_trivial_v<First>> {
+            payload->append(first);
+            append(payload, args...);
+        }
+
     public:
         PIPER_INTERFACE_CONSTRUCT(Accelerator, Object);
         virtual ~Accelerator() = default;
 
         virtual Span<const CString> getSupportedLinkableFormat() const = 0;
         virtual SharedPtr<ResourceBinding> createResourceBinding() const = 0;
-        virtual SharedPtr<Argument> createArgument() const = 0;
+
+        template <typename... Args>
+        SharedPtr<Payload> createPayload(const Args&... args) const {
+            auto res = createPayloadImpl();
+            append(res, args...);
+            return res;
+        }
+
         // TODO:Resource Name
         virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
         virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
-                                                                    const String& entry) = 0;
-        virtual void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
-                               const SharedPtr<Argument>& args) = 0;
+                                                                 const String& entry) = 0;
+        virtual void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel, const SharedPtr<Payload>& args) = 0;
         virtual void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) = 0;
         virtual Future<void> available(const SharedPtr<Resource>& resource) = 0;
 

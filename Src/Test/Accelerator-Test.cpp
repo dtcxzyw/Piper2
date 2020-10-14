@@ -19,6 +19,7 @@
 #include "../Interface/Infrastructure/Module.hpp"
 #include "../Interface/Infrastructure/Program.hpp"
 #include "TestEnvironment.hpp"
+#include "conv.hpp"
 #include <atomic>
 #include <random>
 
@@ -29,33 +30,27 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedPtr<Piper
     using Clock = std::chrono::high_resolution_clock;
     std::mt19937_64 RNG(Clock::now().time_since_epoch().count());
     std::uniform_real_distribution<float> URD{ 0.0f, 1.0f };
-    // saxpy:Z[i]+=alpha*X[i]+Y[i]
-    constexpr size_t count = 100000000, repeat = 20;
-    constexpr auto alpha = 5.0f;
+    // Convolution
+    constexpr uint32_t width = 1920, height = 1080, kernelSize = 127, count = width * height;
     auto X = Piper::makeSharedPtr<Piper::Vector<float>>(context.getAllocator(), count, context.getAllocator());
     std::generate(X->begin(), X->end(), [&] { return URD(RNG); });
-    auto Y = Piper::makeSharedPtr<Piper::Vector<float>>(context.getAllocator(), count, context.getAllocator());
+    auto Y = Piper::makeSharedPtr<Piper::Vector<float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
     std::generate(Y->begin(), Y->end(), [&] { return URD(RNG); });
 
     auto& scheduler = context.getScheduler();
     auto devX = accelerator->createBuffer(count * sizeof(float), 64);
     devX->upload(scheduler.value(Piper::DataHolder{ X, X->data() }));
-    auto devY = accelerator->createBuffer(count * sizeof(float), 64);
+    auto devY = accelerator->createBuffer(Y->size() * sizeof(float), 64);
     devY->upload(scheduler.value(Piper::DataHolder{ Y, Y->data() }));
     auto devZ = accelerator->createBuffer(count * sizeof(float), 64);
-    devZ->reset();
 
     // TODO:concurrency
-    auto saxpy = manager->loadPITU("saxpy.bc").get();
-    auto linkable = saxpy->generateLinkable(accelerator->getSupportedLinkableFormat());
+    auto conv = manager->loadPITU("conv.bc").get();
+    auto linkable = conv->generateLinkable(accelerator->getSupportedLinkableFormat());
     auto kernel = accelerator->compileKernel(
-        Piper::Vector<Piper::Future<Piper::Vector<std::byte>>>{ { linkable }, context.getAllocator() }, "saxpy");
-    auto args = accelerator->createArgument();
-
-    args->appendInput(devX->ref());
-    args->appendInput(devY->ref());
-    args->appendInputOutput(devZ->ref());
-    args->append(alpha);
+        Piper::Vector<Piper::Future<Piper::Vector<std::byte>>>{ { linkable }, context.getAllocator() }, "conv");
+    auto payload = accelerator->createPayload(Piper::InputResource{ devX->ref() }, Piper::InputResource{ devY->ref() },
+                                              Piper::OutputResource{ devZ->ref() }, width, height, kernelSize);
 
     // for timing
     accelerator->available(devX->ref()).wait();
@@ -68,8 +63,7 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedPtr<Piper
         logger.record(Piper::LogLevel::Info, "computation start", PIPER_SOURCE_LOCATION());
 
     auto beg = Clock::now();
-    for(size_t i = 0; i < repeat; ++i)
-        accelerator->runKernel(count, kernel, args);
+    accelerator->runKernel(count, kernel, payload);
     auto dataZ = devZ->download().get();
     auto end = Clock::now();
     auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(end - beg).count();
@@ -78,12 +72,11 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedPtr<Piper
                       PIPER_SOURCE_LOCATION());
 
     Piper::Vector<float> standard(count, context.getAllocator());
-    auto xp = X->data(), yp = Y->data();
+    auto xp = X->data(), yp = Y->data(), zp = standard.data();
 
     beg = Clock::now();
-    for(size_t k = 0; k < repeat; ++k)
-        for(Piper::Index i = 0; i < count; ++i)
-            standard[i] += alpha * xp[i] + yp[i];
+    for(Piper::Index i = 0; i < count; ++i)
+        ::conv(i, xp, yp, zp, width, height, kernelSize);
     end = Clock::now();
 
     dur = std::chrono::duration_cast<std::chrono::milliseconds>(end - beg).count();
@@ -97,8 +90,16 @@ void generalAcceleratorTest(Piper::PiperContext& context, Piper::SharedPtr<Piper
 }
 
 TEST_F(PiperCoreEnvironment, LLVM_CPU) {
-    auto scheduler = context->getModuleLoader().newInstance("Piper.Infrastructure.Squirrel.Scheduler", nullptr).get();
-    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(scheduler));
+    /*
+    auto allocator =
+        context->getModuleLoader()
+            .newInstance("Piper.Infrastructure.JemallocAllocator.Allocator", Piper::makeSharedObject<Piper::Config>(*context))
+            .get();
+    contextOwner->setAllocator(eastl::dynamic_shared_pointer_cast<Piper::Allocator>(allocator));
+    */
+
+    // auto scheduler = context->getModuleLoader().newInstance("Piper.Infrastructure.Squirrel.Scheduler", nullptr).get();
+    // contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(scheduler));
     auto accelerator = context->getModuleLoader().newInstance("Piper.Infrastructure.Parallel.Accelerator", nullptr);
     auto manager = context->getModuleLoader().newInstance("Piper.Infrastructure.LLVMIR.LLVMIRManager", nullptr);
     generalAcceleratorTest(*context, eastl::dynamic_shared_pointer_cast<Piper::Accelerator>(accelerator.get()),

@@ -155,39 +155,26 @@ namespace Piper {
         }
     };
 
-    class ArgumentImpl final : public Argument {
+    class PayloadImpl final : public Payload {
     private:
-        Vector<std::byte> mArgument;
+        Vector<std::byte> mPayload;
         SharedPtr<ResourceBindingImpl> mResourceBinding;
 
     public:
-        explicit ArgumentImpl(PiperContext& context)
-            : Argument(context), mArgument(STLAllocator{ context.getAllocator() }),
+        explicit PayloadImpl(PiperContext& context)
+            : Payload(context), mPayload(STLAllocator{ context.getAllocator() }),
               mResourceBinding(makeSharedObject<ResourceBindingImpl>(context)) {}
-        void appendInput(const SharedPtr<Resource>& resource) override {
-            Argument::append(resource->getHandle());
-            addExtraInput(resource);
-        }
-        void appendOutput(const SharedPtr<Resource>& resource) override {
-            Argument::append(resource->getHandle());
-            addExtraOutput(resource);
-        }
         void append(const void* data, const size_t size, const size_t alignment) override {
-            const auto rem = mArgument.size() % alignment;
+            const auto rem = mPayload.size() % alignment;
             if(rem) {
                 auto& logger = context().getLogger();
                 if(logger.allow(LogLevel::Warning))
                     logger.record(LogLevel::Warning, "Inefficient payload layout", PIPER_SOURCE_LOCATION());
-                mArgument.insert(mArgument.cend(), alignment - rem, std::byte{ 0 });
+                mPayload.insert(mPayload.cend(), alignment - rem, std::byte{ 0 });
             }
             const auto beg = static_cast<const std::byte*>(data);
             const auto end = beg + size;
-            mArgument.insert(mArgument.cend(), beg, end);
-        }
-        void appendInputOutput(const SharedPtr<Resource>& resource) override {
-            Argument::append(resource->getHandle());
-            addExtraInput(resource);
-            addExtraOutput(resource);
+            mPayload.insert(mPayload.cend(), beg, end);
         }
         void addExtraInput(const SharedPtr<Resource>& resource) override {
             mResourceBinding->addInput(resource);
@@ -195,8 +182,8 @@ namespace Piper {
         void addExtraOutput(const SharedPtr<Resource>& resource) override {
             mResourceBinding->addOutput(resource);
         }
-        Vector<std::byte> getArgument() const {
-            return mArgument;
+        Vector<std::byte> data() const {
+            return mPayload;
         }
         SharedPtr<ResourceBindingImpl> getResourceBinding() const {
             return mResourceBinding;
@@ -268,8 +255,8 @@ namespace Piper {
         SharedPtr<ResourceBinding> createResourceBinding() const override {
             return eastl::static_shared_pointer_cast<ResourceBinding>(makeSharedObject<ResourceBindingImpl>(context()));
         }
-        SharedPtr<Argument> createArgument() const override {
-            return eastl::static_shared_pointer_cast<Argument>(makeSharedObject<ArgumentImpl>(context()));
+        SharedPtr<Payload> createPayloadImpl() const override {
+            return eastl::static_shared_pointer_cast<Payload>(makeSharedObject<PayloadImpl>(context()));
         }
         SharedPtr<Resource> createResource(const ResourceHandle handle) const override {
             return eastl::static_shared_pointer_cast<Resource>(makeSharedObject<ResourceImpl>(context(), handle));
@@ -447,11 +434,11 @@ namespace Piper {
                 },
                 std::move(kernel));
         }
-        void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel, const SharedPtr<Argument>& args) override {
+        void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel, const SharedPtr<Payload>& payload) override {
             // TODO:for small n,run in the thread
             auto& scheduler = context().getScheduler();
-            auto argsImpl = dynamic_cast<ArgumentImpl*>(args.get());
-            auto&& binding = argsImpl->getResourceBinding();
+            auto payloadImpl = dynamic_cast<PayloadImpl*>(payload.get());
+            auto&& binding = payloadImpl->getResourceBinding();
             // TODO:reduce copy
             auto inputFuture = binding->getInput();
             Vector<Future<void>> input{ context().getAllocator() };
@@ -461,17 +448,17 @@ namespace Piper {
             auto future =
                 scheduler
                     .parallelFor((n + chunkSize - 1) / chunkSize,
-                                 [arg = argsImpl->getArgument(), n](uint32_t idx, const Future<SharedPtr<RunnableProgram>>& func,
-                                                                    const Future<void>&) {
+                                 [input = payloadImpl->data(),
+                                  n](const uint32_t idx, const Future<SharedPtr<RunnableProgram>>& func, const Future<void>&) {
                                      // TODO:unchecked cast
                                      auto kernel = dynamic_cast<LLVMProgram*>(func.get().get());
                                      uint32_t beg = idx * chunkSize;
                                      const uint32_t end = beg + chunkSize;
                                      if(end < n)
-                                         kernel->runUnroll(beg, arg.data());
+                                         kernel->runUnroll(beg, input.data());
                                      else {
                                          while(beg < n) {
-                                             kernel->run(beg, arg.data());
+                                             kernel->run(beg, input.data());
                                              ++beg;
                                          }
                                      }
@@ -496,7 +483,7 @@ namespace Piper {
                 context().getErrorHandler().raiseException("Unrecognized Resource", PIPER_SOURCE_LOCATION());
             return Future<void>{ res->getFuture() };
         }
-        SharedPtr<Buffer> createBuffer(size_t size, size_t alignment) override {
+        SharedPtr<Buffer> createBuffer(const size_t size, const size_t alignment) override {
             auto& allocator = context().getAllocator();
             Ptr data = allocator.alloc(size, alignment);
             return eastl::static_shared_pointer_cast<Buffer>(

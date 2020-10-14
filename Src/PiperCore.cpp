@@ -574,7 +574,14 @@ namespace Piper {
         }
         ~PiperContextImpl() {
             auto stage = mErrorHandler.enterStageStatic("destroy Piper context", PIPER_SOURCE_LOCATION());
+
+            mFileSystem.reset();
+            mScheduler.reset();
+            // BUG:some contaniers of ErrorHandler and ModuleLoader are using user allocator.
+            // mUserAllocator.reset();
             mLogger->flush();
+            mLogger.reset();
+
             while(!mLifeTimeRecorder.empty())
                 mLifeTimeRecorder.pop();
         }

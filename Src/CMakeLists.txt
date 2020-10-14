@@ -17,4 +17,4 @@ file(COPY Module.json DESTINATION  ${CMAKE_BINARY_DIR}/Bin)
 
 set_output_path(./)
 add_executable(PiperCLI PiperCLI.cpp)
-target_link_libraries(PiperCLI PRIVATE EABase EASTL Microsoft.GSL::GSL)
+target_link_libraries(PiperCLI PRIVATE EABase EASTL Microsoft.GSL::GSL PiperCore)

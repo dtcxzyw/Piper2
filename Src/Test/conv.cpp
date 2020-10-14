@@ -14,17 +14,21 @@
    limitations under the License.
 */
 
-#include "PiperContext.hpp"
-#include "STL/UniquePtr.hpp"
-#include <cstdlib>
+#include "conv.hpp"
+#include <cstdint>
 
-struct ContextDeleter {
-    void operator()(Piper::PiperContextOwner* ptr) const {
-        piperDestroyContext(ptr);
-    }
+struct Payload {
+    uint64_t pX;
+    uint64_t pY;
+    uint64_t pZ;
+    uint32_t width;
+    uint32_t height;
+    uint32_t kernelSize;
 };
 
-int main(int argc, char* argv[]) {
-    Piper::UniquePtr<Piper::PiperContextOwner, ContextDeleter> context(piperCreateContext());
-    return EXIT_SUCCESS;
+extern "C" void conv(const uint32_t idx, const Payload* payload) {
+    const float* X = reinterpret_cast<const float*>(payload->pX);
+    const float* Y = reinterpret_cast<const float*>(payload->pY);
+    float* Z = reinterpret_cast<float*>(payload->pZ);
+    conv(idx, X, Y, Z, payload->width, payload->height, payload->kernelSize);
 }
