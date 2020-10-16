@@ -87,15 +87,17 @@ namespace Piper {
             mSuccessor.clear();
             mSuccessor.shrink_to_fit();
         }
-        ~FutureStorage() {
+        ~FutureStorage() noexcept {
             if(mRemain)
                 throw;
         }
     };
 
-    struct Task final {
+    struct Task final : private Uncopyable {
         Variant<Optional<Closure<>>, Pair<SharedPtr<Closure<uint32_t>>, uint32_t>> work;
         SharedPtr<FutureStorage> future;
+        template <typename T>
+        Task(T&& task, SharedPtr<FutureStorage> futureStorage) : work(std::forward<T>(task)), future(std::move(futureStorage)) {}
     };
 
     struct DelayedTask final {
@@ -150,6 +152,7 @@ namespace Piper {
     static void decreaseDepCount(SharedContext& context, DelayedTask* task) {
         if(--task->depCount)
             return;
+        // remove delayed task
         auto guard = UniquePtr<DelayedTask>{ task, DefaultDeleter<DelayedTask>{ task->allocator } };
         readyToRun(context, std::move(task->task));
     }
@@ -255,23 +258,30 @@ namespace Piper {
             for(auto&& dep : dependencies) {
                 if(!dep || dep->fastReady())
                     continue;
-                auto future = dynamic_cast<FutureStorage*>(dep.get());
                 // Perhaps future will call finishExternal before the task is complete,so we should increase depCount before
                 // future->readyOrNotify
                 ++delay->depCount;
-                if(future) {
-                    // add reference
-                    delay->depRef.push_back(dep);
+                if(auto future = dynamic_cast<FutureStorage*>(dep.get())) {
                     if(future->readyOrNotify(delay))
                         --delay->depCount;
+                    else {
+                        // add reference
+                        delay->depRef.push_back(dep);
+                    }
                 } else {
-                    // TODO:support notify
-                    std::lock_guard<std::mutex> guard{ mContext.CEFMutex };
-                    auto iter = mContext.checkExternalFuture.find(dep.get());
-                    if(iter == mContext.checkExternalFuture.cend())
-                        iter = mContext.checkExternalFuture.emplace(dep.get(), ExternalFuture{ dep, context().getAllocator() })
-                                   .first;
-                    iter->second.successor.push_back(delay);
+                    auto appendDep = [&](std::mutex& lock, UMap<FutureImpl*, ExternalFuture>& cont) {
+                        auto key = dep.get();
+                        std::lock_guard<std::mutex> guard{ lock };
+                        auto iter = cont.find(key);
+                        if(iter == cont.cend())
+                            iter = cont.emplace(key, ExternalFuture{ dep, context().getAllocator() }).first;
+                        iter->second.successor.push_back(delay);
+                    };
+
+                    if(dep->supportNotify())
+                        appendDep(mContext.NEFMutex, mContext.notifyExternalFuture);
+                    else
+                        appendDep(mContext.CEFMutex, mContext.checkExternalFuture);
                 }
             }
             // The task is complete now,decrease depCount
@@ -303,7 +313,7 @@ namespace Piper {
         void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
                              const SharedPtr<FutureImpl>& res) override {
             auto result = eastl::dynamic_shared_pointer_cast<FutureStorage>(res);
-            auto chunkSize = std::max(1U, n / static_cast<uint32_t>(mThreadPool.size()*3));
+            auto chunkSize = std::max(1U, n / static_cast<uint32_t>(mThreadPool.size() * 3));
             auto blockCount = (n + chunkSize - 1) / chunkSize;
             result->setRemain(blockCount);
             auto closure = makeSharedObject<Closure<uint32_t>>(context(), context().getAllocator(),
@@ -320,8 +330,23 @@ namespace Piper {
             emitTask(delay.get(), dependencies);
             delay.release();
         }
-        // void notify(FutureImpl* event) noexcept override {}
-        ~SchedulerImpl() {
+        bool supportNotify() const noexcept override {
+            return true;
+        }
+        void notify(FutureImpl* event) override {
+            std::unique_lock<std::mutex> guard{ mContext.NEFMutex };
+            auto&& cont = mContext.notifyExternalFuture;
+            auto iter = cont.find(event);
+            if(iter == cont.cend())
+                return;
+            auto future = std::move(iter->second);
+            cont.erase(iter);
+            guard.unlock();
+
+            for(auto&& successor : future.successor)
+                decreaseDepCount(mContext, successor);
+        }
+        ~SchedulerImpl() noexcept {
             mContext.run = false;
             mContext.cv.notify_all();
             for(auto&& worker : mThreadPool)

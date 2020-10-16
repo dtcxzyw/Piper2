@@ -15,50 +15,61 @@
 */
 
 #pragma once
+#include "../../STL/StringView.hpp"
 #include "Program.hpp"
 
 namespace Piper {
     class FloatingPointLibrary : public Object {
     public:
-        enum class Flag { TraceException = 1, TraceError = 2, HighestSupportedPrecise = 4 };
-        enum class Instruction { Float16,BFloat16, Float32, Float64, Common };
+        enum class Instruction { Float16, BFloat16, Float32, Float64, Float128, Common };
         PIPER_INTERFACE_CONSTRUCT(FloatingPointLibrary, Object)
-        virtual void traceError(bool trace) = 0;
-        virtual void setFlag(Flag flag) = 0;
-        virtual bool haveFlag() const noexcept = 0;
         virtual Instruction instruction() const noexcept = 0;
         virtual size_t elementSize() const noexcept = 0;
-        virtual size_t elementAlign() const noexcept = 0;
-        virtual ~FloatingPointLibrary() = 0{}
+        virtual size_t elementAlignment() const noexcept = 0;
+        virtual String typeName() const = 0;
+        virtual Pair<Future<Vector<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat) const = 0;
+        virtual ~FloatingPointLibrary() = default;
     };
+
     class MathKernelLibrary : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(MathKernelLibrary, Object)
-        virtual ~MathKernelLibrary() = 0{}
+        virtual bool supportFPType(FloatingPointLibrary::Instruction fpType) const noexcept = 0;
+        virtual Pair<Future<Vector<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat,
+                                                                          FloatingPointLibrary::Instruction fpType,
+                                                                          const StringView& fpName = {}) const = 0;
+        virtual ~MathKernelLibrary() = default;
     };
+
     class TransformLibrary : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(TransformLibrary, Object);
-        virtual ~TransformLibrary() = 0{}
+        PIPER_INTERFACE_CONSTRUCT(TransformLibrary, Object)
+        virtual Pair<Future<Vector<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat,
+                                                                          FloatingPointLibrary::Instruction fpType,
+                                                                          const StringView& fpName = {}) const = 0;
+        virtual ~TransformLibrary() = default;
     };
+
     class GeometryLibrary : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(GeometryLibrary, Object);
-        virtual ~GeometryLibrary() = 0{}
+        PIPER_INTERFACE_CONSTRUCT(GeometryLibrary, Object)
+        virtual Pair<Future<Vector<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat,
+                                                                          FloatingPointLibrary::Instruction fpType,
+                                                                          const StringView& fpName = {}) const = 0;
+        virtual ~GeometryLibrary() = default;
     };
+
+    /*
     class RandomLibrary : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(RandomLibrary, Object);
-        virtual ~RandomLibrary() = 0{}
+        virtual ~RandomLibrary() = default;
     };
+
     class FFTLibrary : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(FFTLibrary, Object);
-        virtual ~FFTLibrary() = 0{}
+        virtual ~FFTLibrary() = default;
     };
-    class MemoryOperationLibrary : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(MemoryOperationLibrary, Object)
-        virtual ~MemoryOperationLibrary() = 0{}
-    };
+    */
 }  // namespace Piper

@@ -82,7 +82,7 @@ namespace Piper {
         }
 
         // TODO:formal check
-        ~FutureStorage() {
+        ~FutureStorage() noexcept {
             if(!ready())
                 throw;
         }

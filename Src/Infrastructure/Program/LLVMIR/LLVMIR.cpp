@@ -76,22 +76,23 @@ namespace Piper {
         std::unique_ptr<llvm::Module> cloneModule() const {
             return llvm::CloneModule(*mModule);
         }
-        Future<Vector<std::byte>> generateLinkable(const Span<const CString>& acceptableFormat) const override {
+        Pair<Future<Vector<std::byte>>, CString> generateLinkable(const Span<const CString>& acceptableFormat) const override {
             std::string error;
             for(auto&& format : acceptableFormat) {
                 if(StringView{ format } == "LLVM IR") {
                     // TODO:lazy parse linkable and directly return data
-                    return context().getScheduler().spawn([thisData = shared_from_this()] {
+                    return makePair(context().getScheduler().spawn([thisData = shared_from_this()] {
                         Vector<std::byte> data{ thisData->context().getAllocator() };
                         LLVMStream stream(data);
                         llvm::WriteBitcodeToFile(*(thisData->mModule), stream);
                         stream.flush();
                         return std::move(data);
-                    });
+                    }),
+                                    format);
                 }
                 auto target = llvm::TargetRegistry::lookupTarget(format, error);
                 if(target) {
-                    return context().getScheduler().spawn([target, format, thisData = shared_from_this()] {
+                    return makePair(context().getScheduler().spawn([target, format, thisData = shared_from_this()] {
                         auto stage =
                             thisData->context().getErrorHandler().enterStageStatic("generate linkable", PIPER_SOURCE_LOCATION());
                         // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
@@ -116,7 +117,8 @@ namespace Piper {
                         pass.run(*(thisData->mModule));
                         stream.flush();
                         return std::move(data);
-                    });
+                    }),
+                                    format);
                 }
             }
             // TODO:llvm::TargetRegistry::printRegisteredTargetsForVersion();
@@ -150,13 +152,12 @@ namespace Piper {
             return context().getScheduler().spawn(
                 [ctx = &context(), llvmctx = mContext](const Future<Vector<SharedPtr<PITU>>>& pitus) {
                     auto stage = ctx->getErrorHandler().enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
-                    auto& submod = pitus.get();
 
                     // TODO:module ID param
                     auto module = std::make_unique<llvm::Module>("merged module", *llvmctx);
                     llvm::Linker linker(*module);
 
-                    for(auto& mod : submod) {
+                    for(auto& mod : *pitus) {
                         auto ir = dynamic_cast<const LLVMIR*>(mod.get());
                         if(!ir)
                             ctx->getErrorHandler().raiseException("Unsupported PITU", PIPER_SOURCE_LOCATION());
@@ -181,14 +182,14 @@ namespace Piper {
             llvm::InitializeAllAsmPrinters();
         }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
-                                                 const Future<void>& module) override {
+                                              const Future<void>& module) override {
             if(classID == "LLVMIRManager") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<LLVMIRManager>(context())));
             }
             throw;
         }
-        ~ModuleImpl() {
+        ~ModuleImpl() noexcept {
             llvm::llvm_shutdown();
         }
     };

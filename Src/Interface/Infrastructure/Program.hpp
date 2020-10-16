@@ -15,6 +15,7 @@
 */
 
 #pragma once
+#include "../../STL/Pair.hpp"
 #include "../../STL/String.hpp"
 #include "../../STL/Vector.hpp"
 #include "../Object.hpp"
@@ -22,15 +23,15 @@
 
 namespace Piper {
     // PlatformIndependentTranslationUnit
-    // TODO:output
     class PITU : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(PITU, Object)
         virtual ~PITU() = default;
-        virtual Future<Vector<std::byte>> generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
+        virtual Pair<Future<Vector<std::byte>>, CString> generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
     };
 
     // TODO:Optimize
+    // TODO:PPL
     class PITUManager : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(PITUManager, Object)
@@ -38,8 +39,6 @@ namespace Piper {
         virtual Future<SharedPtr<PITU>> loadPITU(const String& path) const = 0;
         virtual Future<SharedPtr<PITU>> mergePITU(const Future<Vector<SharedPtr<PITU>>>& pitus) const = 0;
     };
-
-    // TODO:LinkableProgram
 
     class RunnableProgram : public Object {
     public:

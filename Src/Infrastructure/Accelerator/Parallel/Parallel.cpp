@@ -190,6 +190,7 @@ namespace Piper {
         }
     };
 
+    // TODO:lazy allocation
     class BufferImpl final : public Buffer, public eastl::enable_shared_from_this<BufferImpl> {
     private:
         Ptr mData;
@@ -209,7 +210,7 @@ namespace Piper {
             auto dep = std::initializer_list<const SharedPtr<FutureImpl>>{ mResource->getFuture(), data.raw() };
             scheduler.spawnImpl(Closure<>{ context(), context().getAllocator(),
                                            [dest = mData, src = std::move(data), size = mSize, rc = shared_from_this()] {
-                                               memcpy(reinterpret_cast<void*>(dest), static_cast<void*>(src.get().get()), size);
+                                               memcpy(reinterpret_cast<void*>(dest), static_cast<void*>(src->get()), size);
                                            } },
                                 Span<const SharedPtr<FutureImpl>>{ dep.begin(), dep.end() }, res);
             mResource->setFuture(res);
@@ -270,28 +271,23 @@ namespace Piper {
             // TODO:use parallel_for?
             for(auto&& unit : linkable)
                 modules.emplace_back(std::move(scheduler.spawn(
-                    [ctx = &context(), llvmctx = llctx.get()](const Future<Vector<std::byte>>& data) {
+                    [ctx = &context(), llvmctx = llctx.get()](const Future<Vector<std::byte>>& bitcode) {
                         auto stage = ctx->getErrorHandler().enterStageStatic("parse LLVM Bitcode", PIPER_SOURCE_LOCATION());
-                        auto& bitcode = data.get();
                         auto res = llvm::parseBitcodeFile(
                             llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{
-                                                       reinterpret_cast<const uint8_t*>(bitcode.data()), bitcode.size() }),
+                                                       reinterpret_cast<const uint8_t*>(bitcode->data()), bitcode->size() }),
                                                    "bitcode data" },
                             *llvmctx);
-                        if(res)
-                            return std::move(res.get());
-                        auto error = toString(res.takeError());
-                        ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
+                        return getLLVMResult(*ctx, std::move(res));
                     },
                     unit)));
             // TODO:reduce Module cloning by std::move
             auto kernel = scheduler.spawn(
-                [ctx = &context(), llvmctx = llctx.get(), entry](const Future<Vector<std::unique_ptr<llvm::Module>>>& mods) {
+                [ctx = &context(), llvmctx = llctx.get(), entry](const Future<Vector<std::unique_ptr<llvm::Module>>>& units) {
                     auto& errorHandler = ctx->getErrorHandler();
                     auto stage = errorHandler.enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
-                    auto& units = mods.get();
                     auto kernel = std::make_unique<llvm::Module>("LLVM kernel", *llvmctx);
-                    for(auto&& unit : units)
+                    for(auto&& unit : *units)
                         llvm::Linker::linkModules(*kernel, llvm::CloneModule(*unit));
 
                     auto func = kernel->getFunction(llvm::StringRef{ entry.data(), entry.size() });
@@ -354,12 +350,12 @@ namespace Piper {
                         errorHandler.raiseException("Found some errors in module", PIPER_SOURCE_LOCATION());
                     }
 
-                    return std::move(kernel);
+                    return kernel;
                 },
                 scheduler.wrap(modules));
             return scheduler.spawn(
                 [entry, ctx = &context(), llvmctx = std::move(llctx)](Future<std::unique_ptr<llvm::Module>> func) {
-                    auto mod = std::move(std::move(func).get());
+                    auto mod = std::move(*func);
 
                     // TODO:LLVM use fake host triple,use true host triple to initialize JITTargetMachineBuilder
                     // TODO:optimize like clang -O3
@@ -451,7 +447,7 @@ namespace Piper {
                                  [input = payloadImpl->data(),
                                   n](const uint32_t idx, const Future<SharedPtr<RunnableProgram>>& func, const Future<void>&) {
                                      // TODO:unchecked cast
-                                     auto kernel = dynamic_cast<LLVMProgram*>(func.get().get());
+                                     auto kernel = dynamic_cast<LLVMProgram*>(func->get());
                                      uint32_t beg = idx * chunkSize;
                                      const uint32_t end = beg + chunkSize;
                                      if(end < n)
@@ -507,7 +503,7 @@ namespace Piper {
             }
             throw;
         }
-        ~ModuleImpl() {
+        ~ModuleImpl() noexcept {
             llvm::llvm_shutdown();
         }
     };

@@ -360,7 +360,7 @@ namespace Piper {
             mModuleDesc.insert(makePair(iter->second->get<String>(), makePair(moduleDesc, descPath)));
         }
 
-        ~ModuleLoaderImpl() {
+        ~ModuleLoaderImpl() noexcept {
             // TODO:fix destroy order in context
             // auto stage = context().getErrorHandler().enterStage("destroy modules", PIPER_SOURCE_LOCATION());
             // TODO:destroy order
@@ -527,6 +527,7 @@ namespace Piper {
         SharedPtr<Allocator> mUserAllocator;
         UnitManagerImpl mUnitManager;
         ErrorHandlerImpl mErrorHandler;
+        Vector<Scheduler*> mNotifyScheduler;
 
         Stack<SharedPtr<Object>> mLifeTimeRecorder;
 
@@ -562,6 +563,8 @@ namespace Piper {
         void setScheduler(const SharedPtr<Scheduler>& scheduler) noexcept override {
             mLifeTimeRecorder.push(scheduler);
             mScheduler = scheduler;
+            if(scheduler->supportNotify())
+                mNotifyScheduler.push_back(scheduler.get());
         }
         void setFileSystem(const SharedPtr<FileSystem>& filesystem) noexcept override {
             mLifeTimeRecorder.push(filesystem);
@@ -572,7 +575,12 @@ namespace Piper {
             mUserAllocator = allocator;
             mAllocator = mUserAllocator.get();
         }
-        ~PiperContextImpl() {
+        void notify(FutureImpl* event) override {
+            for(auto&& scheduler : mNotifyScheduler)
+                scheduler->notify(event);
+        }
+
+        ~PiperContextImpl() noexcept {
             auto stage = mErrorHandler.enterStageStatic("destroy Piper context", PIPER_SOURCE_LOCATION());
 
             mFileSystem.reset();
@@ -589,7 +597,7 @@ namespace Piper {
 
     PiperContextImpl::PiperContextImpl()
         : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator), mModuleLoader(*this), mUnitManager(*this),
-          mErrorHandler(*this), mLifeTimeRecorder(STLAllocator{ getAllocator() }) {
+          mErrorHandler(*this), mNotifyScheduler(getAllocator()), mLifeTimeRecorder(STLAllocator{ getAllocator() }) {
         setLogger(makeSharedObject<LoggerImpl>(*this));
         auto stage = mErrorHandler.enterStageStatic("create Piper context", PIPER_SOURCE_LOCATION());
         setScheduler(makeSharedObject<SchedulerImpl>(*this));

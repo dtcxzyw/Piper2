@@ -15,17 +15,21 @@
 */
 
 #pragma once
-#include "../PiperAPI.hpp"
 #include "../STL/SharedPtr.hpp"
 
 namespace Piper {
+    class Uncopyable {
+    public:
+        Uncopyable() = default;
+        Uncopyable(const Uncopyable& rhs) = delete;
+        Uncopyable(Uncopyable&& rhs) = default;
+        Uncopyable& operator=(const Uncopyable& rhs) = delete;
+        Uncopyable& operator=(Uncopyable&& rhs) = default;
+    };
+
     class Unmovable {
     public:
         Unmovable() = default;
-        Unmovable(const Unmovable& rhs) = delete;
-        Unmovable(Unmovable&& rhs) = delete;
-        Unmovable& operator=(const Unmovable& rhs) = delete;
-        Unmovable& operator=(Unmovable&& rhs) = delete;
     };
 
     class PiperContext;
@@ -49,6 +53,6 @@ namespace Piper {
     template <typename T, typename... Args>
     auto makeSharedObject(PiperContext& context, Args&&... args) {
         auto& allocator = context.getAllocator();
-        return makeSharedPtr<T>(allocator,context, std::forward<Args>(args)...);
+        return makeSharedPtr<T>(allocator, context, std::forward<Args>(args)...);
     }
 }  // namespace Piper

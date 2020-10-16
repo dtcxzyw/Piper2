@@ -76,6 +76,7 @@ namespace Piper {
     struct IOPayload final {
         OVERLAPPED overlapped;
         Allocator* allocator;
+        FutureImpl* future;
         std::atomic_size_t remainCount;
         std::atomic_size_t remainSize;
         SharedPtr<Pair<bool, Vector<std::byte>>> data;
@@ -101,6 +102,9 @@ namespace Piper {
         const void* storage() const {
             return &data->second;
         }
+        bool supportNotify() const noexcept override {
+            return true;
+        }
     };
 
     class StreamImpl final : public Piper::Stream {
@@ -123,6 +127,7 @@ namespace Piper {
             new(payload) IOPayload();
             memset(&payload->overlapped, 0, sizeof(payload->overlapped));
             // set payload->overlapped.Offset?
+            payload->future = future.get();
             payload->allocator = &allocator;
             payload->remainCount = (size + readUnit - 1) / readUnit;
             payload->data = future->data;
@@ -189,7 +194,7 @@ namespace Piper {
         Span<std::byte> get() const noexcept override {
             return mSpan;
         }
-        ~MappedSpanImpl() {
+        ~MappedSpanImpl() noexcept {
             if(!UnmapViewOfFile(mPtr))
                 raiseWin32Error();
         }
@@ -281,12 +286,12 @@ namespace Piper {
     public:
         explicit FileSystemImpl(PiperContext& context) : FileSystem(context), mWorkers(context.getAllocator()) {
             auto poolSize = 2 * std::thread::hardware_concurrency();
-            // TODO:shared with socket/scheduler
+            // TODO:shared with socket
             auto handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, poolSize);
             if(!handle)
                 raiseWin32Error();
             mIOCP.reset(handle);
-            auto worker = [this] {
+            auto worker = [this, &context] {
                 while(true) {
                     DWORD count;
                     ULONG_PTR key;  // TOOD:IO Type
@@ -304,7 +309,7 @@ namespace Piper {
                         // TODO: assert:future has been destroyed
                         if(payload->data.use_count() == 1)
                             throw;
-                        // TODO:notify
+                        context.notify(payload->future);
                         payload->data.reset();
                         payload->file.reset();
                         payload->allocator->free(reinterpret_cast<Ptr>(payload));
@@ -314,7 +319,7 @@ namespace Piper {
             for(size_t i = 0; i < poolSize; ++i)
                 mWorkers.emplace_back(std::thread(worker));
         }
-        ~FileSystemImpl() {
+        ~FileSystemImpl() noexcept {
             for(Index i = 0; i < mWorkers.size(); ++i)
                 if(!PostQueuedCompletionStatus(mIOCP.get(), 0, exitFlag, nullptr))
                     raiseWin32Error();

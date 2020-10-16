@@ -19,6 +19,7 @@
 #include "PiperAPI.hpp"
 
 namespace Piper {
+    class FutureImpl;
     class Logger;
     class ModuleLoader;
     class Scheduler;
@@ -36,8 +37,13 @@ namespace Piper {
         virtual Allocator& getAllocator() noexcept = 0;
         virtual UnitManager& getUnitManager() noexcept = 0;
         virtual ErrorHandler& getErrorHandler() noexcept = 0;
+
+        // TODO:better Interface?
+        virtual void notify(FutureImpl* event) = 0;
+
         virtual ~PiperContext() = default;
     };
+    // TODO:stateless
     class PiperContextOwner : public PiperContext {
     public:
         virtual void setLogger(const SharedPtr<Logger>& logger) noexcept = 0;

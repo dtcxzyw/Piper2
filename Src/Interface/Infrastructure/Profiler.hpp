@@ -21,6 +21,6 @@ namespace Piper {
     class Profiler : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Profiler, Object)
-        virtual ~Profiler() = 0{}
+        virtual ~Profiler() = default;
     };
 }  // namespace Piper

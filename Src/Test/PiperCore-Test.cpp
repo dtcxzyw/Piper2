@@ -31,11 +31,14 @@ TEST(PiperCore, InitAndUninitTest) {
 TEST_F(PiperCoreEnvironment, ConcurrencyTest) {
     auto&& scheduler = context->getScheduler();
     auto a = scheduler.value(1);
-    ASSERT_EQ(a.get(), 1);
+    a.wait();
+    ASSERT_EQ(*a, 1);
     auto b = scheduler.value(2);
-    ASSERT_EQ(b.get(), 2);
-    auto c = scheduler.spawn([](const Piper::Future<int>& x, const Piper::Future<int>& y) { return x.get() + y.get(); }, a, b);
-    ASSERT_EQ(c.get(), 3);
+    b.wait();
+    ASSERT_EQ(*b, 2);
+    auto c = scheduler.spawn([](const Piper::Future<int>& x, const Piper::Future<int>& y) { return *x + *y; }, a, b);
+    c.wait();
+    ASSERT_EQ(*c, 3);
 }
 
 TEST_F(PiperCoreEnvironment, ConfigTest) {
@@ -79,7 +82,7 @@ TEST_F(PiperCoreEnvironment, ConfigTest) {
     config = Piper::makeSharedObject<Piper::Config>(
         *context,
         Piper::Vector<Piper::SharedPtr<Piper::Config>>({ Piper::makeSharedObject<Piper::Config>(*context) },
-                                                          context->getAllocator()));
+                                                       context->getAllocator()));
     ASSERT_EQ(config->type(), Piper::NodeType::Array);
     ASSERT_EQ(config->viewAsArray()[0]->type(), Piper::NodeType::Null);
 }
@@ -100,10 +103,11 @@ TEST_F(PiperCoreEnvironment, UnitManagerTest) {
 
 TEST_F(PiperCoreEnvironment, ModuleLoaderTest) {
     auto&& loader = context->getModuleLoader();
-    auto inst =
-        loader.newInstance("Piper.Infrastructure.MemoryFS.MemoryFS", Piper::makeSharedObject<Piper::Config>(*context)).get();
-    ASSERT_EQ(context, &inst->context());
-    inst.reset();
+    auto inst = loader.newInstance("Piper.Infrastructure.MemoryFS.MemoryFS", Piper::makeSharedObject<Piper::Config>(*context));
+    inst.wait();
+    auto object = std::move(*inst);
+    ASSERT_EQ(context, &object->context());
+    object.reset();
 }
 
 int main(int argc, char** argv) {

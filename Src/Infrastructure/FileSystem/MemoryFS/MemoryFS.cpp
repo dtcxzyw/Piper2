@@ -91,8 +91,7 @@ namespace Piper {
                 throw;
             return context().getScheduler().spawn(
                 [offset, this](const Future<Vector<std::byte>>& val) {
-                    auto& res = val.get();
-                    eastl::copy(res.cbegin(), res.cend(), mData.begin());
+                    eastl::copy(val->cbegin(), val->cend(), mData.begin());
                     // TODO:extend/thread safety
                 },
                 data);

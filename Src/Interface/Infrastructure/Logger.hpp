@@ -29,7 +29,10 @@ namespace Piper {
         int line;
     };
 
-    #define PIPER_SOURCE_LOCATION() Piper::SourceLocation{__FILE__,__FUNCTION__,__LINE__}
+#define PIPER_SOURCE_LOCATION()          \
+    Piper::SourceLocation {              \
+        __FILE__, __FUNCTION__, __LINE__ \
+    }
 
     class Logger : public Object {
     public:
@@ -37,9 +40,9 @@ namespace Piper {
         virtual bool allow(const LogLevel level) const noexcept = 0;
         virtual void record(const LogLevel level, const StringView& message, const SourceLocation& sourceLocation) noexcept = 0;
         virtual void flush() noexcept = 0;
-        //maxlevel
+        // maxlevel
         // virtual void bindStream()=0;
-        virtual ~Logger() = 0{}
+        virtual ~Logger() = default;
     };
 
 }  // namespace Piper

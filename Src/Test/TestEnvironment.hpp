@@ -39,9 +39,11 @@ protected:
         Piper::UMap<Piper::String, Piper::SharedPtr<Piper::Config>> desc{ context->getAllocator() };
         desc.insert(Piper::makePair(Piper::String{ "Name", context->getAllocator() }, name));
         desc.insert(Piper::makePair(Piper::String{ "Path", context->getAllocator() }, path));
+        // TODO:concurrency
         auto mod = context->getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(*context, std::move(desc)), base);
-        auto parser = eastl::dynamic_shared_pointer_cast<Piper::ConfigSerializer>(
-            context->getModuleLoader().newInstance("Piper.Infrastructure.NlohmannJson.JsonSerializer", nullptr, mod).get());
+        auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.NlohmannJson.JsonSerializer", nullptr, mod);
+        inst.wait();
+        auto parser = eastl::dynamic_shared_pointer_cast<Piper::ConfigSerializer>(*inst);
         auto modules = parser->deserialize(Piper::String{ "Module.json", context->getAllocator() });
 
         for(auto&& desc : modules->viewAsArray())

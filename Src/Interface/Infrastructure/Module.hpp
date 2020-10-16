@@ -63,3 +63,4 @@ namespace Piper {
         return PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;                                                          \
     }
 \
+//TODO:hook operator new/delete

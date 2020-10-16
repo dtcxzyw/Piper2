@@ -25,6 +25,7 @@ namespace Piper {
     template <typename T>
     using Owner = gsl::owner<T>;
 
+    // ES.107
     // using Index = gsl::index;
     using Index = std::size_t;
 

@@ -127,7 +127,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
-                                                 const Future<void>& module) override {
+                                              const Future<void>& module) override {
             if(classID == "JsonSerializer") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<JsonSerializer>(context())));

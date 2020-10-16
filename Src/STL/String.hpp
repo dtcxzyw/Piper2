@@ -15,7 +15,7 @@
 */
 
 #pragma once
-#pragma warning(push , 0)
+#pragma warning(push, 0)
 #include "STLAllocator.hpp"
 #define EASTL_EASTDC_API PIPER_API
 #include <EASTL/string.h>
@@ -25,34 +25,34 @@
 namespace Piper {
     using String = eastl::u8string;
 
-    namespace {
+    namespace detail {
         template <typename T>
         inline String toStringImpl(const STLAllocator& allocator, const char* format, const T value) {
             String res{ allocator };
             res.append_sprintf(format, value);
             return res;
         }
-    }  // namespace
+    }  // namespace detail
 
     inline String toString(const STLAllocator& allocator, int32_t value) {
-        return toStringImpl(allocator, "%" PRId32, value);
+        return detail::toStringImpl(allocator, "%" PRId32, value);
     }
     inline String toString(const STLAllocator& allocator, int64_t value) {
-        return toStringImpl(allocator, "%" PRId64, value);
+        return detail::toStringImpl(allocator, "%" PRId64, value);
     }
     inline String toString(const STLAllocator& allocator, uint32_t value) {
-        return toStringImpl(allocator, "%" PRIu32, value);
+        return detail::toStringImpl(allocator, "%" PRIu32, value);
     }
     inline String toString(const STLAllocator& allocator, uint64_t value) {
-        return toStringImpl(allocator, "%" PRIu64, value);
+        return detail::toStringImpl(allocator, "%" PRIu64, value);
     }
     inline String toString(const STLAllocator& allocator, float value) {
-        return toStringImpl(allocator, "%f", value);
+        return detail::toStringImpl(allocator, "%f", value);
     }
     inline String toString(const STLAllocator& allocator, double value) {
-        return toStringImpl(allocator, "%lf", value);
+        return detail::toStringImpl(allocator, "%lf", value);
     }
     inline String toString(const STLAllocator& allocator, long double value) {
-        return toStringImpl(allocator, "%Lf", value);
+        return detail::toStringImpl(allocator, "%Lf", value);
     }
 }  // namespace Piper

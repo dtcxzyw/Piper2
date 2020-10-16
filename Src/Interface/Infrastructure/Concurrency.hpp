@@ -15,7 +15,6 @@
 */
 
 #pragma once
-#include "../../Interface/Infrastructure/Logger.hpp"
 #include "../../PiperContext.hpp"
 #include "../../STL/Optional.hpp"
 #include "../../STL/String.hpp"
@@ -68,23 +67,26 @@ namespace Piper {
             if(!ready())
                 return mImpl->wait();
         }
-        const T& get() const& {
-            wait();
+
+        // TODO:check ready
+        // TODO:operator* -> for UniquePtr,SharedPtr
+        const T& operator*() const {
             return *reinterpret_cast<const T*>(mImpl->storage());
         }
-        const T& get() const&& {
-            wait();
-            return *reinterpret_cast<const T*>(mImpl->storage());
-        }
-        T& get() & {
-            wait();
+
+        T& operator*() {
             return *reinterpret_cast<T*>(const_cast<void*>(mImpl->storage()));
         }
-        T&& get() && {
-            wait();
-            return std::move(*reinterpret_cast<T*>(const_cast<void*>(mImpl->storage())));
+
+        const T* operator->() const {
+            return reinterpret_cast<const T*>(mImpl->storage());
         }
-        ~Future() {
+
+        T* operator->() {
+            return reinterpret_cast<T*>(const_cast<void*>(mImpl->storage()));
+        }
+
+        ~Future() noexcept {
             // TODO:formal check
             if(mImpl && mImpl.unique() && !ready()) {
                 throw;
@@ -117,7 +119,7 @@ namespace Piper {
             if(!ready())
                 mImpl->wait();
         }
-        ~Future() {
+        ~Future() noexcept {
             // TODO:formal check
             if(mImpl && mImpl.unique() && !ready()) {
                 throw;
@@ -143,7 +145,8 @@ namespace Piper {
             mFunc(args...);
         }
     };
-    // TODO:execution count limit check
+
+    // TODO:remove Closure
     template <typename... Args>
     class Closure final {
     private:
@@ -173,8 +176,8 @@ namespace Piper {
             mFunc->apply(args...);
             //++mCount;
         }
-        ~Closure() {
-            /*
+        /*
+        ~Closure()  {
             if(mCount > 1) {
                 auto& logger = mContext.getLogger();
                 if(logger.allow(LogLevel::Debug))
@@ -182,8 +185,8 @@ namespace Piper {
                                   "Execute Count = " + toString(mContext.getAllocator(), static_cast<size_t>(mCount)),
                                   PIPER_SOURCE_LOCATION());
             }
-            */
         }
+        */
     };
 
     namespace detail {
@@ -258,6 +261,7 @@ namespace Piper {
         template <typename ReturnType, typename Callable, typename... Args>
         std::enable_if_t<!std::is_void_v<ReturnType> && !IsFuture<ReturnType>::value, Future<ReturnType>>
         spawnDispatch(Callable&& callable, Args&&... args) {
+            // TODO:std::move dependencies
             auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
             auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(sizeof(ReturnType), false);
@@ -309,7 +313,7 @@ namespace Piper {
                                      vec->reserve(fs.size());
                                      for(auto&& future : const_cast<Vector<Future<T>>&>(fs))
                                          // TODO:ownership
-                                         vec->emplace_back(std::move(std::move(future).get()));
+                                         vec->emplace_back(std::move(*future));
                                  } },
                       Span<const SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
             return Future<Vector<T>>{ result };
@@ -330,7 +334,7 @@ namespace Piper {
         virtual bool supportNotify() const noexcept {
             return false;
         }
-        virtual void notify(FutureImpl* event) noexcept {}
+        virtual void notify(FutureImpl* event) {}
 
         // TODO:hint for schedule strategy
         template <typename Callable, typename... Args, typename = std::enable_if_t<IsFuture<std::decay_t<Args>...>::value>>
