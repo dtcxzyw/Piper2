@@ -28,7 +28,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Module, Object)
         virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
-                                                         const Future<void>& module) = 0;
+                                                      const Future<void>& module) = 0;
         virtual ~Module() = default;
     };
 
@@ -37,7 +37,7 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(ModuleLoader, Object)
         virtual Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) = 0;
         virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
-                                                         const Future<void>& module) = 0;
+                                                      const Future<void>& module) = 0;
 
         virtual Future<void> loadModule(const String& moduleID) = 0;
         virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config) = 0;
@@ -46,21 +46,22 @@ namespace Piper {
     };
 }  // namespace Piper
 
-#define PIPER_INIT_MODULE_IMPL(CLASS)                                                                                \
-    extern "C" PIPER_API Piper::Module* piperInitModule(Piper::PiperContext& context, Piper::Allocator& allocator) { \
-        struct Deleter {                                                                                             \
-            Piper::Allocator& allocator;                                                                             \
-            void operator()(CLASS* ptr) const {                                                                      \
-                allocator.free(reinterpret_cast<Piper::Ptr>(ptr));                                                   \
-            }                                                                                                        \
-        };                                                                                                           \
-        Piper::UniquePtr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))),           \
-                                                 Deleter{ allocator } };                                             \
-        new(ptr.get()) CLASS(context);                                                                               \
-        return ptr.release();                                                                                        \
-    }                                                                                                                \
-    extern "C" PIPER_API const char* piperGetProtocol() {                                                \
-        return PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;                                                          \
+#define PIPER_INIT_MODULE_IMPL(CLASS)                                                                              \
+    extern "C" PIPER_API Piper::Module* piperInitModule(Piper::PiperContext& context, Piper::Allocator& allocator, \
+                                                        const char* path) {                                     \
+        struct Deleter {                                                                                           \
+            Piper::Allocator& allocator;                                                                           \
+            void operator()(CLASS* ptr) const {                                                                    \
+                allocator.free(reinterpret_cast<Piper::Ptr>(ptr));                                                 \
+            }                                                                                                      \
+        };                                                                                                         \
+        Piper::UniquePtr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))),         \
+                                                 Deleter{ allocator } };                                           \
+        new(ptr.get()) CLASS(context,path);                                                                             \
+        return ptr.release();                                                                                      \
+    }                                                                                                              \
+    extern "C" PIPER_API const char* piperGetProtocol() {                                                          \
+        return PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;                                                        \
     }
-\
-//TODO:hook operator new/delete
+
+// TODO:hook operator new/delete

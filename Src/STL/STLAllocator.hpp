@@ -49,6 +49,9 @@ namespace Piper {
         bool operator!=(const STLAllocator& rhs) const noexcept {
             return &mAllocator != &rhs.mAllocator;
         }
+        bool operator==(const STLAllocator& rhs) const noexcept {
+            return &mAllocator == &rhs.mAllocator;
+        }
     };
 
 }  // namespace Piper

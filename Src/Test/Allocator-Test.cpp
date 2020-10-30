@@ -44,7 +44,7 @@ TEST_F(PiperCoreEnvironment, Jemalloc) {
     auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.JemallocAllocator.Allocator",
                                                        Piper::makeSharedObject<Piper::Config>(*context));
     inst.wait();
-    contextOwner->setAllocator(eastl::dynamic_shared_pointer_cast<Piper::Allocator>(*inst));
+    contextOwner->setAllocator(eastl::dynamic_shared_pointer_cast<Piper::Allocator>(inst.get()));
     generalAllocatorTest(*context);
 }
 

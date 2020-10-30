@@ -33,7 +33,9 @@
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/IRPrintingPasses.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
@@ -199,7 +201,7 @@ namespace Piper {
         SharedPtr<ResourceImpl> mResource;
 
     public:
-        BufferImpl(PiperContext& context, const Ptr data, const size_t size, Allocator& allocator, SharedPtr<ResourceImpl> res)
+        BufferImpl(PiperContext& context, Ptr data, const size_t size, Allocator& allocator, SharedPtr<ResourceImpl> res)
             : Buffer(context), mData(data), mSize(size), mAllocator(allocator), mResource(std::move(res)) {}
         size_t size() const noexcept override {
             return mSize;
@@ -209,8 +211,9 @@ namespace Piper {
             auto res = scheduler.newFutureImpl(0, false);
             auto dep = std::initializer_list<const SharedPtr<FutureImpl>>{ mResource->getFuture(), data.raw() };
             scheduler.spawnImpl(Closure<>{ context(), context().getAllocator(),
-                                           [dest = mData, src = std::move(data), size = mSize, rc = shared_from_this()] {
-                                               memcpy(reinterpret_cast<void*>(dest), static_cast<void*>(src->get()), size);
+                                           [src = std::move(data), data = shared_from_this()] {
+                                               memcpy(reinterpret_cast<void*>(data->mData), static_cast<void*>(src->get()),
+                                                      data->mSize);
                                            } },
                                 Span<const SharedPtr<FutureImpl>>{ dep.begin(), dep.end() }, res);
             mResource->setFuture(res);
@@ -262,7 +265,7 @@ namespace Piper {
         SharedPtr<Resource> createResource(const ResourceHandle handle) const override {
             return eastl::static_shared_pointer_cast<Resource>(makeSharedObject<ResourceImpl>(context(), handle));
         }
-        Future<SharedPtr<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
+        Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<Vector<std::byte>>>& linkable,
                                                          const String& entry) override {
             Vector<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
             modules.reserve(linkable.size());
@@ -349,6 +352,15 @@ namespace Piper {
                         reporter.flush();
                         errorHandler.raiseException("Found some errors in module", PIPER_SOURCE_LOCATION());
                     }
+
+                    llvm::legacy::PassManager manager;
+                    std::string output;
+                    llvm::raw_string_ostream out(output);
+                    manager.add(llvm::createPrintModulePass(out));
+                    manager.run(*kernel);
+
+                    if(ctx->getLogger().allow(LogLevel::Debug))
+                        ctx->getLogger().record(LogLevel::Debug, output.c_str(), PIPER_SOURCE_LOCATION());
 
                     return kernel;
                 },
@@ -441,26 +453,25 @@ namespace Piper {
             input.reserve(inputFuture.size());
             for(auto&& in : inputFuture)
                 input.push_back(Future<void>{ in });
-            auto future =
-                scheduler
-                    .parallelFor((n + chunkSize - 1) / chunkSize,
-                                 [input = payloadImpl->data(),
-                                  n](const uint32_t idx, const Future<SharedPtr<RunnableProgram>>& func, const Future<void>&) {
-                                     // TODO:unchecked cast
-                                     auto kernel = dynamic_cast<LLVMProgram*>(func->get());
-                                     uint32_t beg = idx * chunkSize;
-                                     const uint32_t end = beg + chunkSize;
-                                     if(end < n)
-                                         kernel->runUnroll(beg, input.data());
-                                     else {
-                                         while(beg < n) {
-                                             kernel->run(beg, input.data());
-                                             ++beg;
-                                         }
-                                     }
-                                 },
-                                 kernel, scheduler.wrap(input))
-                    .raw();
+            auto future = scheduler
+                              .parallelFor((n + chunkSize - 1) / chunkSize,
+                                           [input = payloadImpl->data(),
+                                            n](const uint32_t idx, Future<SharedPtr<RunnableProgram>> func, const Future<void>&) {
+                                               // TODO:unchecked cast
+                                               auto& kernel = dynamic_cast<LLVMProgram&>(*func);
+                                               uint32_t beg = idx * chunkSize;
+                                               const uint32_t end = beg + chunkSize;
+                                               if(end < n)
+                                                   kernel.runUnroll(beg, input.data());
+                                               else {
+                                                   while(beg < n) {
+                                                       kernel.run(beg, input.data());
+                                                       ++beg;
+                                                   }
+                                               }
+                                           },
+                                           std::move(kernel), scheduler.wrap(input))
+                              .raw();
             binding->makeDirty(future);
         }
         void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) override {
@@ -481,14 +492,14 @@ namespace Piper {
         }
         SharedPtr<Buffer> createBuffer(const size_t size, const size_t alignment) override {
             auto& allocator = context().getAllocator();
-            Ptr data = allocator.alloc(size, alignment);
+            auto ptr = allocator.alloc(size, alignment);
             return eastl::static_shared_pointer_cast<Buffer>(
-                makeSharedObject<BufferImpl>(context(), data, size, allocator, makeSharedObject<ResourceImpl>(context(), data)));
+                makeSharedObject<BufferImpl>(context(), ptr, size, allocator, makeSharedObject<ResourceImpl>(context(), ptr)));
         }
     };  // namespace Piper
     class ModuleImpl final : public Module {
     public:
-        explicit ModuleImpl(PiperContext& context) : Module(context) {
+        explicit ModuleImpl(PiperContext& context, const char*) : Module(context) {
             if(!llvm::llvm_is_multithreaded())
                 throw;
             // TODO:reduce unused initializing

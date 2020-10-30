@@ -40,6 +40,9 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(ErrorHandler, Object)
         virtual ~ErrorHandler() = default;
 
+        virtual void setupGlobalErrorHandler() = 0;
+        virtual void setupThreadErrorHandler() = 0;
+
         // for runtime error
         [[noreturn]] virtual void raiseException(const StringView& message, const SourceLocation& loc) = 0;
 

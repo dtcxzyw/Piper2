@@ -43,7 +43,7 @@ protected:
         auto mod = context->getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(*context, std::move(desc)), base);
         auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.NlohmannJson.JsonSerializer", nullptr, mod);
         inst.wait();
-        auto parser = eastl::dynamic_shared_pointer_cast<Piper::ConfigSerializer>(*inst);
+        auto parser = eastl::dynamic_shared_pointer_cast<Piper::ConfigSerializer>(inst.get());
         auto modules = parser->deserialize(Piper::String{ "Module.json", context->getAllocator() });
 
         for(auto&& desc : modules->viewAsArray())

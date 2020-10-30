@@ -27,7 +27,7 @@ namespace Piper {
         virtual size_t elementSize() const noexcept = 0;
         virtual size_t elementAlignment() const noexcept = 0;
         virtual String typeName() const = 0;
-        virtual Pair<Future<Vector<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat) const = 0;
+        virtual Future<SharedPtr<PITU>> generateLinkable(const SharedPtr<PITUManager>& manager) const = 0;
         virtual ~FloatingPointLibrary() = default;
     };
 

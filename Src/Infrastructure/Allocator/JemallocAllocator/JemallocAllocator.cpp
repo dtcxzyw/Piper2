@@ -36,9 +36,9 @@ namespace Piper {
     };
     class ModuleImpl final : public Module {
     public:
-        PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
+        ModuleImpl(PiperContext& context, const char*) : Module(context) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
-                                                 const Future<void>& module) override {
+                                              const Future<void>& module) override {
             if(classID == "Allocator") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<JemallocAllocator>(context())));

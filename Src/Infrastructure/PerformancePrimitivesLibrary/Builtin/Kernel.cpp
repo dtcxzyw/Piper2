@@ -14,21 +14,37 @@
    limitations under the License.
 */
 
-#include "conv.hpp"
-#include <cstdint>
+extern "C" {
 
-struct Payload {
-    uint64_t pX;
-    uint64_t pY;
-    uint64_t pZ;
-    uint32_t width;
-    uint32_t height;
-    uint32_t kernelSize;
-};
+float add(float a, float b) {
+    return a + b;
+}
 
-extern "C" void conv(const uint32_t idx, const Payload* payload) {
-    auto X = reinterpret_cast<const Float*>(payload->pX);
-    auto Y = reinterpret_cast<const Float*>(payload->pY);
-    auto Z = reinterpret_cast<Float*>(payload->pZ);
-    conv(idx, X, Y, Z, payload->width, payload->height, payload->kernelSize);
+float sub(float a, float b) {
+    return a - b;
+}
+
+float mul(float a, float b) {
+    return a * b;
+}
+
+float div(float a, float b) {
+    return a / b;
+}
+
+float fma(float x, float y, float z) {
+    return x * y + z;
+}
+
+float constant(double val) {
+    return static_cast<float>(val);
+}
+
+bool less(float x, float y) {
+    return x < y;
+}
+
+bool greater(float x, float y) {
+    return x > y;
+}
 }

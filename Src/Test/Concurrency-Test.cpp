@@ -105,7 +105,7 @@ TEST_F(PiperCoreEnvironment, Taskflow) {
     auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.Taskflow.Scheduler",
                                                        Piper::makeSharedObject<Piper::Config>(*context));
     inst.wait();
-    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(*inst));
+    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst.get()));
     generalConcurrencyTest(*context);
 }
 
@@ -113,7 +113,7 @@ TEST_F(PiperCoreEnvironment, Squirrel) {
     auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.Squirrel.Scheduler",
                                                        Piper::makeSharedObject<Piper::Config>(*context));
     inst.wait();
-    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(*inst));
+    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst.get()));
     generalConcurrencyTest(*context);
 }
 

@@ -18,8 +18,17 @@
 #include "../Interface/Infrastructure/Config.hpp"
 #include "../Interface/Infrastructure/Logger.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
+#include "../Interface/Infrastructure/PerformancePrimitivesLibrary.hpp"
 #include "../Interface/Infrastructure/Program.hpp"
 #include "TestEnvironment.hpp"
+#define PIPER_FP_NATIVE
+using Float = float;
+inline constexpr Float constantFloat(double val) {
+    return static_cast<float>(val);
+}
+inline constexpr Float fmaFloat(Float x, Float y, Float z) {
+    return x * y + z;
+}
 #include "conv.hpp"
 #include <atomic>
 #include <random>
@@ -30,27 +39,48 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
                      const Piper::SharedPtr<Piper::PITUManager>& manager) {
     using Clock = std::chrono::high_resolution_clock;
     std::mt19937_64 RNG(Clock::now().time_since_epoch().count());
-    std::uniform_real_distribution<float> URD{ 0.0f, 1.0f };
+    std::uniform_real_distribution<Float> URD{ 0.0f, 1.0f };
     // Convolution
-    constexpr uint32_t width = 1920, height = 1080, kernelSize = 127, count = width * height;
-    auto X = Piper::makeSharedPtr<Piper::Vector<float>>(context.getAllocator(), count, context.getAllocator());
+    constexpr uint32_t width = 19, height = 10, kernelSize = 5, count = width * height;
+    auto X = Piper::makeSharedPtr<Piper::Vector<Float>>(context.getAllocator(), count, context.getAllocator());
     std::generate(X->begin(), X->end(), [&] { return URD(RNG); });
-    auto Y = Piper::makeSharedPtr<Piper::Vector<float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
+    auto Y = Piper::makeSharedPtr<Piper::Vector<Float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
     std::generate(Y->begin(), Y->end(), [&] { return URD(RNG); });
 
     auto& scheduler = context.getScheduler();
-    auto devX = accelerator->createBuffer(count * sizeof(float), 64);
+    auto devX = accelerator->createBuffer(count * sizeof(Float), 64);
     devX->upload(scheduler.value(Piper::DataHolder{ X, X->data() }));
-    auto devY = accelerator->createBuffer(Y->size() * sizeof(float), 64);
+    auto devY = accelerator->createBuffer(Y->size() * sizeof(Float), 64);
     devY->upload(scheduler.value(Piper::DataHolder{ Y, Y->data() }));
-    auto devZ = accelerator->createBuffer(count * sizeof(float), 64);
+    auto devZ = accelerator->createBuffer(count * sizeof(Float), 64);
 
     // TODO:concurrency
     auto conv = manager->loadPITU("conv.bc");
     conv.wait();
-    auto [linkable, format] = (*conv)->generateLinkable(accelerator->getSupportedLinkableFormat());
+
+    auto makeFPConfig = [&] {
+        auto name = Piper::makeSharedObject<Piper::Config>(context, "Float");
+        auto inst = Piper::makeSharedObject<Piper::Config>(context, "Float32");
+        auto map = Piper::UMap<Piper::String, Piper::SharedPtr<Piper::Config>>{ context.getAllocator() };
+        map[Piper::String{ "Name", context.getAllocator() }] = name;
+        map[Piper::String{ "Instruction", context.getAllocator() }] = inst;
+        return Piper::makeSharedObject<Piper::Config>(context, map);
+    };
+    auto fplib = context.getModuleLoader().newInstance("Piper.Infrastructure.Builtin.Float", makeFPConfig());
+    // TODO:concurrency
+    fplib.wait();
+    auto rfplib = eastl::dynamic_shared_pointer_cast<Piper::FloatingPointLibrary>(fplib.get());
+
+    Piper::Vector<Piper::Future<Piper::SharedPtr<Piper::FloatingPointLibrary>>> fpls{ context.getAllocator() };
+    auto ffplib = context.getScheduler().value(rfplib);
+    fpls.push_back(ffplib);
+    auto fplink = rfplib->generateLinkable(manager);
+    fplink.wait();
+    auto [fpbc, _] = fplink->generateLinkable(accelerator->getSupportedLinkableFormat(), {});
+
+    auto [linkable, format] = conv->generateLinkable(accelerator->getSupportedLinkableFormat(), fpls);
     auto kernel = accelerator->compileKernel(
-        Piper::Vector<Piper::Future<Piper::Vector<std::byte>>>{ { linkable }, context.getAllocator() }, "conv");
+        Piper::Vector<Piper::Future<Piper::Vector<std::byte>>>{ { linkable, fpbc }, context.getAllocator() }, "conv");
     auto payload = accelerator->createPayload(Piper::InputResource{ devX->ref() }, Piper::InputResource{ devY->ref() },
                                               Piper::OutputResource{ devZ->ref() }, width, height, kernelSize);
 
@@ -74,7 +104,7 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
         logger.record(Piper::LogLevel::Debug, "Duration (Accelerator) : " + Piper::toString(context.getAllocator(), dur) + " ms",
                       PIPER_SOURCE_LOCATION());
 
-    Piper::Vector<float> standard(count, context.getAllocator());
+    Piper::Vector<Float> standard(count, context.getAllocator());
     auto xp = X->data(), yp = Y->data(), zp = standard.data();
 
     beg = Clock::now();
@@ -87,7 +117,9 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
         logger.record(Piper::LogLevel::Debug, "Duration (Native)  : " + Piper::toString(context.getAllocator(), dur) + " ms",
                       PIPER_SOURCE_LOCATION());
 
-    auto Z = reinterpret_cast<const float*>(dataZ->data());
+    auto Z = reinterpret_cast<const Float*>(dataZ->data());
+    for(size_t i = 0; i < count; ++i)
+        std::cout << Z[i] << " " << standard[i] << std::endl;
     for(Piper::Index i = 0; i < count; ++i)
         ASSERT_FLOAT_EQ(Z[i], standard[i]);
 }
@@ -111,13 +143,13 @@ TEST_F(PiperCoreEnvironment, LLVM_CPU) {
 
     auto scheduler = context->getModuleLoader().newInstance("Piper.Infrastructure.Squirrel.Scheduler", nullptr);
     scheduler.wait();
-    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(*scheduler));
+    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(scheduler.get()));
     auto accelerator = context->getModuleLoader().newInstance("Piper.Infrastructure.Parallel.Accelerator", nullptr);
     auto manager = context->getModuleLoader().newInstance("Piper.Infrastructure.LLVMIR.LLVMIRManager", nullptr);
     accelerator.wait();
     manager.wait();
-    generalAcceleratorTest(*context, eastl::dynamic_shared_pointer_cast<Piper::Accelerator>(*accelerator),
-                           eastl::dynamic_shared_pointer_cast<Piper::PITUManager>(*manager));
+    generalAcceleratorTest(*context, eastl::dynamic_shared_pointer_cast<Piper::Accelerator>(accelerator.get()),
+                           eastl::dynamic_shared_pointer_cast<Piper::PITUManager>(manager.get()));
 }
 
 int main(int argc, char** argv) {

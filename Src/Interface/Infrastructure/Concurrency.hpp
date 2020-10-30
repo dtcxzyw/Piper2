@@ -24,11 +24,6 @@
 #include <future>
 
 namespace Piper {
-
-    // class DataSpan;
-    // template <typename T>
-    // class DataView;
-
     // TODO:process report
     class FutureImpl : public Object {
     public:
@@ -42,6 +37,36 @@ namespace Piper {
             return false;
         }
     };
+
+    namespace detail {
+        template <typename T>
+        struct RemovePointer {
+            static T* getPointer(T* val) {
+                return val;
+            }
+            static const T* getPointer(const T* val) {
+                return val;
+            }
+        };
+        template <typename T, typename D>
+        struct RemovePointer<UniquePtr<T, D>> {
+            static T* getPointer(UniquePtr<T, D>* val) {
+                return val->get();
+            }
+            static const T* getPointer(const UniquePtr<T, D>* val) {
+                return val->get();
+            }
+        };
+        template <typename T>
+        struct RemovePointer<SharedPtr<T>> {
+            static T* getPointer(SharedPtr<T>* val) {
+                return val->get();
+            }
+            static const T* getPointer(const SharedPtr<T>* val) {
+                return val->get();
+            }
+        };
+    }  // namespace detail
 
     template <typename T>
     class Future final {
@@ -68,22 +93,33 @@ namespace Piper {
                 return mImpl->wait();
         }
 
-        // TODO:check ready
-        // TODO:operator* -> for UniquePtr,SharedPtr
-        const T& operator*() const {
-            return *reinterpret_cast<const T*>(mImpl->storage());
+        decltype(auto) operator*() const {
+            return *operator->();
         }
 
-        T& operator*() {
+        template <typename U = T>
+        decltype(auto) operator*() {
+            return *operator->();
+        }
+
+        auto operator->() const {
+            if(!ready())
+                throw;
+            return detail::RemovePointer<T>::getPointer(reinterpret_cast<const T*>(mImpl->storage()));
+        }
+
+        auto operator->() {
+            if(!ready())
+                throw;
+            return detail::RemovePointer<T>::getPointer(reinterpret_cast<T*>(const_cast<void*>(mImpl->storage())));
+        }
+
+        T& get() {
             return *reinterpret_cast<T*>(const_cast<void*>(mImpl->storage()));
         }
 
-        const T* operator->() const {
-            return reinterpret_cast<const T*>(mImpl->storage());
-        }
-
-        T* operator->() {
-            return reinterpret_cast<T*>(const_cast<void*>(mImpl->storage()));
+        const T& get() const {
+            return *reinterpret_cast<const T*>(mImpl->storage());
         }
 
         ~Future() noexcept {
@@ -313,7 +349,7 @@ namespace Piper {
                                      vec->reserve(fs.size());
                                      for(auto&& future : const_cast<Vector<Future<T>>&>(fs))
                                          // TODO:ownership
-                                         vec->emplace_back(std::move(*future));
+                                         vec->emplace_back(std::move(future.get()));
                                  } },
                       Span<const SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
             return Future<Vector<T>>{ result };

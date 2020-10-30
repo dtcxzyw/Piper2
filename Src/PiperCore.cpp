@@ -292,7 +292,8 @@ namespace Piper {
                     }
                 }
                 auto stage = context().getErrorHandler().enterStage("load module " + path, PIPER_SOURCE_LOCATION());
-                auto handle = reinterpret_cast<void*>(::loadModule(fs::u8path((base + path + getModuleExtension()).c_str())));
+                auto moduleFullPath = fs::u8path((base + path + getModuleExtension()).c_str());
+                auto handle = reinterpret_cast<void*>(::loadModule(moduleFullPath));
                 DLLHandle lib{ handle };
                 stage.switchToStatic("check module protocol", PIPER_SOURCE_LOCATION());
                 static const StringView coreProtocol = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
@@ -301,11 +302,12 @@ namespace Piper {
                 if(StringView{ protocol() } != coreProtocol)
                     throw;
                 stage.switchToStatic("init module", PIPER_SOURCE_LOCATION());
-                using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator);
+                using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator, const char*);
                 auto init = reinterpret_cast<InitFunc>(lib.getFunctionAddress("piperInitModule"));
                 auto& allocator = context().getAllocator();
-                auto mod = SharedPtr<Module>{ init(context(), allocator), DefaultDeleter<Module>{ allocator },
-                                              STLAllocator{ allocator } };
+                auto mod =
+                    SharedPtr<Module>{ init(context(), allocator, fs::absolute(moduleFullPath).parent_path().u8string().c_str()),
+                                       DefaultDeleter<Module>{ allocator }, STLAllocator{ allocator } };
                 if(!mod)
                     throw;
                 {
@@ -482,6 +484,12 @@ namespace Piper {
 
     public:
         explicit ErrorHandlerImpl(PiperContext& context) : ErrorHandler(context), mStages(context.getAllocator()) {}
+        void setupGlobalErrorHandler() override {
+            notImplemented(PIPER_SOURCE_LOCATION());
+        }
+        void setupThreadErrorHandler() override {
+            notImplemented(PIPER_SOURCE_LOCATION());
+        }
 
         // for runtime error
         void raiseException(const StringView& message, const SourceLocation& loc) override {

@@ -32,7 +32,7 @@ namespace Piper {
 
     class Resource : public Object {
     private:
-        ResourceHandle mHandle;
+        const ResourceHandle mHandle;
 
     public:
         Resource(PiperContext& context, const ResourceHandle handle) : Object(context), mHandle(handle) {}
@@ -177,7 +177,7 @@ namespace Piper {
 
         // TODO:Resource Name
         virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
-        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Vector<Future<Vector<std::byte>>>& linkable,
+        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<Vector<std::byte>>>& linkable,
                                                                  const String& entry) = 0;
         virtual void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel, const SharedPtr<Payload>& args) = 0;
         virtual void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) = 0;
