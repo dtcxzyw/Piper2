@@ -16,35 +16,48 @@
 
 extern "C" {
 
-float add(float a, float b) {
-    return a + b;
+struct Float {
+    char first;
+    char second[3];
+};
+
+inline static Float from(float val) {
+    return *reinterpret_cast<Float*>(&val);
 }
 
-float sub(float a, float b) {
-    return a - b;
+inline static float to(const Float& val) {
+    return *reinterpret_cast<const float*>(&val);
 }
 
-float mul(float a, float b) {
-    return a * b;
+void add(Float& res, const Float& a, const Float& b) {
+    res = from(to(a) + to(b));
 }
 
-float div(float a, float b) {
-    return a / b;
+void sub(Float& res, const Float& a, const Float& b) {
+    res = from(to(a) - to(b));
 }
 
-float fma(float x, float y, float z) {
-    return x * y + z;
+void mul(Float& res, const Float& a, const Float& b) {
+    res = from(to(a) * to(b));
 }
 
-float constant(double val) {
-    return static_cast<float>(val);
+void div(Float& res, const Float& a, const Float& b) {
+    res = from(to(a) / to(b));
 }
 
-bool less(float x, float y) {
-    return x < y;
+void fma(Float& res, const Float& x, const Float& y, const Float& z) {
+    res = from(to(x) * to(y) + to(z));
 }
 
-bool greater(float x, float y) {
-    return x > y;
+void constant(Float& res, double val) {
+    res = from(static_cast<float>(val));
+}
+
+bool less(const Float& x, const Float& y) {
+    return to(x) < to(y);
+}
+
+bool greater(const Float& x, const Float& y) {
+    return to(x) > to(y);
 }
 }

@@ -57,7 +57,7 @@ namespace Piper {
     auto getLLVMResult(PiperContext& context, llvm::Expected<T> value) {
         if(value)
             return std::move(std::move(value).get());
-        context.getErrorHandler().raiseException(("LLVM error " + llvm::toString(value.takeError())).c_str(),
+        context.getErrorHandler().raiseException(("LLVM error: " + llvm::toString(value.takeError())).c_str(),
                                                  PIPER_SOURCE_LOCATION());
     }
 
@@ -302,7 +302,7 @@ namespace Piper {
                         payload->addAttr(llvm::Attribute::ReadOnly);
                     }
                     // TODO:inline hint?
-                    func->addFnAttr(llvm::Attribute::AlwaysInline);
+                    //func->addFnAttr(llvm::Attribute::AlwaysInline);
 
                     // TODO:check interface
                     stage.switchToStatic("build for-loop unroll helper", PIPER_SOURCE_LOCATION());

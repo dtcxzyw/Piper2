@@ -21,8 +21,11 @@
 #else
 #define PIPER_FP_TYPE(Float)                       \
     extern "C" {                                   \
-    struct Float##_PIPER_FP final {                \
-        double placeholder[4];                     \
+    struct Float##_PIPER_FP {                \
+        char pl1;                                  \
+        short pl2;                                 \
+        int pl3;                                   \
+        long long pl4;                             \
     };                                             \
     typedef Float##_PIPER_FP Float;                \
     Float add##Float(Float lhs, Float rhs);        \
@@ -32,7 +35,7 @@
     Float constant##Float(double val);             \
     Float fma##Float(Float x, Float y, Float z);   \
     bool less##Float(Float x, Float y);            \
-    bool greater##Float(Float x, Float y);          \
+    bool greater##Float(Float x, Float y);         \
     }                                              \
     inline Float operator+(Float lhs, Float rhs) { \
         return add##Float(lhs, rhs);               \
@@ -46,10 +49,10 @@
     inline Float operator/(Float lhs, Float rhs) { \
         return mul##Float(lhs, rhs);               \
     }                                              \
-    inline bool operator<(Float lhs, Float rhs) { \
+    inline bool operator<(Float lhs, Float rhs) {  \
         return less##Float(lhs, rhs);              \
     }                                              \
-    inline bool operator>(Float lhs, Float rhs) { \
+    inline bool operator>(Float lhs, Float rhs) {  \
         return greater##Float(lhs, rhs);           \
     }
 #endif

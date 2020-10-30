@@ -32,6 +32,7 @@ namespace Piper {
         virtual Pair<Future<Vector<std::byte>>, CString>
         generateLinkable(const Span<const CString>& acceptableFormat,
                          const Vector<Future<SharedPtr<FloatingPointLibrary>>>& FPL) const = 0;
+        virtual String humanReadable() const = 0;
     };
 
     // TODO:Optimize

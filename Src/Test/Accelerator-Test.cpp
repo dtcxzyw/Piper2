@@ -37,11 +37,13 @@ using namespace std::chrono_literals;
 
 void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator,
                      const Piper::SharedPtr<Piper::PITUManager>& manager) {
+    auto& logger = context.getLogger();
+
     using Clock = std::chrono::high_resolution_clock;
     std::mt19937_64 RNG(Clock::now().time_since_epoch().count());
     std::uniform_real_distribution<Float> URD{ 0.0f, 1.0f };
     // Convolution
-    constexpr uint32_t width = 19, height = 10, kernelSize = 5, count = width * height;
+    constexpr uint32_t width = 4096, height = 2160, kernelSize = 63, count = width * height;
     auto X = Piper::makeSharedPtr<Piper::Vector<Float>>(context.getAllocator(), count, context.getAllocator());
     std::generate(X->begin(), X->end(), [&] { return URD(RNG); });
     auto Y = Piper::makeSharedPtr<Piper::Vector<Float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
@@ -90,7 +92,6 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     accelerator->available(devZ->ref()).wait();
     kernel.wait();
 
-    auto& logger = context.getLogger();
     if(logger.allow(Piper::LogLevel::Info))
         logger.record(Piper::LogLevel::Info, "computation start", PIPER_SOURCE_LOCATION());
 
@@ -118,8 +119,6 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
                       PIPER_SOURCE_LOCATION());
 
     auto Z = reinterpret_cast<const Float*>(dataZ->data());
-    for(size_t i = 0; i < count; ++i)
-        std::cout << Z[i] << " " << standard[i] << std::endl;
     for(Piper::Index i = 0; i < count; ++i)
         ASSERT_FLOAT_EQ(Z[i], standard[i]);
 }
