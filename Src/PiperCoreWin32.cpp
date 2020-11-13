@@ -25,7 +25,7 @@
 #include "STL/SharedPtr.hpp"
 #include "STL/StringView.hpp"
 #include "STL/UniquePtr.hpp"
-#include "STL/Vector.hpp"
+#include "STL/DynamicArray.hpp"
 #include <Windows.h>
 #include <fileapi.h>
 #include <filesystem>
@@ -79,16 +79,16 @@ namespace Piper {
         FutureImpl* future;
         std::atomic_size_t remainCount;
         std::atomic_size_t remainSize;
-        SharedPtr<Pair<bool, Vector<std::byte>>> data;
+        SharedPtr<Pair<bool, DynamicArray<std::byte>>> data;
         SharedPtr<void> file;
     };
 
     struct ReadFuture final : public FutureImpl {
-        SharedPtr<Pair<bool, Vector<std::byte>>> data;
+        SharedPtr<Pair<bool, DynamicArray<std::byte>>> data;
 
         ReadFuture(PiperContext& context, const STLAllocator& allocator, const size_t size)
             : FutureImpl(context),
-              data(makeSharedPtr<Pair<bool, Vector<std::byte>>>(allocator, false, Vector<std::byte>{ size, allocator })) {}
+              data(makeSharedPtr<Pair<bool, DynamicArray<std::byte>>>(allocator, false, DynamicArray<std::byte>{ size, allocator })) {}
         bool fastReady() const noexcept override {
             return data->first;
         }
@@ -120,7 +120,7 @@ namespace Piper {
         size_t size() const noexcept override {
             return mSize;
         }
-        Future<Vector<std::byte>> read(const size_t offset, const size_t size) override {
+        Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) override {
             auto future = makeSharedObject<ReadFuture>(context(), context().getAllocator(), size);
             auto& allocator = context().getAllocator();
             auto payload = reinterpret_cast<IOPayload*>(allocator.alloc(sizeof(IOPayload)));
@@ -148,13 +148,13 @@ namespace Piper {
                     readCount += needRead;
                 }
             }
-            return Future<Vector<std::byte>>{ future };
+            return Future<DynamicArray<std::byte>>{ future };
         }
-        Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) override {
+        Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) override {
             throw;
             /*
             return context().getScheduler().spawn(
-                [offset, context = &context(), handle = mHandle, this](const Future<Vector<std::byte>>& span) {
+                [offset, context = &context(), handle = mHandle, this](const Future<DynamicArray<std::byte>>& span) {
                     auto& data = span.get();
                     auto size = data.size();
                     auto low = static_cast<LONG>(offset), high = static_cast<LONG>(offset >> 32);
@@ -254,7 +254,7 @@ namespace Piper {
     // TODO:root path
     class FileSystemImpl final : public FileSystem {
     private:
-        Vector<std::thread> mWorkers;
+        DynamicArray<std::thread> mWorkers;
         UniquePtr<void, HandleCloser> mIOCP;
         static constexpr auto exitFlag = std::numeric_limits<size_t>::max();
 

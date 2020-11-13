@@ -17,7 +17,7 @@
 #pragma once
 #include "../../STL/Function.hpp"
 #include "../../STL/String.hpp"
-#include "../../STL/Vector.hpp"
+#include "../../STL/DynamicArray.hpp"
 #include "../Object.hpp"
 #include "Allocator.hpp"
 #include "Concurrency.hpp"
@@ -93,7 +93,7 @@ namespace Piper {
         virtual size_t size() const noexcept = 0;
         virtual void upload(Future<DataHolder> data) = 0;
         // TODO:provide destination
-        virtual Future<Vector<std::byte>> download() const = 0;
+        virtual Future<DynamicArray<std::byte>> download() const = 0;
         virtual void reset() = 0;
         // TODO:immutable access limitation?
         virtual SharedPtr<Resource> ref() const = 0;
@@ -177,7 +177,7 @@ namespace Piper {
 
         // TODO:Resource Name
         virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
-        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<Vector<std::byte>>>& linkable,
+        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<DynamicArray<std::byte>>>& linkable,
                                                                  const String& entry) = 0;
         virtual void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel, const SharedPtr<Payload>& args) = 0;
         virtual void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) = 0;

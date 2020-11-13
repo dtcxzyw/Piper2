@@ -35,7 +35,7 @@ namespace Piper {
     class FutureStorage final : public FutureImpl {
     private:
         std::mutex mMutex;
-        Vector<DelayedTask*> mSuccessor;
+        DynamicArray<DelayedTask*> mSuccessor;
         void* mPtr;
         std::atomic_uint32_t mRemain;
 
@@ -103,7 +103,7 @@ namespace Piper {
     struct DelayedTask final {
         STLAllocator allocator;
         Task task;
-        Vector<SharedPtr<FutureImpl>> depRef;
+        DynamicArray<SharedPtr<FutureImpl>> depRef;
         std::atomic_size_t depCount;
 
         DelayedTask(const STLAllocator& alloc, Task work)
@@ -112,13 +112,13 @@ namespace Piper {
 
     struct ExternalFuture final {
         SharedPtr<FutureImpl> ref;
-        Vector<DelayedTask*> successor;
+        DynamicArray<DelayedTask*> successor;
         ExternalFuture(SharedPtr<FutureImpl> future, STLAllocator allocator) : ref(std::move(future)), successor(allocator) {}
     };
 
     struct SharedContext final {
         std::mutex waitMutex;
-        Vector<Task> todo;
+        DynamicArray<Task> todo;
         std::recursive_mutex todoMutex;
 
         UMap<FutureImpl*, ExternalFuture> notifyExternalFuture;
@@ -248,7 +248,7 @@ namespace Piper {
     // TODO:lockfree data structure
     class SchedulerImpl final : public Scheduler {
     private:
-        Vector<std::thread> mThreadPool;
+        DynamicArray<std::thread> mThreadPool;
         SharedContext mContext;
 
         void emitTask(DelayedTask* delay, const Span<const SharedPtr<FutureImpl>>& dependencies) {

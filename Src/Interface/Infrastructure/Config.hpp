@@ -22,7 +22,7 @@
 #include "../../STL/StringView.hpp"
 #include "../../STL/UMap.hpp"
 #include "../../STL/Variant.hpp"
-#include "../../STL/Vector.hpp"
+#include "../../STL/DynamicArray.hpp"
 #include "../Object.hpp"
 
 namespace Piper {
@@ -32,7 +32,7 @@ namespace Piper {
 
     class Config final : public Object {
     private:
-        Variant<double, String, intmax_t, uintmax_t, bool, Vector<SharedPtr<Config>>, UMap<String, SharedPtr<Config>>,
+        Variant<double, String, intmax_t, uintmax_t, bool, DynamicArray<SharedPtr<Config>>, UMap<String, SharedPtr<Config>>,
                 MonoState>
             mValue;
 
@@ -75,8 +75,8 @@ namespace Piper {
             return Piper::get<UMap<String, SharedPtr<Config>>>(mValue);
         }
 
-        const Vector<SharedPtr<Config>>& viewAsArray() const {
-            return Piper::get<Vector<SharedPtr<Config>>>(mValue);
+        const DynamicArray<SharedPtr<Config>>& viewAsArray() const {
+            return Piper::get<DynamicArray<SharedPtr<Config>>>(mValue);
         };
 
         const SharedPtr<Config>& at(const StringView& key) const {

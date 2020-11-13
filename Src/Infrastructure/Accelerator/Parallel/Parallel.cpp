@@ -20,6 +20,7 @@
 #include "../../../Interface/Infrastructure/Allocator.hpp"
 #include "../../../Interface/Infrastructure/Concurrency.hpp"
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
+#include "../../../Interface/Infrastructure/FileSystem.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "../../../PiperAPI.hpp"
@@ -54,18 +55,17 @@ namespace Piper {
 
     // TODO:set LLVM Allocator
     template <typename T>
-    auto getLLVMResult(PiperContext& context, llvm::Expected<T> value) {
+    auto getLLVMResult(PiperContext& context, const SourceLocation& loc, llvm::Expected<T> value) {
         if(value)
             return std::move(std::move(value).get());
-        context.getErrorHandler().raiseException(("LLVM error: " + llvm::toString(value.takeError())).c_str(),
-                                                 PIPER_SOURCE_LOCATION());
+        context.getErrorHandler().raiseException(("LLVM error: " + llvm::toString(value.takeError())).c_str(), loc);
     }
 
     class LLVMLoggerWrapper : public llvm::raw_ostream {
     private:
         Logger& mLogger;
         SourceLocation mLocation;
-        Vector<char> mData;
+        DynamicArray<char> mData;
 
     public:
         explicit LLVMLoggerWrapper(PiperContext& context, const SourceLocation& location)
@@ -93,9 +93,10 @@ namespace Piper {
     public:
         LLVMProgram(PiperContext& context, std::unique_ptr<llvm::orc::LLJIT> JIT, const String& entry)
             : RunnableProgram(context), mJIT(std::move(JIT)),
-              mFunction(reinterpret_cast<KernelFunction>(getLLVMResult(context, mJIT->lookup(entry.c_str())).getAddress())),
+              mFunction(reinterpret_cast<KernelFunction>(
+                  getLLVMResult(context, PIPER_SOURCE_LOCATION(), mJIT->lookup(entry.c_str())).getAddress())),
               mUnroll(reinterpret_cast<KernelFunction>(
-                  getLLVMResult(context, mJIT->lookup((entry + "_unroll").c_str())).getAddress())) {
+                  getLLVMResult(context, PIPER_SOURCE_LOCATION(), mJIT->lookup((entry + "_unroll").c_str())).getAddress())) {
             if(!mFunction)
                 context.getErrorHandler().raiseException("Undefined entry " + entry, PIPER_SOURCE_LOCATION());
         }
@@ -126,8 +127,8 @@ namespace Piper {
 
     class ResourceBindingImpl final : public ResourceBinding {
     private:
-        Vector<SharedPtr<ResourceImpl>> mInput;
-        Vector<SharedPtr<ResourceImpl>> mOutput;
+        DynamicArray<SharedPtr<ResourceImpl>> mInput;
+        DynamicArray<SharedPtr<ResourceImpl>> mOutput;
 
     public:
         explicit ResourceBindingImpl(PiperContext& context)
@@ -144,8 +145,8 @@ namespace Piper {
                 context().getErrorHandler().raiseException("Unrecognized Resource", PIPER_SOURCE_LOCATION());
             mOutput.push_back(std::move(res));
         }
-        Vector<SharedPtr<FutureImpl>> getInput() const {
-            Vector<SharedPtr<FutureImpl>> input{ context().getAllocator() };
+        DynamicArray<SharedPtr<FutureImpl>> getInput() const {
+            DynamicArray<SharedPtr<FutureImpl>> input{ context().getAllocator() };
             input.reserve(mInput.size());
             for(auto&& in : mInput)
                 input.push_back(in->getFuture());
@@ -159,7 +160,7 @@ namespace Piper {
 
     class PayloadImpl final : public Payload {
     private:
-        Vector<std::byte> mPayload;
+        DynamicArray<std::byte> mPayload;
         SharedPtr<ResourceBindingImpl> mResourceBinding;
 
     public:
@@ -184,7 +185,7 @@ namespace Piper {
         void addExtraOutput(const SharedPtr<Resource>& resource) override {
             mResourceBinding->addOutput(resource);
         }
-        Vector<std::byte> data() const {
+        DynamicArray<std::byte> data() const {
             return mPayload;
         }
         SharedPtr<ResourceBindingImpl> getResourceBinding() const {
@@ -218,13 +219,13 @@ namespace Piper {
                                 Span<const SharedPtr<FutureImpl>>{ dep.begin(), dep.end() }, res);
             mResource->setFuture(res);
         }
-        Future<Vector<std::byte>> download() const override {
+        Future<DynamicArray<std::byte>> download() const override {
             auto& scheduler = context().getScheduler();
             return scheduler.spawn(
                 [thisBuffer = shared_from_this()](const Future<void>&) {
                     const auto beg = reinterpret_cast<const std::byte*>(thisBuffer->mData);
                     const auto end = beg + thisBuffer->mSize;
-                    return Vector<std::byte>{ beg, end, thisBuffer->context().getAllocator() };
+                    return DynamicArray<std::byte>{ beg, end, thisBuffer->context().getAllocator() };
                 },
                 Future<void>{ mResource->getFuture() });
         }
@@ -265,31 +266,31 @@ namespace Piper {
         SharedPtr<Resource> createResource(const ResourceHandle handle) const override {
             return eastl::static_shared_pointer_cast<Resource>(makeSharedObject<ResourceImpl>(context(), handle));
         }
-        Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<Vector<std::byte>>>& linkable,
+        Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<DynamicArray<std::byte>>>& linkable,
                                                          const String& entry) override {
-            Vector<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
+            DynamicArray<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
             modules.reserve(linkable.size());
             auto& scheduler = context().getScheduler();
             auto llctx = std::make_unique<llvm::LLVMContext>();
             // TODO:use parallel_for?
             for(auto&& unit : linkable)
                 modules.emplace_back(std::move(scheduler.spawn(
-                    [ctx = &context(), llvmctx = llctx.get()](const Future<Vector<std::byte>>& bitcode) {
+                    [ctx = &context(), llvmctx = llctx.get()](const Future<DynamicArray<std::byte>>& bitcode) {
                         auto stage = ctx->getErrorHandler().enterStageStatic("parse LLVM Bitcode", PIPER_SOURCE_LOCATION());
                         auto res = llvm::parseBitcodeFile(
                             llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{
                                                        reinterpret_cast<const uint8_t*>(bitcode->data()), bitcode->size() }),
                                                    "bitcode data" },
                             *llvmctx);
-                        return getLLVMResult(*ctx, std::move(res));
+                        return getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(), std::move(res));
                     },
                     unit)));
             // TODO:reduce Module cloning by std::move
             auto kernel = scheduler.spawn(
-                [ctx = &context(), llvmctx = llctx.get(), entry](const Future<Vector<std::unique_ptr<llvm::Module>>>& units) {
+                [ctx = &context(), llvmctx = llctx.get(), entry](const Future<DynamicArray<std::unique_ptr<llvm::Module>>>& units) {
                     auto& errorHandler = ctx->getErrorHandler();
                     auto stage = errorHandler.enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
-                    auto kernel = std::make_unique<llvm::Module>("LLVM kernel", *llvmctx);
+                    auto kernel = std::make_unique<llvm::Module>("LLVM_kernel", *llvmctx);
                     for(auto&& unit : *units)
                         llvm::Linker::linkModules(*kernel, llvm::CloneModule(*unit));
 
@@ -302,7 +303,7 @@ namespace Piper {
                         payload->addAttr(llvm::Attribute::ReadOnly);
                     }
                     // TODO:inline hint?
-                    //func->addFnAttr(llvm::Attribute::AlwaysInline);
+                    // func->addFnAttr(llvm::Attribute::AlwaysInline);
 
                     // TODO:check interface
                     stage.switchToStatic("build for-loop unroll helper", PIPER_SOURCE_LOCATION());
@@ -342,8 +343,6 @@ namespace Piper {
                         builder.CreateRetVoid();
                     }
 
-                    // kernel->dump();
-
                     stage.switchToStatic("verify kernel", PIPER_SOURCE_LOCATION());
 
                     LLVMLoggerWrapper reporter{ *ctx, PIPER_SOURCE_LOCATION() };
@@ -359,6 +358,7 @@ namespace Piper {
                     manager.add(llvm::createPrintModulePass(out));
                     manager.run(*kernel);
 
+                    out.flush();
                     if(ctx->getLogger().allow(LogLevel::Debug))
                         ctx->getLogger().record(LogLevel::Debug, output.c_str(), PIPER_SOURCE_LOCATION());
 
@@ -366,12 +366,12 @@ namespace Piper {
                 },
                 scheduler.wrap(modules));
             return scheduler.spawn(
-                [entry, ctx = &context(), llvmctx = std::move(llctx)](Future<std::unique_ptr<llvm::Module>> func) {
+                [entry, ctx = &context(), llvmctx = std::move(llctx), this](Future<std::unique_ptr<llvm::Module>> func) {
                     auto mod = std::move(*func);
 
                     // TODO:LLVM use fake host triple,use true host triple to initialize JITTargetMachineBuilder
                     // TODO:optimize like clang -O3
-                    auto JTMB = getLLVMResult(*ctx, llvm::orc::JITTargetMachineBuilder::detectHost());
+                    auto JTMB = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(), llvm::orc::JITTargetMachineBuilder::detectHost());
 
                     // TODO:test settings
                     // TODO:FP Precise/Atomic
@@ -424,18 +424,40 @@ namespace Piper {
                     options.UnsafeFPMath = false;
                     */
 
-                    auto engine = getLLVMResult(*ctx,
+                    auto engine = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(),
                                                 std::move(llvm::orc::LLJITBuilder{}
                                                               .setNumCompileThreads(std::thread::hardware_concurrency())
                                                               .setJITTargetMachineBuilder(std::move(JTMB)))
                                                     .create());
 
                     mod->setDataLayout(engine->getDataLayout());
-                    auto err = engine->addIRModule(llvm::orc::ThreadSafeModule{
-                        std::move(mod), std::move(const_cast<std::remove_const_t<decltype(llvmctx)>&>(llvmctx)) });
 
-                    if(err)
+                    if(auto err = engine->addIRModule(llvm::orc::ThreadSafeModule{
+                           std::move(mod), std::move(const_cast<std::remove_const_t<decltype(llvmctx)>&>(llvmctx)) }))
                         ctx->getErrorHandler().raiseException(llvm::toString(std::move(err)).c_str(), PIPER_SOURCE_LOCATION());
+
+                    {
+                        llvm::orc::SymbolMap map = {
+#define PIPER_MATH_KERNEL_FUNC(name)                                                                             \
+    {                                                                                                            \
+        engine->getExecutionSession().intern(#name), llvm::JITEvaluatedSymbol {                                  \
+            reinterpret_cast<llvm::JITTargetAddress>(name),                                                      \
+                llvm::JITSymbolFlags::Callable | llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Absolute \
+        }                                                                                                        \
+    }
+                            PIPER_MATH_KERNEL_FUNC(cosf),  PIPER_MATH_KERNEL_FUNC(sinf),   PIPER_MATH_KERNEL_FUNC(fabsf),
+                            PIPER_MATH_KERNEL_FUNC(fmaxf), PIPER_MATH_KERNEL_FUNC(fminf),  PIPER_MATH_KERNEL_FUNC(sqrtf),
+                            PIPER_MATH_KERNEL_FUNC(cbrtf), PIPER_MATH_KERNEL_FUNC(hypotf),
+#undef PIPER_MATH_KERNEL_FUNC
+                        };
+                        static char ID;
+                        auto MU = std::make_unique<llvm::orc::AbsoluteSymbolsMaterializationUnit>(
+                            map, reinterpret_cast<llvm::orc::VModuleKey>(&ID));
+
+                        if(auto err = engine->define(std::move(MU)))
+                            ctx->getErrorHandler().raiseException(llvm::toString(std::move(err)).c_str(),
+                                                                  PIPER_SOURCE_LOCATION());
+                    }
 
                     return eastl::static_shared_pointer_cast<RunnableProgram>(
                         makeSharedObject<LLVMProgram>(*ctx, std::move(engine), entry));
@@ -449,7 +471,7 @@ namespace Piper {
             auto&& binding = payloadImpl->getResourceBinding();
             // TODO:reduce copy
             auto inputFuture = binding->getInput();
-            Vector<Future<void>> input{ context().getAllocator() };
+            DynamicArray<Future<void>> input{ context().getAllocator() };
             input.reserve(inputFuture.size());
             for(auto&& in : inputFuture)
                 input.push_back(Future<void>{ in });
@@ -498,8 +520,11 @@ namespace Piper {
         }
     };  // namespace Piper
     class ModuleImpl final : public Module {
+    private:
+        String mPath;
+
     public:
-        explicit ModuleImpl(PiperContext& context, const char*) : Module(context) {
+        explicit ModuleImpl(PiperContext& context, const char* path) : Module(context), mPath(path, context.getAllocator()) {
             if(!llvm::llvm_is_multithreaded())
                 throw;
             // TODO:reduce unused initializing

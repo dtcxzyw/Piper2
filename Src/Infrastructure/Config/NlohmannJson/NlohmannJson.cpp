@@ -44,7 +44,7 @@ namespace Piper {
                     return makeSharedObject<Config>(context(), std::move(attrs));
                 }
                 case Json::value_t::array: {
-                    Vector<SharedPtr<Config>> elements{ context().getAllocator() };
+                    DynamicArray<SharedPtr<Config>> elements{ context().getAllocator() };
                     elements.reserve(json.size());
                     for(const auto& element : json)
                         elements.push_back(buildFromJson(element));

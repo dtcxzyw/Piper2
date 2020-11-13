@@ -1,0 +1,13 @@
+cmake_minimum_required (VERSION 3.8)
+
+add_subdirectory("Denoiser")
+add_subdirectory("Geometry")
+add_subdirectory("Integrater")
+add_subdirectory("Light")
+add_subdirectory("Material")
+add_subdirectory("Medium")
+add_subdirectory("RenderDriver")
+add_subdirectory("Sampler")
+add_subdirectory("Sensor")
+add_subdirectory("Texture")
+add_subdirectory("Tracer")

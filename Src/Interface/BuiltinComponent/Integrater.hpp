@@ -14,11 +14,18 @@
    limitations under the License.
 */
 
-#pragma once
-#include "STLAllocator.hpp"
-#include <EASTL/vector.h>
+#include "../../STL/UniquePtr.hpp"
+#include "../Object.hpp"
 
 namespace Piper {
-    template <typename T>
-    using Vector = eastl::vector<T>;
+    class Tracer;
+    class RTProgram;
+
+    class Integrater : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Integrater, Object)
+        virtual ~Integrater() = default;
+
+        virtual UniquePtr<RTProgram> compile(Tracer& tracer) const = 0;
+    };
 }  // namespace Piper

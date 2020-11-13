@@ -31,6 +31,7 @@
 #include <llvm/IR/LLVMContext.h>
 // TODO:use new PassManager
 //#include <llvm/IR/PassManager.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/TargetRegistry.h>
@@ -46,137 +47,12 @@
 #include <utility>
 
 namespace Piper {
-    class FPReplacer final : public llvm::ModulePass {
-    private:
-        // TODO:UMap
-        std::unordered_map<String, std::pair<size_t, size_t>, eastl::hash<String>> mFPTypes;
-        STLAllocator mAllocator;
-        static char ID;
-
-    public:
-        explicit FPReplacer(const Vector<SharedPtr<FloatingPointLibrary>>& FPL)
-            : ModulePass(ID), mAllocator(FPL.get_allocator()) {
-            for(auto&& lib : FPL) {
-                mFPTypes[lib->typeName()] = { lib->elementSize(), lib->elementAlignment() };
-            }
-        }
-        bool runOnModule(llvm::Module& M) override {
-            bool modified = false;
-            // TODO:modify structures which contain PIPER_FP
-            std::unordered_map<llvm::Type*, std::pair<size_t, size_t>> info;
-            for(auto structure : M.getIdentifiedStructTypes()) {
-                auto name = structure->getName();
-                if(!name.endswith("_PIPER_FP"))
-                    continue;
-                auto type = name.substr(7, name.size() - 16);
-                auto key = String{ type.data(), type.size(), mAllocator };
-                auto iter = mFPTypes.find(key);
-                if(iter == mFPTypes.cend())
-                    throw;
-                auto unit = llvm::Type::getInt8Ty(M.getContext());
-                auto arr = llvm::ArrayType::get(unit, iter->second.first - 1);
-                // TODO:alignment
-
-                // NOTICE:first byte for getelementptr
-                auto replace = llvm::StructType::create(llvm::ArrayRef<llvm::Type*>{ unit, arr }, structure->getName());
-
-                // DEBUG
-                std::byte data[sizeof(llvm::StructType)];
-
-                memcpy(data, structure, sizeof(data));
-                memcpy(structure, replace, sizeof(data));
-                memcpy(replace, data, sizeof(data));
-
-                // structure->setBody(llvm::ArrayRef<llvm::Type*>{ arr });
-                info[structure] = iter->second;
-            }
-            for(auto&& func : M.getFunctionList()) {
-                for(auto&& block : func.getBasicBlockList()) {
-                    for(auto&& inst : block.getInstList()) {
-                        // alloca/load/store/memcpy/memmove
-                        switch(inst.getOpcode()) {
-                            case llvm::Instruction::Alloca: {
-                                auto type = inst.getOperand(0)->getType();
-                                auto iter = info.find(type);
-                                if(iter != info.cend()) {
-                                    llvm::dyn_cast<llvm::AllocaInst>(&inst)->setAlignment(
-                                        llvm::MaybeAlign{ llvm::Align{ iter->second.second } });
-                                    modified = true;
-                                }
-                            } break;
-                            case llvm::Instruction::Load: {
-                                auto type = inst.getOperand(0)->getType();
-                                auto iter = info.find(type);
-                                if(iter != info.cend()) {
-                                    llvm::dyn_cast<llvm::LoadInst>(&inst)->setAlignment(
-                                        llvm::MaybeAlign{ llvm::Align{ iter->second.second } });
-                                    modified = true;
-                                }
-                            } break;
-                            case llvm::Instruction::Store: {
-                                auto type = inst.getOperand(0)->getType();
-                                auto iter = info.find(type);
-                                if(iter != info.cend()) {
-                                    llvm::dyn_cast<llvm::StoreInst>(&inst)->setAlignment(
-                                        llvm::MaybeAlign{ llvm::Align{ iter->second.second } });
-                                    modified = true;
-                                }
-                            }
-                            case llvm::Instruction::Call: {
-                                auto call = llvm::dyn_cast<llvm::CallInst>(&inst);
-
-                                if(call) {
-                                    auto name = call->getCalledFunction()->getName();
-                                    if(name == "llvm.memmove.p0i8.p0i8.i64" || name == "llvm.memcpy.p0i8.p0i8.i64") {
-                                        auto address = call->getArgOperand(0);
-                                        auto access = llvm::dyn_cast<llvm::GetElementPtrInst>(address);
-                                        if(access) {
-                                            auto type = access->getSourceElementType();
-                                            auto iter = info.find(type);
-                                            if(iter != info.cend()) {
-                                                call->setArgOperand(2,
-                                                                    llvm::ConstantInt::get(call->getArgOperand(2)->getType(),
-                                                                                           iter->second.first));
-                                                modified = true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            default:
-                                break;
-                        }
-                    }
-                }
-            }
-            return modified;
-        }
-    };
-
-    class SuffixAppender final : public llvm::ModulePass {
-    private:
-        String mSuffix;
-        static char ID;
-
-    public:
-        explicit SuffixAppender(String suffix) : ModulePass(ID), mSuffix(std::move(suffix)) {}
-        bool runOnModule(llvm::Module& M) override {
-            for(auto&& F : M.getFunctionList()) {
-                F.setName(F.getName() + mSuffix.c_str());
-            }
-            return true;
-        }
-    };
-
-    char FPReplacer::ID;
-    char SuffixAppender::ID;
-
     class LLVMStream final : public llvm::raw_pwrite_stream {
     private:
-        Vector<std::byte>& mData;
+        DynamicArray<std::byte>& mData;
 
     public:
-        explicit LLVMStream(Vector<std::byte>& data) : raw_pwrite_stream(true), mData(data) {}
+        explicit LLVMStream(DynamicArray<std::byte>& data) : raw_pwrite_stream(true), mData(data) {}
         void pwrite_impl(const char* ptr, size_t size, uint64_t offset) override {
             if(offset != mData.size())
                 throw;
@@ -194,8 +70,10 @@ namespace Piper {
     static void verifyLLVMModule(PiperContext& context, llvm::Module& module) {
         std::string output;
         llvm::raw_string_ostream out(output);
-        if(llvm::verifyModule(module, &out))
+        if(llvm::verifyModule(module, &out)) {
+            out.flush();
             context.getErrorHandler().raiseException(("Bad module:" + output).c_str(), PIPER_SOURCE_LOCATION());
+        }
     }
 
     class LLVMIR final : public PITU, public eastl::enable_shared_from_this<LLVMIR> {
@@ -218,38 +96,24 @@ namespace Piper {
             llvm::legacy::PassManager manager;
             manager.add(llvm::createPrintModulePass(out));
             manager.run(*mModule);
+            out.flush();
             return String{ res.data(), res.size(), context().getAllocator() };
         }
-        Pair<Future<Vector<std::byte>>, CString>
-        generateLinkable(const Span<const CString>& acceptableFormat,
-                         const Vector<Future<SharedPtr<FloatingPointLibrary>>>& FPL) const override {
+        Pair<Future<DynamicArray<std::byte>>, CString> generateLinkable(const Span<const CString>& acceptableFormat) const override {
             auto& scheduler = context().getScheduler();
-            auto complete = scheduler.spawn(
-                [ctx = &context(), mod = cloneModule()](Future<Vector<SharedPtr<FloatingPointLibrary>>> FPL) {
-                    auto replacer = std::make_unique<FPReplacer>(FPL.get());
-
-                    llvm::legacy::PassManager pass;
-                    pass.add(replacer.release());
-                    pass.run(*mod);
-
-                    verifyLLVMModule(*ctx, *mod);
-
-                    return std::move(const_cast<std::unique_ptr<llvm::Module>&>(mod));
-                },
-                scheduler.wrap(FPL));
             for(auto&& format : acceptableFormat) {
                 // TODO:LLVM IR Version
                 if(StringView{ format } == "LLVM IR") {
                     // TODO:lazy parse linkable and directly return data
-                    return makePair(context().getScheduler().spawn(
+                    return makePair(scheduler.spawn(
                                         [ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
-                                            Vector<std::byte> data{ ctx->getAllocator() };
+                                            DynamicArray<std::byte> data{ ctx->getAllocator() };
                                             LLVMStream stream(data);
                                             llvm::WriteBitcodeToFile(*mod.get(), stream);
                                             stream.flush();
                                             return std::move(data);
                                         },
-                                        complete),
+                                        scheduler.value(cloneModule())),
                                     format);
                 }
                 std::string error;
@@ -270,7 +134,7 @@ namespace Piper {
                                             mod.get()->setTargetTriple(format);
 
                                             llvm::legacy::PassManager pass;
-                                            Vector<std::byte> data{ ctx->getAllocator() };
+                                            DynamicArray<std::byte> data{ ctx->getAllocator() };
                                             LLVMStream stream(data);
                                             if(!(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
                                                                                     llvm::CodeGenFileType::CGFT_ObjectFile)))
@@ -280,7 +144,7 @@ namespace Piper {
                                             stream.flush();
                                             return std::move(data);
                                         },
-                                        complete),
+                                        scheduler.value(cloneModule())),
                                     format);
                 }
             }
@@ -312,13 +176,13 @@ namespace Piper {
                 ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
             });
         }
-        Future<SharedPtr<PITU>> mergePITU(const Future<Vector<SharedPtr<PITU>>>& pitus) const override {
+        Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
             return context().getScheduler().spawn(
-                [ctx = &context(), llvmctx = mContext](const Future<Vector<SharedPtr<PITU>>>& pitus) {
+                [ctx = &context(), llvmctx = mContext](const Future<DynamicArray<SharedPtr<PITU>>>& pitus) {
                     auto stage = ctx->getErrorHandler().enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
 
                     // TODO:module ID param
-                    auto module = std::make_unique<llvm::Module>("merged module", *llvmctx);
+                    auto module = std::make_unique<llvm::Module>("merged_module", *llvmctx);
                     llvm::Linker linker(*module);
 
                     for(auto& mod : *pitus) {
@@ -333,26 +197,6 @@ namespace Piper {
                     return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmctx, std::move(module)));
                 },
                 pitus);
-        }
-        Future<SharedPtr<PITU>> appendSuffix(const Future<SharedPtr<PITU>>& pitu, const String& suffix) const override {
-            return context().getScheduler().spawn(
-                [ctx = &context(), llvmctx = mContext, suffix](const Future<SharedPtr<PITU>>& pitu) {
-                    // TODO:module ID param
-                    auto ir = dynamic_cast<const LLVMIR*>(pitu.get().get());
-                    if(!ir)
-                        ctx->getErrorHandler().raiseException("Unsupported PITU", PIPER_SOURCE_LOCATION());
-                    auto mod = ir->cloneModule();
-                    auto appender = std::make_unique<SuffixAppender>(suffix);
-
-                    llvm::legacy::PassManager pass;
-                    pass.add(appender.release());
-                    pass.run(*mod);
-
-                    verifyLLVMModule(*ctx, *mod);
-
-                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmctx, std::move(mod)));
-                },
-                pitu);
         }
     };
     class ModuleImpl final : public Module {

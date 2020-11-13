@@ -27,7 +27,7 @@ namespace Piper {
 
     class StorageUnit final : public Object {
     private:
-        Variant<UMap<String, SharedPtr<StorageUnit>>, Vector<std::byte>> mData;
+        Variant<UMap<String, SharedPtr<StorageUnit>>, DynamicArray<std::byte>> mData;
         auto& viewAsDir() {
             if(isFile())
                 throw;
@@ -35,7 +35,7 @@ namespace Piper {
         }
 
     public:
-        StorageUnit(PiperContext& context, FileTag) : Object(context), mData(Vector<std::byte>{ context.getAllocator() }) {}
+        StorageUnit(PiperContext& context, FileTag) : Object(context), mData(DynamicArray<std::byte>{ context.getAllocator() }) {}
         StorageUnit(PiperContext& context, DirTag)
             : Object(context), mData(UMap<String, SharedPtr<StorageUnit>>{ context.getAllocator() }) {}
         bool isFile() const noexcept {
@@ -44,7 +44,7 @@ namespace Piper {
         auto& viewAsFile() {
             if(!isFile())
                 throw;
-            return get<Vector<std::byte>>(mData);
+            return get<DynamicArray<std::byte>>(mData);
         }
         void remove(StorageUnit* ptr) {
             auto& dir = viewAsDir();
@@ -72,25 +72,25 @@ namespace Piper {
 
     class StreamImpl final : public Stream {
     private:
-        Vector<std::byte>& mData;
+        DynamicArray<std::byte>& mData;
         FileAccessMode mAccess;
 
     public:
-        StreamImpl(PiperContext& context, Vector<std::byte>& data, const FileAccessMode access)
+        StreamImpl(PiperContext& context, DynamicArray<std::byte>& data, const FileAccessMode access)
             : Stream(context), mData(data), mAccess(access) {}
         size_t size() const noexcept override {
             return mData.size();
         }
-        Future<Vector<std::byte>> read(const size_t offset, const size_t size) override {
+        Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) override {
             if(mAccess != FileAccessMode::Read)
                 throw;
-            return context().getScheduler().value(Vector<std::byte>(mData.cbegin() + offset, mData.cbegin() + offset + size));
+            return context().getScheduler().value(DynamicArray<std::byte>(mData.cbegin() + offset, mData.cbegin() + offset + size));
         }
-        Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) override {
+        Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) override {
             if(mAccess != FileAccessMode::Write)
                 throw;
             return context().getScheduler().spawn(
-                [offset, this](const Future<Vector<std::byte>>& val) {
+                [offset, this](const Future<DynamicArray<std::byte>>& val) {
                     eastl::copy(val->cbegin(), val->cend(), mData.begin());
                     // TODO:extend/thread safety
                 },
@@ -111,11 +111,11 @@ namespace Piper {
 
     class MappedMemoryImpl final : public MappedMemory {
     private:
-        Vector<std::byte>& mData;
+        DynamicArray<std::byte>& mData;
         const size_t mMaxSize;
 
     public:
-        MappedMemoryImpl(PiperContext& context, Vector<std::byte>& data, const size_t maxSize)
+        MappedMemoryImpl(PiperContext& context, DynamicArray<std::byte>& data, const size_t maxSize)
             : MappedMemory(context), mData(data), mMaxSize(maxSize) {}
         size_t size() const noexcept override {
             return mMaxSize == std::numeric_limits<size_t>::max() ? mData.size() : mMaxSize;
@@ -137,7 +137,7 @@ namespace Piper {
     private:
         StorageUnit mRoot;
         auto normalize(const StringView& path) {
-            Vector<StringView> stack;
+            DynamicArray<StringView> stack;
             Index lastPos = 0;
             for(Index i = 0; i <= path.size(); ++i) {
                 if(i == path.size() || path[i] == '/') {
@@ -153,7 +153,7 @@ namespace Piper {
             }
             return stack;
         }
-        StorageUnit* locate(const Vector<StringView>& path, StorageUnit** parent) {
+        StorageUnit* locate(const DynamicArray<StringView>& path, StorageUnit** parent) {
             StorageUnit* res = &mRoot;
             for(auto&& part : path) {
                 if(res) {
@@ -176,11 +176,11 @@ namespace Piper {
             }
             return res;
         }
-        StringView name(const Vector<StringView>& path) {
+        StringView name(const DynamicArray<StringView>& path) {
             return path.back();
         }
 
-        Vector<std::byte>& openFile(const StringView& path, const FileAccessMode access) {
+        DynamicArray<std::byte>& openFile(const StringView& path, const FileAccessMode access) {
             auto np = normalize(path);
             StorageUnit* parent = nullptr;
             auto unit = locate(np, &parent);

@@ -13,23 +13,23 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-#include "../Kernel/FloatingPoint.hpp"
+#include <cmath>
 #include <cstdint>
 
-PIPER_FP_TYPE(Float);
+using Float = float;
 
 void conv(const uint32_t idx, const Float* X, const Float* Y, Float* Z, const uint32_t width, const uint32_t height,
           const uint32_t kernelSize) {
     int32_t half = kernelSize / 2;
     int32_t y = idx / width, x = idx % width;
-    Float res = constantFloat(0.0);
+    Float res = 0.0f;
     for(int32_t i = 0; i < static_cast<int32_t>(kernelSize); ++i) {
         int32_t nx = x + i - half;
         if(nx >= 0 && nx < static_cast<int32_t>(width))
             for(int32_t j = 0; j < static_cast<int32_t>(kernelSize); ++j) {
                 int32_t ny = y + j - half;
                 if(ny >= 0 && ny < static_cast<int32_t>(height)) {
-                    res = fmaFloat(X[ny * width + nx], Y[i * kernelSize + j], res);
+                    res += X[ny * width + nx] * Y[i * kernelSize + j];
                 }
             }
     }

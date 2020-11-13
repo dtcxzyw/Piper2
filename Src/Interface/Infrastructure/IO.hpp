@@ -15,7 +15,7 @@
 */
 
 #pragma once
-#include "../../STL/Vector.hpp"
+#include "../../STL/DynamicArray.hpp"
 #include "../Object.hpp"
 #include "Concurrency.hpp"
 
@@ -28,8 +28,8 @@ namespace Piper {
         virtual ~Stream() = default;
         virtual size_t size() const noexcept = 0;
         // TODO:FutureSequence/reduce copy
-        virtual Future<Vector<std::byte>> read(const size_t offset, const size_t size) = 0;
-        virtual Future<void> write(const size_t offset, const Future<Vector<std::byte>>& data) = 0;
+        virtual Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) = 0;
+        virtual Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) = 0;
     };
 
     class MappedSpan : public Object {

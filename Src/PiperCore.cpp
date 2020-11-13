@@ -270,7 +270,7 @@ namespace Piper {
             auto path = iter->second->get<String>();
 
             iter = info.find("Dependencies");
-            Vector<String> deps(context().getAllocator());
+            DynamicArray<String> deps(context().getAllocator());
             if(iter != info.cend()) {
                 for(auto&& dep : iter->second->viewAsArray())
                     deps.push_back(dep->get<String>());
@@ -535,7 +535,7 @@ namespace Piper {
         SharedPtr<Allocator> mUserAllocator;
         UnitManagerImpl mUnitManager;
         ErrorHandlerImpl mErrorHandler;
-        Vector<Scheduler*> mNotifyScheduler;
+        DynamicArray<Scheduler*> mNotifyScheduler;
 
         Stack<SharedPtr<Object>> mLifeTimeRecorder;
 

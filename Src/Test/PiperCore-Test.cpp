@@ -81,7 +81,7 @@ TEST_F(PiperCoreEnvironment, ConfigTest) {
     // array
     config = Piper::makeSharedObject<Piper::Config>(
         *context,
-        Piper::Vector<Piper::SharedPtr<Piper::Config>>({ Piper::makeSharedObject<Piper::Config>(*context) },
+        Piper::DynamicArray<Piper::SharedPtr<Piper::Config>>({ Piper::makeSharedObject<Piper::Config>(*context) },
                                                        context->getAllocator()));
     ASSERT_EQ(config->type(), Piper::NodeType::Array);
     ASSERT_EQ(config->viewAsArray()[0]->type(), Piper::NodeType::Null);

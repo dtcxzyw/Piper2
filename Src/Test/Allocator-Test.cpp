@@ -27,7 +27,7 @@ void generalAllocatorTest(Piper::PiperContext& context) {
     ASSERT_EQ(ptr & 1023, 0);
     context.getAllocator().free(ptr);
     // STL Container
-    Piper::Vector<size_t> sum(context.getAllocator());
+    Piper::DynamicArray<size_t> sum(context.getAllocator());
     for(Piper::Index i = 0; i < static_cast<Piper::Index>(100); ++i)
         sum.push_back(i);
     auto res = std::accumulate(sum.cbegin(), sum.cend(), static_cast<size_t>(0));

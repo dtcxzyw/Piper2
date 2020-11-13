@@ -19,7 +19,7 @@
 #include "../../STL/Optional.hpp"
 #include "../../STL/String.hpp"
 #include "../../STL/UniquePtr.hpp"
-#include "../../STL/Vector.hpp"
+#include "../../STL/DynamicArray.hpp"
 
 #include <future>
 
@@ -336,30 +336,30 @@ namespace Piper {
         }
 
         template <typename T>
-        auto wrap(Vector<Future<T>> futures) -> std::enable_if_t<!std::is_void_v<T>, Future<Vector<T>>> {
-            auto result = newFutureImpl(sizeof(Vector<T>), false);
-            Vector<const SharedPtr<FutureImpl>> dep{ context().getAllocator() };
+        auto wrap(DynamicArray<Future<T>> futures) -> std::enable_if_t<!std::is_void_v<T>, Future<DynamicArray<T>>> {
+            auto result = newFutureImpl(sizeof(DynamicArray<T>), false);
+            DynamicArray<const SharedPtr<FutureImpl>> dep{ context().getAllocator() };
             dep.reserve(futures.size());
             for(auto&& future : futures)
                 dep.push_back(future.raw());
             spawnImpl(Closure<>{ context(), context().getAllocator(),
                                  [fs = std::move(futures), ptr = result->storage(), allocator = &context().getAllocator()] {
-                                     auto vec = reinterpret_cast<Vector<T>*>(const_cast<void*>(ptr));
-                                     new(vec) Vector<T>(*allocator);
+                                     auto vec = reinterpret_cast<DynamicArray<T>*>(const_cast<void*>(ptr));
+                                     new(vec) DynamicArray<T>(*allocator);
                                      vec->reserve(fs.size());
-                                     for(auto&& future : const_cast<Vector<Future<T>>&>(fs))
+                                     for(auto&& future : const_cast<DynamicArray<Future<T>>&>(fs))
                                          // TODO:ownership
                                          vec->emplace_back(std::move(future.get()));
                                  } },
                       Span<const SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
-            return Future<Vector<T>>{ result };
+            return Future<DynamicArray<T>>{ result };
         }
 
         // TODO:reduce empty node
         template <typename T>
-        auto wrap(const Vector<Future<T>>& futures) -> std::enable_if_t<std::is_void_v<T>, Future<void>> {
+        auto wrap(const DynamicArray<Future<T>>& futures) -> std::enable_if_t<std::is_void_v<T>, Future<void>> {
             auto result = newFutureImpl(0, false);
-            Vector<const SharedPtr<FutureImpl>> dep{ context().getAllocator() };
+            DynamicArray<const SharedPtr<FutureImpl>> dep{ context().getAllocator() };
             dep.reserve(futures.size());
             for(auto&& future : futures)
                 dep.push_back(future.raw());

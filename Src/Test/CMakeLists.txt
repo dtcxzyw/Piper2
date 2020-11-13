@@ -17,4 +17,4 @@ add_piper_test(Concurrency)
 add_piper_test(Accelerator)
 
 #TODO update conv.bc
-add_custom_command(TARGET Accelerator-Test PRE_BUILD COMMAND clang -emit-llvm conv.cpp -c -O3 -o ${CMAKE_BINARY_DIR}/Bin/conv.bc WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_custom_command(TARGET Accelerator-Test PRE_BUILD COMMAND clang -emit-llvm -O3 conv.cpp -c -o ${CMAKE_BINARY_DIR}/Bin/conv.bc WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

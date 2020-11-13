@@ -18,17 +18,12 @@
 #include "../Interface/Infrastructure/Config.hpp"
 #include "../Interface/Infrastructure/Logger.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
-#include "../Interface/Infrastructure/PerformancePrimitivesLibrary.hpp"
 #include "../Interface/Infrastructure/Program.hpp"
 #include "TestEnvironment.hpp"
-#define PIPER_FP_NATIVE
-using Float = float;
-inline constexpr Float constantFloat(double val) {
-    return static_cast<float>(val);
+float MKcos(float x) noexcept {
+    return cos(x);
 }
-inline constexpr Float fmaFloat(Float x, Float y, Float z) {
-    return x * y + z;
-}
+
 #include "conv.hpp"
 #include <atomic>
 #include <random>
@@ -44,9 +39,9 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     std::uniform_real_distribution<Float> URD{ 0.0f, 1.0f };
     // Convolution
     constexpr uint32_t width = 4096, height = 2160, kernelSize = 63, count = width * height;
-    auto X = Piper::makeSharedPtr<Piper::Vector<Float>>(context.getAllocator(), count, context.getAllocator());
+    auto X = Piper::makeSharedPtr<Piper::DynamicArray<Float>>(context.getAllocator(), count, context.getAllocator());
     std::generate(X->begin(), X->end(), [&] { return URD(RNG); });
-    auto Y = Piper::makeSharedPtr<Piper::Vector<Float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
+    auto Y = Piper::makeSharedPtr<Piper::DynamicArray<Float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
     std::generate(Y->begin(), Y->end(), [&] { return URD(RNG); });
 
     auto& scheduler = context.getScheduler();
@@ -60,29 +55,9 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     auto conv = manager->loadPITU("conv.bc");
     conv.wait();
 
-    auto makeFPConfig = [&] {
-        auto name = Piper::makeSharedObject<Piper::Config>(context, "Float");
-        auto inst = Piper::makeSharedObject<Piper::Config>(context, "Float32");
-        auto map = Piper::UMap<Piper::String, Piper::SharedPtr<Piper::Config>>{ context.getAllocator() };
-        map[Piper::String{ "Name", context.getAllocator() }] = name;
-        map[Piper::String{ "Instruction", context.getAllocator() }] = inst;
-        return Piper::makeSharedObject<Piper::Config>(context, map);
-    };
-    auto fplib = context.getModuleLoader().newInstance("Piper.Infrastructure.Builtin.Float", makeFPConfig());
-    // TODO:concurrency
-    fplib.wait();
-    auto rfplib = eastl::dynamic_shared_pointer_cast<Piper::FloatingPointLibrary>(fplib.get());
-
-    Piper::Vector<Piper::Future<Piper::SharedPtr<Piper::FloatingPointLibrary>>> fpls{ context.getAllocator() };
-    auto ffplib = context.getScheduler().value(rfplib);
-    fpls.push_back(ffplib);
-    auto fplink = rfplib->generateLinkable(manager);
-    fplink.wait();
-    auto [fpbc, _] = fplink->generateLinkable(accelerator->getSupportedLinkableFormat(), {});
-
-    auto [linkable, format] = conv->generateLinkable(accelerator->getSupportedLinkableFormat(), fpls);
+    auto [linkable, format] = conv->generateLinkable(accelerator->getSupportedLinkableFormat());
     auto kernel = accelerator->compileKernel(
-        Piper::Vector<Piper::Future<Piper::Vector<std::byte>>>{ { linkable, fpbc }, context.getAllocator() }, "conv");
+        Piper::DynamicArray<Piper::Future<Piper::DynamicArray<std::byte>>>{ { linkable }, context.getAllocator() }, "conv");
     auto payload = accelerator->createPayload(Piper::InputResource{ devX->ref() }, Piper::InputResource{ devY->ref() },
                                               Piper::OutputResource{ devZ->ref() }, width, height, kernelSize);
 
@@ -105,11 +80,11 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
         logger.record(Piper::LogLevel::Debug, "Duration (Accelerator) : " + Piper::toString(context.getAllocator(), dur) + " ms",
                       PIPER_SOURCE_LOCATION());
 
-    Piper::Vector<Float> standard(count, context.getAllocator());
+    Piper::DynamicArray<Float> standard(count, context.getAllocator());
     auto xp = X->data(), yp = Y->data(), zp = standard.data();
 
     beg = Clock::now();
-    for(Piper::Index i = 0; i < count; ++i)
+    for(uint32_t i = 0; i < count; ++i)
         ::conv(i, xp, yp, zp, width, height, kernelSize);
     end = Clock::now();
 
@@ -122,13 +97,9 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     for(Piper::Index i = 0; i < count; ++i)
         ASSERT_FLOAT_EQ(Z[i], standard[i]);
 }
-
-void mathLibraryTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator,
-                     const Piper::SharedPtr<Piper::PITUManager>& manager) {}
 void generalAcceleratorTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator,
                             const Piper::SharedPtr<Piper::PITUManager>& manager) {
     convolutionTest(context, accelerator, manager);
-    mathLibraryTest(context, accelerator, manager);
 }
 
 TEST_F(PiperCoreEnvironment, LLVM_CPU) {
@@ -139,7 +110,6 @@ TEST_F(PiperCoreEnvironment, LLVM_CPU) {
             .get();
     contextOwner->setAllocator(eastl::dynamic_shared_pointer_cast<Piper::Allocator>(allocator));
     */
-
     auto scheduler = context->getModuleLoader().newInstance("Piper.Infrastructure.Squirrel.Scheduler", nullptr);
     scheduler.wait();
     contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(scheduler.get()));

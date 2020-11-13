@@ -15,6 +15,7 @@
 */
 
 #pragma once
+#include <cstdint>
 
 namespace Piper {
     // https://www.bipm.org/en/measurement-units/

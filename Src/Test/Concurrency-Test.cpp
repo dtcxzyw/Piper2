@@ -17,7 +17,7 @@
 #include "../Interface/Infrastructure/Allocator.hpp"
 #include "../Interface/Infrastructure/Config.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
-#include "../STL/Vector.hpp"
+#include "../STL/DynamicArray.hpp"
 #include "TestEnvironment.hpp"
 #include <atomic>
 
