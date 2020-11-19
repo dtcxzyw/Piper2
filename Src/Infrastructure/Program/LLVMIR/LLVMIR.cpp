@@ -99,53 +99,50 @@ namespace Piper {
             out.flush();
             return String{ res.data(), res.size(), context().getAllocator() };
         }
-        Pair<Future<DynamicArray<std::byte>>, CString> generateLinkable(const Span<const CString>& acceptableFormat) const override {
+        Future<LinkableProgram> generateLinkable(const Span<const CString>& acceptableFormat) const override {
             auto& scheduler = context().getScheduler();
             for(auto&& format : acceptableFormat) {
                 // TODO:LLVM IR Version
                 if(StringView{ format } == "LLVM IR") {
                     // TODO:lazy parse linkable and directly return data
-                    return makePair(scheduler.spawn(
-                                        [ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
-                                            DynamicArray<std::byte> data{ ctx->getAllocator() };
-                                            LLVMStream stream(data);
-                                            llvm::WriteBitcodeToFile(*mod.get(), stream);
-                                            stream.flush();
-                                            return std::move(data);
-                                        },
-                                        scheduler.value(cloneModule())),
-                                    format);
+                    return scheduler.spawn(
+                        [ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
+                            DynamicArray<std::byte> data{ ctx->getAllocator() };
+                            LLVMStream stream(data);
+                            llvm::WriteBitcodeToFile(*mod.get(), stream);
+                            stream.flush();
+                            return LinkableProgram{ std::move(data), "LLVM IR" };
+                        },
+                        scheduler.value(cloneModule()));
                 }
                 std::string error;
                 auto target = llvm::TargetRegistry::lookupTarget(format, error);
                 if(target) {
-                    return makePair(scheduler.spawn(
-                                        [target, format, ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
-                                            auto stage = ctx->getErrorHandler().enterStageStatic("generate linkable",
-                                                                                                 PIPER_SOURCE_LOCATION());
-                                            // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
-                                            auto cpu = "generic";
-                                            auto features = "";
+                    return scheduler.spawn(
+                        [target, format, ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
+                            auto stage = ctx->getErrorHandler().enterStageStatic("generate linkable", PIPER_SOURCE_LOCATION());
+                            // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
+                            auto cpu = "generic";
+                            auto features = "";
 
-                                            llvm::TargetOptions opt;
-                                            auto RM = llvm::Optional<llvm::Reloc::Model>();
-                                            auto targetMachine = target->createTargetMachine(format, cpu, features, opt, RM);
-                                            mod.get()->setDataLayout(targetMachine->createDataLayout());
-                                            mod.get()->setTargetTriple(format);
+                            llvm::TargetOptions opt;
+                            auto RM = llvm::Optional<llvm::Reloc::Model>();
+                            auto targetMachine = target->createTargetMachine(format, cpu, features, opt, RM);
+                            mod.get()->setDataLayout(targetMachine->createDataLayout());
+                            mod.get()->setTargetTriple(format);
 
-                                            llvm::legacy::PassManager pass;
-                                            DynamicArray<std::byte> data{ ctx->getAllocator() };
-                                            LLVMStream stream(data);
-                                            if(!(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
-                                                                                    llvm::CodeGenFileType::CGFT_ObjectFile)))
-                                                ctx->getErrorHandler().raiseException("Failed to create object emit pass",
-                                                                                      PIPER_SOURCE_LOCATION());
-                                            pass.run(*mod.get());
-                                            stream.flush();
-                                            return std::move(data);
-                                        },
-                                        scheduler.value(cloneModule())),
-                                    format);
+                            llvm::legacy::PassManager pass;
+                            DynamicArray<std::byte> data{ ctx->getAllocator() };
+                            LLVMStream stream(data);
+                            if(!(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
+                                                                    llvm::CodeGenFileType::CGFT_ObjectFile)))
+                                ctx->getErrorHandler().raiseException("Failed to create object emit pass",
+                                                                      PIPER_SOURCE_LOCATION());
+                            pass.run(*mod.get());
+                            stream.flush();
+                            return LinkableProgram{ std::move(data), format };
+                        },
+                        scheduler.value(cloneModule()));
                 }
             }
             // TODO:llvm::TargetRegistry::printRegisteredTargetsForVersion();

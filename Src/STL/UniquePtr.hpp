@@ -15,6 +15,7 @@
 */
 
 #pragma once
+#include "SharedPtr.hpp"
 #include "STLAllocator.hpp"
 #include <EASTL/unique_ptr.h>
 

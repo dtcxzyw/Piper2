@@ -18,6 +18,11 @@
 #include <cmath>
 
 namespace Piper {
+    // TODO:unit test
+    // TODO:explicit NotInitialized
+    // struct NotInitialized final {};
+    struct Unchecked final {};
+
     template <typename Float>
     struct Vector2 {
         Float x, y;
@@ -146,29 +151,20 @@ namespace Piper {
             return *this;
         }
 
-        Vector operator*(Float rhs) const noexcept {
-            return Vector{ x * rhs, y * rhs, z * rhs };
+        template <typename U>
+        auto operator*(U rhs) const noexcept {
+            using ResultT = decltype(x * rhs);
+            return Vector<ResultT, ref>{ x * rhs, y * rhs, z * rhs };
         }
-        Vector& operator*=(Float rhs) noexcept {
-            x *= rhs;
-            y *= rhs;
-            z *= rhs;
-            return *this;
-        }
-
-        Vector operator/(Float rhs) const noexcept {
-            return Vector{ x / rhs, y / rhs, z / rhs };
-        }
-        Vector& operator/=(Float rhs) noexcept {
-            x /= rhs;
-            y /= rhs;
-            z /= rhs;
-            return *this;
+        template <typename U>
+        auto operator/(U rhs) const noexcept {
+            using ResultT = decltype(x / rhs);
+            return Vector<ResultT, ref>{ x / rhs, y / rhs, z / rhs };
         }
     };
 
-    template <typename Float, FOR ref>
-    Vector<Float, ref> operator*(Float lhs, Vector<Float, ref> rhs) noexcept {
+    template <typename T, typename U, FOR ref>
+    auto operator*(T lhs, Vector<U, ref> rhs) noexcept {
         return rhs * lhs;
     }
 
@@ -183,18 +179,18 @@ namespace Piper {
     }
 
     template <typename Float, FOR ref>
-    Float lengthSquared(Vector<Float, ref> a) noexcept {
+    auto lengthSquared(Vector<Float, ref> a) noexcept {
         return a.x * a.x + a.y * a.y + a.z * a.z;
     }
 
     template <typename Float, FOR ref>
     Float length(Vector<Float, ref> a) noexcept {
-        return std::sqrt(lengthSquared(a));
+        return sqrt(lengthSquared(a));
     }
 
     template <typename Float, FOR ref>
     Vector<Float, ref> normalize(Vector<Float, ref> a) noexcept {
-        return a / length(a);
+        return a / eraseUnit(length(a));
     }
 
     template <typename Float, FOR ref>
@@ -246,45 +242,70 @@ namespace Piper {
     template <typename Float, FOR ref>
     struct Normal final {
         Float x, y, z;
-
+        Normal() = default;
+        Normal(Vector<Float, ref> v, Unchecked) : x(v.x), y(v.y), z(v.z) {}
         explicit Normal(Vector<Float, ref> v) noexcept {
             v = normalize(v);
             x = v.x, y = v.y, z = v.z;
         }
     };
 
+    template <typename Float, FOR ref>
+    Normal<Float, ref> cross(Normal<Float, ref> a, Normal<Float, ref> b) noexcept {
+        return { Vector<Float, ref>{ dot(a.y, b.z) - dot(a.z, b.y), dot(a.z, b.x) - dot(a.x, b.z),
+                                     dot(a.x, b.y) - dot(a.y, b.x) },
+                 Unchecked{} };
+    }
+
+    template <typename Float, FOR ref>
+    Float dot(Normal<Float, ref> a, Normal<Float, ref> b) noexcept {
+        return dot(a.x, b.x) + dot(a.y, b.y) + dot(a.z, b.z);
+    }
+
     // TODO:Quaternion
-    template <typename Float, FOR refA, FOR refB>
+    template <typename Float, typename Storage, FOR refA, FOR refB>
     struct Transform final {
-        Float A2B[4][4], B2A[4][4];
+        Storage A2B[3][4], B2A[3][4];
         Vector<Float, refB> operator()(Vector<Float, refA> v) const noexcept {
             return { A2B[0][0] * v.x + A2B[0][1] * v.y + A2B[0][2] * v.z, A2B[1][0] * v.x + A2B[1][1] * v.y + A2B[1][2] * v.z,
                      A2B[2][0] * v.x + A2B[2][1] * v.y + A2B[2][2] * v.z };
         }
+
         Point<Float, refB> operator()(Point<Float, refA> p) const noexcept {
             return { A2B[0][0] * p.x + A2B[0][1] * p.y + A2B[0][2] * p.z + A2B[0][3],
                      A2B[1][0] * p.x + A2B[1][1] * p.y + A2B[1][2] * p.z + A2B[1][3],
                      A2B[2][0] * p.x + A2B[2][1] * p.y + A2B[2][2] * p.z + A2B[2][3] };
         }
-        Normal<Float, refB> operator()(Normal<Float, refA> n) const noexcept {
-            return { B2A[0][0] * n.x + B2A[1][0] * n.y + B2A[2][0] * n.z, B2A[0][1] * n.x + B2A[1][1] * n.y + B2A[2][1] * n.z,
-                     B2A[0][2] * n.x + B2A[1][2] * n.y + B2A[2][2] * n.z };
-        }
 
-        Vector<Float, refA> operator()(Vector<Float, refB> v) const noexcept {
-            return { B2A[0][0] * v.x + B2A[0][1] * v.y + B2A[0][2] * v.z, B2A[1][0] * v.x + B2A[1][1] * v.y + B2A[1][2] * v.z,
-                     B2A[2][0] * v.x + B2A[2][1] * v.y + B2A[2][2] * v.z };
-        }
-        Point<Float, refA> operator()(Point<Float, refB> p) const noexcept {
-            return { B2A[0][0] * p.x + B2A[0][1] * p.y + B2A[0][2] * p.z + B2A[0][3],
-                     B2A[1][0] * p.x + B2A[1][1] * p.y + B2A[1][2] * p.z + B2A[1][3],
-                     B2A[2][0] * p.x + B2A[2][1] * p.y + B2A[2][2] * p.z + B2A[2][3] };
-        }
-        Normal<Float, refA> operator()(Normal<Float, refB> n) const noexcept {
-            return { A2B[0][0] * n.x + A2B[1][0] * n.y + A2B[2][0] * n.z, A2B[0][1] * n.x + A2B[1][1] * n.y + A2B[2][1] * n.z,
-                     A2B[0][2] * n.x + A2B[1][2] * n.y + A2B[2][2] * n.z };
+        Normal<Float, refB> operator()(Normal<Float, refA> n) const noexcept {
+            return { Vector<Float, refB>{ B2A[0][0] * n.x + B2A[1][0] * n.y + B2A[2][0] * n.z,
+                                          B2A[0][1] * n.x + B2A[1][1] * n.y + B2A[2][1] * n.z,
+                                          B2A[0][2] * n.x + B2A[1][2] * n.y + B2A[2][2] * n.z },
+                     Unchecked{} };
         }
     };
+
+    // TODO:optimize
+    template <typename Float>
+    void calcInverse(const Float A2B[3][4], Float B2A[3][4]) noexcept {
+        // y=Ax+b
+        // x=inv(A)*y-inv(A)*b
+        auto det = A2B[0][0] * A2B[1][1] * A2B[2][2] + A2B[0][1] * A2B[1][2] * A2B[2][0] + A2B[0][2] * A2B[1][0] * A2B[2][1] -
+            A2B[2][0] * A2B[1][1] * A2B[0][2] - A2B[2][1] * A2B[1][2] * A2B[0][0] - A2B[2][2] * A2B[1][0] * A2B[0][1];
+        B2A[0][0] = A2B[0][0] * (A2B[1][1] * A2B[2][2] - A2B[1][2] * A2B[2][1]) / det;
+        B2A[0][1] = -A2B[1][0] * (A2B[0][1] * A2B[2][2] - A2B[0][2] * A2B[2][1]) / det;
+        B2A[0][2] = A2B[2][0] * (A2B[0][1] * A2B[1][2] - A2B[0][2] * A2B[1][1]) / det;
+        B2A[1][0] = -A2B[0][1] * (A2B[1][0] * A2B[2][2] - A2B[1][2] * A2B[2][0]) / det;
+        B2A[1][1] = A2B[1][1] * (A2B[0][0] * A2B[2][2] - A2B[0][2] * A2B[2][0]) / det;
+        B2A[1][2] = -A2B[2][1] * (A2B[0][0] * A2B[1][2] - A2B[0][2] * A2B[1][0]) / det;
+        B2A[2][0] = A2B[0][2] * (A2B[1][0] * A2B[2][1] - A2B[1][1] * A2B[2][0]) / det;
+        B2A[2][1] = -A2B[1][2] * (A2B[0][0] * A2B[2][1] - A2B[0][1] * A2B[2][0]) / det;
+        B2A[2][2] = A2B[2][2] * (A2B[0][0] * A2B[1][1] - A2B[0][1] * A2B[1][0]) / det;
+
+        B2A[3][0] = -(B2A[0][0] * A2B[3][0] + B2A[0][1] * A2B[3][1] + B2A[0][2] * A2B[3][2]);
+        B2A[3][1] = -(B2A[1][0] * A2B[3][0] + B2A[1][1] * A2B[3][1] + B2A[1][2] * A2B[3][2]);
+        B2A[3][2] = -(B2A[2][0] * A2B[3][0] + B2A[2][1] * A2B[3][1] + B2A[2][2] * A2B[3][2]);
+    }
 
     template <typename Float, FOR ref>
     Normal<Float, ref> reflect(Normal<Float, ref> in, Normal<Float, ref> N) noexcept {}

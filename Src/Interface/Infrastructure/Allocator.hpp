@@ -15,7 +15,9 @@
 */
 
 #pragma once
+#include "../../STL/DynamicArray.hpp"
 #include "../Object.hpp"
+
 #include <cstdint>
 #include <new>
 
@@ -44,11 +46,21 @@ namespace Piper {
         virtual ~Allocator() = default;
     };
 
-    class MemoryArena : public Object {
+    class PIPER_API MemoryArena final {
+    private:
+        Allocator& mAllocator;
+        DynamicArray<Ptr> mBlocks;
+        Ptr mCurrent, mCurEnd;
+        const size_t mBlockSize;
+
     public:
-        PIPER_INTERFACE_CONSTRUCT(MemoryArena, Object)
-        virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
-        virtual ~MemoryArena() = default;
+        MemoryArena(Allocator& allocator, size_t blockSize);
+        Ptr alloc(const size_t size, const size_t align = alignof(max_align_t));
+        template <typename T>
+        T* alloc(size_t align = alignof(T)) {
+            return reinterpret_cast<T*>(alloc(sizeof(T), align));
+        }
+        ~MemoryArena();
     };
 
 }  // namespace Piper

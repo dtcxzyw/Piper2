@@ -22,8 +22,6 @@
 #include "Logger.hpp"
 
 namespace Piper {
-    class ErrorHandler;
-
     class PIPER_API StageGuard final : private Unmovable {
     private:
         ErrorHandler& mHandler;

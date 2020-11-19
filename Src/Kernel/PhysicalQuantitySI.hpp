@@ -15,31 +15,111 @@
 */
 
 #pragma once
+#include <cmath>
 #include <cstdint>
+#include <type_traits>
 
 namespace Piper {
     // https://www.bipm.org/en/measurement-units/
 
-    template <typename Float, int32_t m, int32_t kg, int32_t s, int32_t A, int32_t K, int32_t mol, int32_t cd, int32_t rad, int32_t sr>
+    template <typename Float, int32_t m, int32_t kg, int32_t s, int32_t A, int32_t K, int32_t mol, int32_t cd, int32_t rad,
+              int32_t sr>
     struct PhysicalQuantitySI final {
+        using FT = Float;
+        static constexpr auto vm = m, vkg = kg, vs = s, vA = A, vK = K, vmol = mol, vcd = cd, vrad = rad, vsr = sr;
         Float val;
+
+        PhysicalQuantitySI operator-() const noexcept {
+            return { -val };
+        }
+        PhysicalQuantitySI operator+(const PhysicalQuantitySI rhs) const noexcept {
+            return { val + rhs.val };
+        }
+        PhysicalQuantitySI operator-(const PhysicalQuantitySI rhs) const noexcept {
+            return { val - rhs.val };
+        }
     };
 
-    template <template <typename Float, int32_t m1, int32_t kg1, int32_t s1, int32_t A1, int32_t K1, int32_t mol1, int32_t cd1, int32_t rad1, int32_t sr1> class T1,
-              template <typename Float, int32_t m2, int32_t kg2, int32_t s2, int32_t A2, int32_t K2, int32_t mol2, int32_t cd2, int32_t rad2, int32_t sr2> class T2>
-    using Product =
-        PhysicalQuantitySI<Float, m1 + m2, kg1 + kg2, s1 + s2, A1 + A2, K1 + K2, mol1 + mol2, cd1 + cd2, rad1 + rad2, sr1 + sr2>;
+    template <typename T1, typename T2, typename = std::enable_if_t<std::is_same_v<typename T1::FT, typename T2::FT>>>
+    struct ProductImpl final {
+        using Type =
+            PhysicalQuantitySI<typename T1::FT, T1::vm + T2::vm, T1::vkg + T2::vkg, T1::vs + T2::vs, T1::vA + T2::vA,
+                               T1::vK + T2::vK, T1::vmol + T2::vmol, T1::vcd + T2::vcd, T1::vrad + T2::vrad, T1::vsr + T2::vsr>;
+    };
 
-    template <template <typename Float, int32_t m1, int32_t kg1, int32_t s1, int32_t A1, int32_t K1, int32_t mol1, int32_t cd1, int32_t rad1, int32_t sr1> class T1,
-              template <typename Float, int32_t m2, int32_t kg2, int32_t s2, int32_t A2, int32_t K2, int32_t mol2, int32_t cd2, int32_t rad2, int32_t sr2> class T2>
-    using Ratio =
-        PhysicalQuantitySI<Float, m1 - m2, kg1 - kg2, s1 - s2, A1 - A2, K1 - K2, mol1 - mol2, cd1 - cd2, rad1 - rad2, sr1 - sr2>;
+    template <typename T1, typename T2>
+    using Product = typename ProductImpl<T1, T2>::Type;
 
-    template <template <typename Float, int32_t m, int32_t kg, int32_t s, int32_t A, int32_t K, int32_t mol, int32_t cd, int32_t rad, int32_t sr> class T>
-    using Square = PhysicalQuantitySI<Float, 2 * m, 2 * kg, 2 * s, 2 * A, 2 * K, 2 * mol, 2 * cd, 2 * rad, 2 * sr>;
+    template <typename T1, typename T2, typename = std::enable_if_t<std::is_same_v<typename T1::FT, typename T2::FT>>>
+    struct RatioImpl final {
+        using Type =
+            PhysicalQuantitySI<typename T1::FT, T1::vm - T2::vm, T1::vkg - T2::vkg, T1::vs - T2::vs, T1::vA - T2::vA,
+                               T1::vK - T2::vK, T1::vmol - T2::vmol, T1::vcd - T2::vcd, T1::vrad - T2::vrad, T1::vsr - T2::vsr>;
+    };
 
-    template <template <typename Float, int32_t m, int32_t kg, int32_t s, int32_t A, int32_t K, int32_t mol, int32_t cd, int32_t rad, int32_t sr> class T>
-    using Inverse = PhysicalQuantitySI<Float, -m, -kg, -s, -A, -K, -mol, -cd, -rad, -sr>;
+    template <typename T1, typename T2>
+    using Ratio = typename RatioImpl<T1, T2>::Type;
+
+    template <typename T>
+    struct SquareImpl final {
+        using Type = PhysicalQuantitySI<typename T::FT, 2 * T::vm, 2 * T::vkg, 2 * T::vs, 2 * T::vA, 2 * T::vK, 2 * T::vmol,
+                                        2 * T::vcd, 2 * T::vrad, 2 * T::vsr>;
+    };
+
+    template <typename T>
+    using Square = typename SquareImpl<T>::Type;
+
+    template <typename T>
+    struct InverseImpl final {
+        using Type =
+            PhysicalQuantitySI<typename T::FT, -T::vm, -T::vkg, -T::vs, -T::vA, -T::vK, -T::vmol, -T::vcd, -T::vrad, -T::vsr>;
+    };
+
+    template <typename T>
+    using Inverse = typename InverseImpl<T>::Type;
+
+    namespace detail {
+        template <typename... T>
+        constexpr bool isEven(T... args) {
+            return (... && static_cast<bool>(args % 2 == 0));
+        }
+    }  // namespace detail
+
+    template <typename T,
+              typename = std::enable_if_t<detail::isEven(T::vm, T::vkg, T::vs, T::vA, T::vK, T::vmol, T::vcd, T::vrad, T::vsr)>>
+    struct SqrtImpl final {
+        using Type = PhysicalQuantitySI<typename T::FT, T::vm / 2, T::vkg / 2, T::vs / 2, T::vA / 2, T::vK / 2, T::vmol / 2,
+                                        T::vcd / 2, T::vrad / 2, T::vsr / 2>;
+    };
+
+    template <typename T>
+    using Sqrt = typename SqrtImpl<T>::Type;
+
+    template <typename T, typename = Sqrt<T>>
+    auto sqrt(T val) {
+        return Sqrt<T>{ std::sqrt(val.val) };
+    }
+
+    template <typename T1, typename T2, typename = Product<T1, T2>>
+    auto operator*(T1 a, T2 b) {
+        return Product<T1, T2>{ a.val * b.val };
+    }
+    template <typename T1, typename T2, typename = Ratio<T1, T2>>
+    auto operator/(T1 a, T2 b) {
+        return Ratio<T1, T2>{ a.val / b.val };
+    }
+    template <typename T>
+    auto dot(T a, T b) {
+        return T{ a.val * b.val };
+    }
+
+    template <typename Float>
+    using Dimensionless = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 0, 0>;
+
+    template <typename T>
+    auto eraseUnit(T val) {
+        return Dimensionless<typename T::FT>{ val.val };
+    }
 
     template <typename Float>
     using Length = PhysicalQuantitySI<Float, 1, 0, 0, 0, 0, 0, 0, 0, 0>;
@@ -78,7 +158,7 @@ namespace Piper {
     using Acceleration = Ratio<Velocity<Float>, Time<Float>>;
 
     template <typename Float>
-    using Force = Product<Mass<Float>, Time<Float>>;
+    using Force = Product<Mass<Float>, Acceleration<Float>>;
 
     template <typename Float>
     using Energy = Product<Force<Float>, Length<Float>>;
@@ -103,13 +183,13 @@ namespace Piper {
         constexpr Velocity<Float> c = static_cast<Float>(299'792'458);
 
         template <typename Float>
-        constexpr Product<Energy<Float>, Time<Float>> h = static_cast<Float>(6.62607015e–34);
+        constexpr typename Product<Energy<Float>, Time<Float>>::Type h = static_cast<Float>(6.62607015e-34);
 
         template <typename Float>
         constexpr Charge<Float> e = static_cast<Float>(1.602176634e-19);
 
         template <typename Float>
-        constexpr Ratio<Energy<Float>, Temperature<Float>> k = static_cast<Float>(1.380649e–23);
+        constexpr Ratio<Energy<Float>, Temperature<Float>> k = static_cast<Float>(1.380649e-23);
 
         template <typename Float>
         constexpr Inverse<AmountOfSubstance<Float>> Na = static_cast<Float>(6.02214076e23);

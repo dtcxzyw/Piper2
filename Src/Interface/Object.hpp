@@ -16,6 +16,9 @@
 
 #pragma once
 #include "../STL/SharedPtr.hpp"
+#include "../STL/UniquePtr.hpp"
+// forward declaration
+#include "Forward.hpp"
 
 namespace Piper {
     class Uncopyable {
@@ -55,4 +58,14 @@ namespace Piper {
         auto& allocator = context.getAllocator();
         return makeSharedPtr<T>(allocator, context, std::forward<Args>(args)...);
     }
+    template <typename T>
+    using UniqueObject = UniquePtr<T, DefaultDeleter<Object>>;
+    template <typename Base, typename T, typename... Args>
+    auto makeUniqueObject(PiperContext& context, Args&&... args) {
+        STLAllocator allocator = context.getAllocator();
+        auto ptr = reinterpret_cast<T*>(allocator.allocate(sizeof(T)));
+        new(ptr) T(context, std::forward<Args>(args)...);
+        return UniqueObject<Base>{ ptr, DefaultDeleter<Object>{ allocator } };
+    }
+
 }  // namespace Piper

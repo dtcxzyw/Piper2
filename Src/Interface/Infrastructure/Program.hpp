@@ -15,20 +15,23 @@
 */
 
 #pragma once
-#include "../../STL/Pair.hpp"
-#include "../../STL/String.hpp"
 #include "../../STL/DynamicArray.hpp"
+#include "../../STL/String.hpp"
 #include "../Object.hpp"
 #include "Concurrency.hpp"
 
 namespace Piper {
+    struct LinkableProgram final {
+        DynamicArray<std::byte> exchange;
+        CString format;
+    };
+
     // PlatformIndependentTranslationUnit
     class PITU : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(PITU, Object)
         virtual ~PITU() = default;
-        virtual Pair<Future<DynamicArray<std::byte>>, CString>
-        generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
+        virtual Future<LinkableProgram> generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
         virtual String humanReadable() const = 0;
     };
 
@@ -40,11 +43,5 @@ namespace Piper {
         virtual ~PITUManager() = default;
         virtual Future<SharedPtr<PITU>> loadPITU(const String& path) const = 0;
         virtual Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const = 0;
-    };
-
-    class RunnableProgram : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(RunnableProgram, Object)
-        virtual ~RunnableProgram() = default;
     };
 }  // namespace Piper

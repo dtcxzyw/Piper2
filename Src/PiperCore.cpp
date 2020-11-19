@@ -22,6 +22,7 @@
 #include "Interface/Infrastructure/Logger.hpp"
 #include "Interface/Infrastructure/Module.hpp"
 #include "Interface/Infrastructure/PhysicalQuantitySIDesc.hpp"
+#include "Interface/Infrastructure/ResourceUtil.hpp"
 #include "PiperAPI.hpp"
 #include "PiperContext.hpp"
 #include "STL/GSL.hpp"
@@ -32,13 +33,13 @@
 #include "STL/UMap.hpp"
 #include "STL/USet.hpp"
 #include "STL/UniquePtr.hpp"
-#include <charconv>
-#include <iostream>
-#include <regex>
 // use builtin allocator
 #include <cassert>
+#include <charconv>
 #include <filesystem>
+#include <iostream>
 #include <mutex>
+#include <regex>
 #include <shared_mutex>
 
 namespace fs = std::filesystem;
@@ -56,6 +57,49 @@ Piper::CString getModuleExtension();
 void nativeFileSystem(Piper::PiperContextOwner& context);
 
 namespace Piper {
+    ResourceHolder::ResourceHolder(PiperContext& context) : Object(context), mPool(context.getAllocator()) {}
+
+    void ResourceHolder::retain(SharedPtr<Object> ref) {
+        mPool.push_back(std::move(ref));
+    }
+
+    SharedPtr<Object> ResourceCacheManager::lookupImpl(ResourceID id) const {
+        auto iter = mCache.find(id);
+        if(iter != mCache.cend() && !iter->second.expired())
+            return iter->second.lock();
+        return nullptr;
+    }
+    void ResourceCacheManager::reserve(ResourceID id, const SharedPtr<Object>& cache) {
+        mCache.insert_or_assign(id, WeakPtr<Object>{ cache });
+    }
+    ResourceCacheManager::ResourceCacheManager(PiperContext& context) : Object(context), mCache(context.getAllocator()) {}
+
+    MemoryArena::MemoryArena(Allocator& allocator, size_t blockSize)
+        : mAllocator(allocator), mBlocks(allocator), mCurrent(0), mCurEnd(0), mBlockSize(blockSize) {}
+    Ptr MemoryArena::alloc(const size_t size, const size_t align) {
+        if(size >= mBlockSize) {
+            auto ptr = mAllocator.alloc(size, align);
+            mBlocks.push_back(ptr);
+            return ptr;
+        }
+        auto rem = mCurrent % align;
+        auto begin = (rem == 0 ? mCurrent : mCurrent + align - rem);
+        if(begin + size > mCurEnd) {
+            mCurrent = mAllocator.alloc(mBlockSize, align);
+            mCurEnd = mCurrent + mBlockSize;
+            mBlocks.push_back(mCurrent);
+            auto ptr = mCurrent;
+            mCurrent += size;
+            return ptr;
+        }
+        mCurrent = begin + size;
+        return begin;
+    }
+    MemoryArena::~MemoryArena() {
+        for(auto ptr : mBlocks)
+            mAllocator.free(ptr);
+    }
+
     StageGuard::~StageGuard() noexcept {
         mHandler.exitStage();
     }

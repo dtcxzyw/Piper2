@@ -15,16 +15,21 @@
 */
 
 #pragma once
+#include "../../STL/DynamicArray.hpp"
 #include "../../STL/Function.hpp"
 #include "../../STL/String.hpp"
-#include "../../STL/DynamicArray.hpp"
 #include "../Object.hpp"
 #include "Allocator.hpp"
 #include "Concurrency.hpp"
 
 namespace Piper {
-
-    class RunnableProgram;
+    class RunnableProgram : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(RunnableProgram, Object)
+        virtual ~RunnableProgram() = default;
+        // TODO:better interface
+        virtual void* lookup(const String& symbol) = 0;
+    };
 
     using CommandQueue = uint64_t;
     using Context = uint64_t;
@@ -177,9 +182,10 @@ namespace Piper {
 
         // TODO:Resource Name
         virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
-        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<DynamicArray<std::byte>>>& linkable,
+        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<LinkableProgram>>& linkable,
                                                                  const String& entry) = 0;
-        virtual void runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel, const SharedPtr<Payload>& args) = 0;
+        virtual Future<void> runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
+                                       const SharedPtr<Payload>& args) = 0;
         virtual void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) = 0;
         virtual Future<void> available(const SharedPtr<Resource>& resource) = 0;
 

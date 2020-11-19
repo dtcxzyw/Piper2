@@ -14,18 +14,20 @@
    limitations under the License.
 */
 
-#include "../../STL/UniquePtr.hpp"
-#include "../Object.hpp"
+#pragma once
+#include "Tracer.hpp"
 
 namespace Piper {
-    class Tracer;
-    class RTProgram;
+    struct SurfaceProgram final {
+        SBTPayload payload;
+        SharedPtr<RTProgram> sample;
+        SharedPtr<RTProgram> evaluate;
+    };
 
-    class Integrater : public Object {
+    class Surface : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Integrater, Object)
-        virtual ~Integrater() = default;
-
-        virtual UniquePtr<RTProgram> compile(Tracer& tracer) const = 0;
+        PIPER_INTERFACE_CONSTRUCT(Surface, Object)
+        virtual ~Surface() = default;
+        virtual SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const;
     };
 }  // namespace Piper

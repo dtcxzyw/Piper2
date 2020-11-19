@@ -41,7 +41,8 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     constexpr uint32_t width = 4096, height = 2160, kernelSize = 63, count = width * height;
     auto X = Piper::makeSharedPtr<Piper::DynamicArray<Float>>(context.getAllocator(), count, context.getAllocator());
     std::generate(X->begin(), X->end(), [&] { return URD(RNG); });
-    auto Y = Piper::makeSharedPtr<Piper::DynamicArray<Float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
+    auto Y =
+        Piper::makeSharedPtr<Piper::DynamicArray<Float>>(context.getAllocator(), kernelSize * kernelSize, context.getAllocator());
     std::generate(Y->begin(), Y->end(), [&] { return URD(RNG); });
 
     auto& scheduler = context.getScheduler();
@@ -55,9 +56,8 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     auto conv = manager->loadPITU("conv.bc");
     conv.wait();
 
-    auto [linkable, format] = conv->generateLinkable(accelerator->getSupportedLinkableFormat());
-    auto kernel = accelerator->compileKernel(
-        Piper::DynamicArray<Piper::Future<Piper::DynamicArray<std::byte>>>{ { linkable }, context.getAllocator() }, "conv");
+    auto linkable = conv->generateLinkable(accelerator->getSupportedLinkableFormat());
+    auto kernel = accelerator->compileKernel(Piper::Span<Piper::Future<Piper::LinkableProgram>>{ &linkable, 1 }, "conv");
     auto payload = accelerator->createPayload(Piper::InputResource{ devX->ref() }, Piper::InputResource{ devY->ref() },
                                               Piper::OutputResource{ devZ->ref() }, width, height, kernelSize);
 

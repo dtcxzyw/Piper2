@@ -22,8 +22,6 @@
 #include "Config.hpp"
 
 namespace Piper {
-    class Config;
-
     class Module : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Module, Object)

@@ -14,13 +14,19 @@
    limitations under the License.
 */
 
-#include "../Object.hpp"
+#pragma once
+#include "Tracer.hpp"
 
 namespace Piper {
+    struct RenderDriverProgram final {
+        SharedPtr<RTProgram> accumulate;
+        SBTPayload payload;
+    };
     class RenderDriver : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(RenderDriver, Object)
         virtual ~RenderDriver() = default;
-        
+        virtual void renderFrame() = 0;
+        virtual RenderDriverProgram materialize(Tracer& tracer, ResourceHolder& holder) = 0;
     };
 }  // namespace Piper

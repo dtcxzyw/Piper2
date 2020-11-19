@@ -21,6 +21,8 @@
 namespace Piper {
     template <typename T>
     using SharedPtr = eastl::shared_ptr<T>;
+    template <typename T>
+    using WeakPtr = eastl::weak_ptr<T>;
 
     template <typename T>
     struct DefaultDeleter final {

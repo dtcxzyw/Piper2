@@ -14,14 +14,18 @@
    limitations under the License.
 */
 
-#include "../Object.hpp"
+#pragma once
 #include "Tracer.hpp"
 
 namespace Piper {
+    struct LightProgram final {
+        SharedPtr<RTProgram> light;
+        SBTPayload payload;
+    };
     class Light : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Light, Object)
         virtual ~Light() = default;
-        virtual UniquePtr<RTProgram> compile(Tracer& tracer) const = 0;
+        virtual LightProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
     };
 }  // namespace Piper

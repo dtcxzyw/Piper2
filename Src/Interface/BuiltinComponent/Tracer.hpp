@@ -14,33 +14,20 @@
    limitations under the License.
 */
 
+#pragma once
+#include "../../Kernel/PhysicalQuantitySI.hpp"
 #include "../../Kernel/Transform.hpp"
-#include "../../STL/Function.hpp"
-#include "../../STL/Pair.hpp"
-#include "../../STL/UniquePtr.hpp"
+#include "../../STL/Optional.hpp"
+#include "../../STL/Variant.hpp"
 #include "../Infrastructure/Allocator.hpp"
 #include "../Infrastructure/Concurrency.hpp"
 #include "../Object.hpp"
 
 namespace Piper {
-    // https://raytracing-docs.nvidia.com/optix7/guide/index.html#preface#terms-used-in-this-document
-    enum class RTProgramType { RayGeneration, Intersection, HitGroup, Miss, DirectCallable, ContinuationCallable };
-    enum class PrimitiveShapeType { Triangle, TriangleIndexed, Instance };
-
-    class PITU;
-    class Accelerator;
-
-    class Acceleration : public Object {
+    class AccelerationStructure : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Acceleration, Object)
-        virtual ~Acceleration() = default;
-    };
-
-    class RTProgram : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(RTProgram, Object)
-        virtual RTProgramType type() const noexcept = 0;
-        virtual ~RTProgram() = default;
+        PIPER_INTERFACE_CONSTRUCT(AccelerationStructure, Object)
+        virtual ~AccelerationStructure() = default;
     };
 
     class Pipeline : public Object {
@@ -49,69 +36,66 @@ namespace Piper {
         virtual ~Pipeline() = default;
     };
 
-    class Geometry;
-    class Material;
-    class Medium;
-
-    struct Instance final {
-        SharedPtr<Geometry> geometry;
-        SharedPtr<Material> material;
-        SharedPtr<Medium> medium;
-        Transform<float, FOR::Local, FOR::World> transform;
+    class Node : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Node, Object)
+        virtual ~Node() = default;
     };
 
-    struct TriangleGeometryDesc final {
-        uint32_t count, strides;
-        Ptr vertices;
+    class RTProgram : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(RTProgram, Object)
+        virtual ~RTProgram() = default;
     };
 
     struct TriangleIndexedGeometryDesc final {
-        uint32_t count, strides;
+        Optional<Transform<Length<float>, Dimensionless<float>, FOR::Local, FOR::World>> transform;
+        uint32_t vertCount, triCount, stride;
         Ptr vertices;
         Ptr index;
     };
 
-    struct InstanceGeometryDesc final {
-        DynamicArray<Instance> instances;
-    };
-
+    enum class PrimitiveShapeType { TriangleIndexed };
     struct GeometryDesc final {
         PrimitiveShapeType type;
         union {
-            TriangleGeometryDesc triangle;
             TriangleIndexedGeometryDesc triangleIndexed;
-            InstanceGeometryDesc instance;
         };
     };
 
-    // https://raytracing-docs.nvidia.com/optix7/guide/index.html#shader_binding_table#shader-binding-table
+    struct GSMInstanceDesc final {
+        SharedPtr<Geometry> geometry;
+        SharedPtr<Surface> surface;
+        SharedPtr<Medium> medium;
+        Optional<Transform<Length<float>, Dimensionless<float>, FOR::Local, FOR::World>> transform;
+    };
+    struct NodeInstanceDesc final {
+        SharedPtr<Node> node;
+        Optional<Transform<Length<float>, Dimensionless<float>, FOR::Local, FOR::World>> transform;
+    };
+
+    using NodeDesc = Variant<DynamicArray<NodeInstanceDesc>, GSMInstanceDesc>;
+
     using SBTPayload = DynamicArray<std::byte>;
-    struct SBTRecord final {
-        RTProgram* program;
-        SBTPayload payload;
-    };
-    struct HitGroup final {
-        SBTRecord closestHit;
-        SBTRecord anyHit;
-    };
-    struct SBT final {
-        Acceleration* root;
-        SBTRecord raygen;
-        DynamicArray<SBTRecord> missing;
-        DynamicArray<HitGroup> hitGroup;
-        DynamicArray<SBTRecord> directCallable;
-        DynamicArray<SBTRecord> continuationCallable;
+
+    struct RenderRECT final {
+        uint32_t left, top, width, height;
     };
 
     // TODO:Texture extension for Accelerator
+    // TODO:Concurrency
     class Tracer : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Tracer, Object)
         virtual ~Tracer() = default;
         // TODO:update structure
-        virtual UniquePtr<Acceleration> buildAcceleration(const GeometryDesc& desc) = 0;
-        virtual UniquePtr<RTProgram> buildProgram(Function<UniquePtr<PITU>, Accelerator&> src, RTProgramType type) = 0;
-        virtual UniquePtr<Pipeline> buildPipeline(DynamicArray<UniquePtr<RTProgram>> programs) = 0;
-        virtual Future<void> trace(Pipeline& pipeline, const SBT& SBT) = 0;
+        virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
+        virtual SharedPtr<Node> buildNode(const NodeDesc& desc) = 0;
+        virtual SharedPtr<RTProgram> buildProgram(Future<LinkableProgram> linkable, String symbol) = 0;
+        virtual UniqueObject<Pipeline> buildPipeline(Node& scene, Sensor& sensor, Environment& environment,
+                                                     Integrator& integrator, RenderDriver& renderDriver, Light& light) = 0;
+        virtual Accelerator& getAccelerator() = 0;
+        virtual ResourceCacheManager& getCacheManager() = 0;
+        virtual void trace(Pipeline& pipeline, const RenderRECT& rect) = 0;
     };
 }  // namespace Piper

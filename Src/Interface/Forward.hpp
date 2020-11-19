@@ -14,12 +14,26 @@
    limitations under the License.
 */
 
-#include "../Object.hpp"
+#pragma once
 
 namespace Piper {
-    class Material : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Material, Object)
-        virtual ~Material() = default;
-    };
+    // lexicographical order
+
+    class Accelerator;
+    class Config;
+    class Environment;
+    class ErrorHandler;
+    class Geometry;
+    class Integrator;
+    class Light;
+    struct LinkableProgram;
+    class Medium;
+    class Object;
+    class RenderDriver;
+    class ResourceCacheManager;
+    class ResourceHolder;
+    class Sensor;
+    class Surface;
+    class Tracer;
+
 }  // namespace Piper

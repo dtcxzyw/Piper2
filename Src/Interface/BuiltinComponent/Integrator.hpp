@@ -15,12 +15,19 @@
 */
 
 #pragma once
-#include "../Object.hpp"
+#include "Tracer.hpp"
 
 namespace Piper {
-    class Denoiser : public Object {
+    struct IntegratorProgram final {
+        SBTPayload payload;
+        SharedPtr<RTProgram> trace;
+    };
+
+    class Integrator : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Denoiser, Object)
-        virtual ~Denoiser() = default;
+        PIPER_INTERFACE_CONSTRUCT(Integrator, Object)
+        virtual ~Integrator() = default;
+
+        virtual IntegratorProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
     };
 }  // namespace Piper
