@@ -46,7 +46,7 @@ namespace Piper {
 
 #define PIPER_INIT_MODULE_IMPL(CLASS)                                                                              \
     extern "C" PIPER_API Piper::Module* piperInitModule(Piper::PiperContext& context, Piper::Allocator& allocator, \
-                                                        const char* path) {                                     \
+                                                        Piper::CString path) {                                     \
         struct Deleter {                                                                                           \
             Piper::Allocator& allocator;                                                                           \
             void operator()(CLASS* ptr) const {                                                                    \

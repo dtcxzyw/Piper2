@@ -15,6 +15,7 @@
 */
 
 #pragma once
+#include "../PiperAPI.hpp"
 #include "PhysicalQuantitySI.hpp"
 #include "Transform.hpp"
 #include <cstdint>
@@ -25,14 +26,13 @@ namespace Piper {
     // TODO:medium info
     struct RayInfo final {
         Point<Distance, FOR::World> origin;
-        Normal<Distance, FOR::World> direction;
-        float minT, maxT;
+        Normal<float, FOR::World> direction;
     };
 
     enum class Face { Front, Back };
 
     struct BuiltinHitInfo final {
-        Normal<Distance, FOR::Local> Ng;
+        Normal<float, FOR::Local> Ng;
         Vector2<float> barycentric;
         uint32_t index;
         Face face;
@@ -50,15 +50,15 @@ namespace Piper {
     };
 
     struct SurfaceIntersectionInfo final {
-        Normal<Distance, FOR::Local> T, B, N;
+        Normal<float, FOR::Local> T, B, N;
         Vector2<float> texCoord;
-        Normal<Distance, FOR::Shading> local2Shading(Normal<Distance, FOR::Local> v) const noexcept {
-            return { Vector<Distance, FOR::Shading>{ dot(T, v), dot(B, v), dot(N, v) }, Unchecked{} };
+        Normal<float, FOR::Shading> local2Shading(Normal<float, FOR::Local> v) const noexcept {
+            return { Vector<Dimensionless<float>, FOR::Shading>{ dot(T, v), dot(B, v), dot(N, v) }, Unchecked{} };
         }
-        Normal<Distance, FOR::Local> shading2Local(Normal<Distance, FOR::Shading> v) const noexcept {
-            return { Vector<Distance, FOR::Local>{ dot(T.x, v.x) + dot(B.x, v.y) + dot(N.x, v.z),
-                                                   dot(T.y, v.x) + dot(B.y, v.y) + dot(N.y, v.z),
-                                                   dot(T.z, v.x) + dot(B.z, v.y) + dot(N.z, v.z) },
+        Normal<float, FOR::Local> shading2Local(Normal<float, FOR::Shading> v) const noexcept {
+            return { Vector<Dimensionless<float>, FOR::Local>{ dot(T.x, v.x) + dot(B.x, v.y) + dot(N.x, v.z),
+                                                               dot(T.y, v.x) + dot(B.y, v.y) + dot(N.y, v.z),
+                                                               dot(T.z, v.x) + dot(B.z, v.y) + dot(N.z, v.z) },
                      Unchecked{} };
         }
     };
@@ -80,48 +80,61 @@ namespace Piper {
         template <typename U>
         auto operator*(U scalar) const noexcept {
             using V = decltype(r * scalar);
-            return Spectrum<V>(r * scalar, g * scalar, b * scalar);
+            return Spectrum<V>{ r * scalar, g * scalar, b * scalar };
+        }
+        template <typename U>
+        auto operator/(U scalar) const noexcept {
+            using V = decltype(r / scalar);
+            return Spectrum<V>{ r / scalar, g / scalar, b / scalar };
         }
         template <typename U>
         auto operator*(Spectrum<U> rhs) const noexcept {
             using V = decltype(r * rhs.r);
-            return Spectrum<V>(r * rhs.r, g * rhs.g, b * rhs.b);
+            return Spectrum<V>{ r * rhs.r, g * rhs.g, b * rhs.b };
+        }
+        Spectrum& operator+=(Spectrum rhs) noexcept {
+            r = r + rhs.r, g = g + rhs.g, b = b + rhs.b;
+            return *this;
         }
     };
+    using Flux = Power<float>;
+    using Irradiance = Ratio<Flux, Area<float>>;
+    using Intensity = Ratio<Flux, SolidAngle<float>>;
+    using Radiance = Ratio<Irradiance, SolidAngle<float>>;
 
-    using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t x, uint32_t y, RayInfo& ray,
-                                Vector2<float>& point);
+    using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                                RayInfo& ray, Vector2<float>& point);
     using EnvironmentFunc = void (*)(RestrictedContext* context, const void* SBTData, const RayInfo& ray,
-                                     Spectrum<LuminousFlux<float>>& radiance);
+                                     Spectrum<Radiance>& radiance);
     enum class RayType { Reflection, Refraction };
+
     struct SurfaceSample final {
-        Normal<Distance, FOR::Shading> wo;
+        Normal<float, FOR::Shading> wo;
         Spectrum<Dimensionless<float>> f;
         RayType type;
     };
-    using SurfaceSampleFunc = void (*)(RestrictedContext* context, const void* SBTData, const Normal<Distance, FOR::Shading>& wi,
-                                       SurfaceSample& sample);
-    using SurfaceEvaluateFunc = void (*)(RestrictedContext* context, const void* SBTData,
-                                         const Normal<Distance, FOR::Shading>& wi, const Normal<Distance, FOR::Shading>& wo,
-                                         Spectrum<Dimensionless<float>>& f);
-    using GeometryFunc = void (*)(RestrictedContext* context, const void* SBTData, const HitInfo& hit,
-                                  SurfaceIntersectionInfo& info);
-    using RenderDriverFunc = void (*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& point,
-                                      const Spectrum<LuminousFlux<float>>& sample);
-    using IntegratorFunc = void (*)(FullContext* context, const void* SBTData, RayInfo& ray,
-                                    Spectrum<LuminousFlux<float>>& sample);
+    using SurfaceSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData,
+                                              const Normal<float, FOR::Shading>& wi, SurfaceSample& sample);
+    using SurfaceEvaluateFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData,
+                                                const Normal<float, FOR::Shading>& wi, const Normal<float, FOR::Shading>& wo,
+                                                Spectrum<Dimensionless<float>>& f);
+    using GeometryFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const HitInfo& hit,
+                                         SurfaceIntersectionInfo& info);
+    using RenderDriverFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& point,
+                                             const Spectrum<Radiance>& sample);
+    using IntegratorFunc = void(PIPER_CC*)(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample);
     struct LightSample final {
         Point<Distance, FOR::World> src;
-        Spectrum<LuminousFlux<float>> rad;
+        Spectrum<Radiance> rad;
         bool valid;
     };
-    using LightFunc = void (*)(RestrictedContext* context, const void* SBTData, const Point<Distance, FOR::World>& hit,
-                               LightSample& sample);
+    using LightFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const Point<Distance, FOR::World>& hit,
+                                      LightSample& sample);
 
     enum class TraceKind { Surface, Missing };
     struct TraceSurface final {
         SurfaceIntersectionInfo intersect;
-        Transform<Distance, Dimensionless<float>, FOR::World, FOR::Local> transform;
+        Transform<Distance, FOR::World, FOR::Local> transform;
         uint64_t instance;
         float t;
     };
@@ -133,15 +146,17 @@ namespace Piper {
     };
 
     extern "C" {
-    void piperMissing(FullContext* context, const RayInfo& ray, Spectrum<LuminousFlux<float>>& radiance);
-    void piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<Distance, FOR::Shading>& wi,
-                            SurfaceSample& sample);
-    void piperSurfaceEvaluate(FullContext* context, uint64_t instance, const Normal<Distance, FOR::Shading>& wi,
-                              const Normal<Distance, FOR::Shading>& wo, Spectrum<Dimensionless<float>>& f);
-    void piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, LightSample& sample);
+    void PIPER_CC piperMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance);
+    void PIPER_CC piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
+                                     SurfaceSample& sample);
+    void PIPER_CC piperSurfaceEvaluate(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
+                                       const Normal<float, FOR::Shading>& wo, Spectrum<Dimensionless<float>>& f);
+    void PIPER_CC piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, LightSample& sample);
 
-    void piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result);
+    void PIPER_CC piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result);
     // TODO:terminate/ignore insection
-    float piperSample(RestrictedContext* context);
+    float PIPER_CC piperSample(RestrictedContext* context);
+    // TODO:debug interface
+    // void PIPER_CC piperPrint(RestrictedContext* context, const char* msg);
     }
 }  // namespace Piper

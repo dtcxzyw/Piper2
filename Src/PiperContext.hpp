@@ -19,15 +19,6 @@
 #include "PiperAPI.hpp"
 
 namespace Piper {
-    class FutureImpl;
-    class Logger;
-    class ModuleLoader;
-    class Scheduler;
-    class FileSystem;
-    class Allocator;
-    class UnitManager;
-    class ErrorHandler;
-
     class PiperContext : private Unmovable {
     public:
         virtual Logger& getLogger() noexcept = 0;
@@ -37,6 +28,7 @@ namespace Piper {
         virtual Allocator& getAllocator() noexcept = 0;
         virtual UnitManager& getUnitManager() noexcept = 0;
         virtual ErrorHandler& getErrorHandler() noexcept = 0;
+        virtual PITUManager& getPITUManager() noexcept = 0;
 
         // TODO:better Interface?
         virtual void notify(FutureImpl* event) = 0;
@@ -50,6 +42,7 @@ namespace Piper {
         virtual void setScheduler(const SharedPtr<Scheduler>& scheduler) noexcept = 0;
         virtual void setFileSystem(const SharedPtr<FileSystem>& filesystem) noexcept = 0;
         virtual void setAllocator(const SharedPtr<Allocator>& allocator) noexcept = 0;
+        virtual void setPITUManager(const SharedPtr<PITUManager>& manager) noexcept = 0;
         virtual ~PiperContextOwner() = default;
     };
 }  // namespace Piper

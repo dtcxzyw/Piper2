@@ -15,8 +15,7 @@
 */
 
 #pragma once
-#include "../../Kernel/PhysicalQuantitySI.hpp"
-#include "../../Kernel/Transform.hpp"
+#include "../../Kernel/Protocol.hpp"
 #include "../../STL/Optional.hpp"
 #include "../../STL/Variant.hpp"
 #include "../Infrastructure/Allocator.hpp"
@@ -49,7 +48,7 @@ namespace Piper {
     };
 
     struct TriangleIndexedGeometryDesc final {
-        Optional<Transform<Length<float>, Dimensionless<float>, FOR::Local, FOR::World>> transform;
+        Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
         uint32_t vertCount, triCount, stride;
         Ptr vertices;
         Ptr index;
@@ -67,16 +66,21 @@ namespace Piper {
         SharedPtr<Geometry> geometry;
         SharedPtr<Surface> surface;
         SharedPtr<Medium> medium;
-        Optional<Transform<Length<float>, Dimensionless<float>, FOR::Local, FOR::World>> transform;
+        Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
     };
     struct NodeInstanceDesc final {
         SharedPtr<Node> node;
-        Optional<Transform<Length<float>, Dimensionless<float>, FOR::Local, FOR::World>> transform;
+        Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
     };
 
     using NodeDesc = Variant<DynamicArray<NodeInstanceDesc>, GSMInstanceDesc>;
 
     using SBTPayload = DynamicArray<std::byte>;
+    template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
+    SBTPayload packSBTPayload(STLAllocator allocator, const T& data) {
+        return SBTPayload{ reinterpret_cast<const std::byte*>(&data), reinterpret_cast<const std::byte*>(&data) + sizeof(data),
+                           allocator };
+    }
 
     struct RenderRECT final {
         uint32_t left, top, width, height;
@@ -92,10 +96,10 @@ namespace Piper {
         virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
         virtual SharedPtr<Node> buildNode(const NodeDesc& desc) = 0;
         virtual SharedPtr<RTProgram> buildProgram(Future<LinkableProgram> linkable, String symbol) = 0;
-        virtual UniqueObject<Pipeline> buildPipeline(Node& scene, Sensor& sensor, Environment& environment,
+        virtual UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Environment& environment,
                                                      Integrator& integrator, RenderDriver& renderDriver, Light& light) = 0;
         virtual Accelerator& getAccelerator() = 0;
         virtual ResourceCacheManager& getCacheManager() = 0;
-        virtual void trace(Pipeline& pipeline, const RenderRECT& rect) = 0;
+        virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload) = 0;
     };
 }  // namespace Piper

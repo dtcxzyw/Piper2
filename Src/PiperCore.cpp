@@ -22,6 +22,7 @@
 #include "Interface/Infrastructure/Logger.hpp"
 #include "Interface/Infrastructure/Module.hpp"
 #include "Interface/Infrastructure/PhysicalQuantitySIDesc.hpp"
+#include "Interface/Infrastructure/Program.hpp"
 #include "Interface/Infrastructure/ResourceUtil.hpp"
 #include "PiperAPI.hpp"
 #include "PiperContext.hpp"
@@ -65,12 +66,14 @@ namespace Piper {
 
     SharedPtr<Object> ResourceCacheManager::lookupImpl(ResourceID id) const {
         auto iter = mCache.find(id);
-        if(iter != mCache.cend() && !iter->second.expired())
-            return iter->second.lock();
+        // if(iter != mCache.cend() && !iter->second.expired())
+        //    return iter->second.lock();
+        if(iter != mCache.cend())
+            return iter->second;
         return nullptr;
     }
     void ResourceCacheManager::reserve(ResourceID id, const SharedPtr<Object>& cache) {
-        mCache.insert_or_assign(id, WeakPtr<Object>{ cache });
+        mCache.insert_or_assign(id, SharedPtr<Object>{ cache });
     }
     ResourceCacheManager::ResourceCacheManager(PiperContext& context) : Object(context), mCache(context.getAllocator()) {}
 
@@ -286,12 +289,13 @@ namespace Piper {
         UMap<String, Pair<SharedPtr<Config>, String>> mModuleDesc;
         Stack<DLLHandle> mHandles;
         // USet<String> mClasses; TODO:Cache
-        std::shared_mutex mMutex;
+        std::recursive_mutex mMutex;  // TODO:recursive+shared?
 
     public:
         explicit ModuleLoaderImpl(PiperContext& context)
             : ModuleLoader(context), mModules(context.getAllocator()), mHandles(STLAllocator{ context.getAllocator() }),
               mModuleDesc(context.getAllocator()) {}
+        // TODO:use ClassID
         Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) override {
             auto stage = context().getErrorHandler().enterStageStatic("parse package description", PIPER_SOURCE_LOCATION());
             auto&& info = moduleDesc->viewAsObject();
@@ -301,7 +305,7 @@ namespace Piper {
             auto name = iter->second->get<String>();
 
             {
-                std::shared_lock guard{ mMutex };
+                std::unique_lock<std::recursive_mutex> guard{ mMutex };
                 if(mModules.count(name))
                     return context().getScheduler().ready();
             }
@@ -310,8 +314,7 @@ namespace Piper {
             iter = info.find(String("Path", context().getAllocator()));
             if(iter == info.cend())
                 throw;
-            auto base = descPath + "/";
-            auto path = iter->second->get<String>();
+            auto path = descPath + "/" + iter->second->get<String>();
 
             iter = info.find("Dependencies");
             DynamicArray<String> deps(context().getAllocator());
@@ -323,44 +326,47 @@ namespace Piper {
 
             stage.switchTo("spawn load " + name, PIPER_SOURCE_LOCATION());
 
-            return context().getScheduler().spawn([this, base, name, path, deps] {
-                // TODO:checksum:blake2sp
-                // TODO:module dependences/moduleDesc provider
-                for(auto&& dep : deps) {
-                    auto stage =
-                        context().getErrorHandler().enterStage("load third-party dependence " + dep, PIPER_SOURCE_LOCATION());
-                    auto handle = reinterpret_cast<void*>(::loadModule(fs::u8path((base + dep + getModuleExtension()).c_str())));
-                    {
-                        std::unique_lock<std::shared_mutex> guard{ mMutex };
-                        mHandles.push(DLLHandle{ handle });
-                    }
-                }
-                auto stage = context().getErrorHandler().enterStage("load module " + path, PIPER_SOURCE_LOCATION());
-                auto moduleFullPath = fs::u8path((base + path + getModuleExtension()).c_str());
-                auto handle = reinterpret_cast<void*>(::loadModule(moduleFullPath));
-                DLLHandle lib{ handle };
-                stage.switchToStatic("check module protocol", PIPER_SOURCE_LOCATION());
-                static const StringView coreProtocol = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
-                using ProtocolFunc = const char* (*)();
-                auto protocol = reinterpret_cast<ProtocolFunc>(lib.getFunctionAddress("piperGetProtocol"));
-                if(StringView{ protocol() } != coreProtocol)
-                    throw;
-                stage.switchToStatic("init module", PIPER_SOURCE_LOCATION());
-                using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator, const char*);
-                auto init = reinterpret_cast<InitFunc>(lib.getFunctionAddress("piperInitModule"));
-                auto& allocator = context().getAllocator();
-                auto mod =
-                    SharedPtr<Module>{ init(context(), allocator, fs::absolute(moduleFullPath).parent_path().u8string().c_str()),
-                                       DefaultDeleter<Module>{ allocator }, STLAllocator{ allocator } };
-                if(!mod)
-                    throw;
+            // TODO:concurrency with mutex
+            // return context().getScheduler().spawn([this, name, path, deps, descPath] {
+            // TODO:checksum:blake2sp
+            // TODO:module dependences/moduleDesc provider
+            for(auto&& dep : deps) {
+                auto stage2 =
+                    context().getErrorHandler().enterStage("load third-party dependence " + dep, PIPER_SOURCE_LOCATION());
+                auto handle =
+                    reinterpret_cast<void*>(::loadModule(fs::u8path((descPath + "/" + dep + getModuleExtension()).c_str())));
                 {
-                    std::unique_lock<std::shared_mutex> guard{ mMutex };
-                    mModules.insert(makePair(name, mod));
-                    mHandles.push(std::move(lib));
+                    std::unique_lock<std::recursive_mutex> guard{ mMutex };
+                    mHandles.push(DLLHandle{ handle });
                 }
-            });
-        };
+            }
+            auto stage3 = context().getErrorHandler().enterStage("load module " + path, PIPER_SOURCE_LOCATION());
+            auto moduleFullPath = fs::u8path((path + getModuleExtension()).c_str());
+            auto handle = reinterpret_cast<void*>(::loadModule(moduleFullPath));
+            DLLHandle lib{ handle };
+            stage.switchToStatic("check module protocol", PIPER_SOURCE_LOCATION());
+            static const StringView coreProtocol = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
+            using ProtocolFunc = const char* (*)();
+            auto protocol = reinterpret_cast<ProtocolFunc>(lib.getFunctionAddress("piperGetProtocol"));
+            if(StringView{ protocol() } != coreProtocol)
+                throw;
+            stage.switchToStatic("init module", PIPER_SOURCE_LOCATION());
+            using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator, const char*);
+            auto init = reinterpret_cast<InitFunc>(lib.getFunctionAddress("piperInitModule"));
+            auto& allocator = context().getAllocator();
+            auto mod =
+                SharedPtr<Module>{ init(context(), allocator, fs::absolute(moduleFullPath).parent_path().u8string().c_str()),
+                                   DefaultDeleter<Module>{ allocator }, STLAllocator{ allocator } };
+            if(!mod)
+                throw;
+            {
+                std::unique_lock<std::recursive_mutex> guard{ mMutex };
+                mModules.insert(makePair(name, mod));
+                mHandles.push(std::move(lib));
+            }
+            //});
+            return context().getScheduler().ready();
+        }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             // TODO:asynchronous module loading
@@ -372,7 +378,7 @@ namespace Piper {
             if(pos == String::npos)
                 throw;
 
-            std::shared_lock<std::shared_mutex> guard{ mMutex };
+            std::unique_lock<std::recursive_mutex> guard{ mMutex };
             const auto iter = mModules.find(String(classID.substr(0, pos), context().getAllocator()));
             if(iter == mModules.cend())
                 throw;
@@ -568,6 +574,19 @@ namespace Piper {
         }
     };
 
+    class DummyPITUManager final : public PITUManager {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(DummyPITUManager, PITUManager)
+        Future<SharedPtr<PITU>> loadPITU(const String& path) const override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            return Future<SharedPtr<PITU>>{ nullptr };  // make compiler happy
+        }
+        Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            return Future<SharedPtr<PITU>>{ nullptr };  // make compiler happy
+        }
+    };
+
     class PiperContextImpl final : public PiperContextOwner {
     private:
         DefaultAllocator mDefaultAllocator;
@@ -577,6 +596,7 @@ namespace Piper {
         SharedPtr<Scheduler> mScheduler;
         SharedPtr<FileSystem> mFileSystem;
         SharedPtr<Allocator> mUserAllocator;
+        SharedPtr<PITUManager> mPITUManager;
         UnitManagerImpl mUnitManager;
         ErrorHandlerImpl mErrorHandler;
         DynamicArray<Scheduler*> mNotifyScheduler;
@@ -607,6 +627,9 @@ namespace Piper {
         ErrorHandler& getErrorHandler() noexcept override {
             return mErrorHandler;
         }
+        PITUManager& getPITUManager() noexcept override {
+            return *mPITUManager;
+        }
 
         void setLogger(const SharedPtr<Logger>& logger) noexcept override {
             mLifeTimeRecorder.push(logger);
@@ -627,6 +650,11 @@ namespace Piper {
             mUserAllocator = allocator;
             mAllocator = mUserAllocator.get();
         }
+        void setPITUManager(const SharedPtr<PITUManager>& manager) noexcept override {
+            mLifeTimeRecorder.push(manager);
+            mPITUManager = manager;
+        }
+
         void notify(FutureImpl* event) override {
             for(auto&& scheduler : mNotifyScheduler)
                 scheduler->notify(event);
@@ -654,6 +682,7 @@ namespace Piper {
         auto stage = mErrorHandler.enterStageStatic("create Piper context", PIPER_SOURCE_LOCATION());
         setScheduler(makeSharedObject<SchedulerImpl>(*this));
         nativeFileSystem(*this);
+        mPITUManager = makeSharedObject<DummyPITUManager>(*this);
     }
 }  // namespace Piper
 

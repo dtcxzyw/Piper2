@@ -96,20 +96,20 @@ namespace Piper {
     using Sqrt = typename SqrtImpl<T>::Type;
 
     template <typename T, typename = Sqrt<T>>
-    auto sqrt(T val) {
+    auto sqrt(T val) noexcept {
         return Sqrt<T>{ std::sqrt(val.val) };
     }
 
     template <typename T1, typename T2, typename = Product<T1, T2>>
-    auto operator*(T1 a, T2 b) {
+    constexpr auto operator*(T1 a, T2 b) noexcept {
         return Product<T1, T2>{ a.val * b.val };
     }
     template <typename T1, typename T2, typename = Ratio<T1, T2>>
-    auto operator/(T1 a, T2 b) {
+    constexpr auto operator/(T1 a, T2 b) noexcept {
         return Ratio<T1, T2>{ a.val / b.val };
     }
     template <typename T>
-    auto dot(T a, T b) {
+    constexpr auto dot(T a, T b) noexcept {
         return T{ a.val * b.val };
     }
 
@@ -117,7 +117,7 @@ namespace Piper {
     using Dimensionless = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 0, 0>;
 
     template <typename T>
-    auto eraseUnit(T val) {
+    constexpr auto eraseUnit(T val) noexcept {
         return Dimensionless<typename T::FT>{ val.val };
     }
 
@@ -146,10 +146,16 @@ namespace Piper {
     using Radian = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 1, 0>;
 
     template <typename Float>
-    using Steradian = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 0, 1>;
+    using SolidAngle = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 0, 1>;
 
     template <typename Float>
     using Frequency = Inverse<Time<Float>>;
+
+    template <typename Float>
+    using Area = Product<Length<Float>, Length<Float>>;
+
+    template <typename Float>
+    using Volume = Product<Area<Float>, Length<Float>>;
 
     template <typename Float>
     using Velocity = Ratio<Length<Float>, Time<Float>>;
@@ -170,7 +176,7 @@ namespace Piper {
     using Charge = Product<ElectricCurrent<Float>, Time<Float>>;
 
     template <typename Float>
-    using LuminousFlux = Product<LuminousIntensity<Float>, Steradian<Float>>;
+    using LuminousFlux = Product<LuminousIntensity<Float>, SolidAngle<Float>>;
 
     template <typename Float>
     using Power = Ratio<Work<Float>, Time<Float>>;
@@ -198,10 +204,10 @@ namespace Piper {
         constexpr Ratio<LuminousFlux<Float>, Power<Float>> Kcd = static_cast<Float>(683);
 
         template <typename Float>
-        constexpr Radian<Float> pi = static_cast<Float>(3.1415926535897932384626433832795);
+        constexpr Float pi = Float{ static_cast<typename Float::FT>(3.1415926535897932384626433832795) };
 
         template <typename Float>
-        constexpr Steradian<Float> areaOfSphere = static_cast<Float>(12.566370614359172953850573533118);
+        constexpr Float areaOfSphere = Float{ static_cast<typename Float::FT>(12.566370614359172953850573533118) };
 
     }  // namespace Constants
 

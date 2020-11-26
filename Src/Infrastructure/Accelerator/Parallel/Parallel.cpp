@@ -46,6 +46,8 @@
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #pragma warning(pop)
 #define NOMINMAX
+#include "../../../STL/USet.hpp"
+
 #include <Windows.h>
 
 namespace Piper {
@@ -87,7 +89,7 @@ namespace Piper {
     class LLVMProgram final : public RunnableProgram {
     private:
         std::unique_ptr<llvm::orc::LLJIT> mJIT;
-        using KernelFunction = void (*)(uint32_t idx, const std::byte* payload);
+        using KernelFunction = void(PIPER_CC*)(uint32_t idx, const std::byte* payload);
         KernelFunction mFunction, mUnroll;
 
     public:
@@ -245,15 +247,14 @@ namespace Piper {
         }
     };
 
-    static UMap<String, void*> parseNative(PiperContext& context, const DynamicArray<std::byte>& data) {
+    static void parseNative(PiperContext& context, const DynamicArray<std::byte>& data, UMap<String, void*>& symbol) {
         static_assert(sizeof(void*) == 8);
         if(data.size() < 6)
             throw;
         auto ptr = reinterpret_cast<const char8_t*>(data.data());
         auto end = ptr + data.size();
-        if(StringView{ ptr, 6 } != StringView{ "Native" })
+        if(std::string_view{ ptr, 6 } != "Native")
             throw;
-        UMap<String, void*> res{ context.getAllocator() };
         ptr += 6;
         while(ptr < end) {
             auto beg = ptr;
@@ -268,9 +269,8 @@ namespace Piper {
                 throw;
             void* func = reinterpret_cast<void*>(*reinterpret_cast<const uint64_t*>(ptr + 1));
             ptr += 9;
-            res.insert({ std::move(name), func });
+            symbol.insert({ std::move(name), func });
         }
-        return res;
     }
 
     class ParallelAccelerator final : public Accelerator {
@@ -296,29 +296,44 @@ namespace Piper {
         Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<LinkableProgram>>& linkable,
                                                          const String& entry) override {
             DynamicArray<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
-            modules.reserve(linkable.size());
+            USet<size_t> hashPool{ context().getAllocator() };
+            UMap<String, void*> nativeSymbol{ context().getAllocator() };
             auto& scheduler = context().getScheduler();
             auto llctx = std::make_unique<llvm::LLVMContext>();
             // TODO:use parallel_for?
-            for(auto&& unit : linkable)
-                // TODO:parse native
-                modules.emplace_back(std::move(scheduler.spawn(
-                    [ctx = &context(), llvmctx = llctx.get()](const Future<LinkableProgram>& bitcode) {
-                        auto stage = ctx->getErrorHandler().enterStageStatic("parse LLVM Bitcode", PIPER_SOURCE_LOCATION());
-                        auto res = llvm::parseBitcodeFile(
-                            llvm::MemoryBufferRef{
-                                toStringRef(llvm::ArrayRef<uint8_t>{ reinterpret_cast<const uint8_t*>(bitcode->exchange.data()),
-                                                                     bitcode->exchange.size() }),
-                                "bitcode data" },
-                            *llvmctx);
-                        return getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(), std::move(res));
-                    },
-                    unit)));
+            for(auto&& unit : linkable) {
+                // TODO:concurrency
+                unit.wait();
+
+                auto beg = reinterpret_cast<const char*>(unit->exchange.data());
+                // TODO:use StringView
+                auto data = std::string_view{ beg, unit->exchange.size() };
+                if(!hashPool.insert(std::hash<std::string_view>{}(data)).second)
+                    continue;
+
+                if(unit->format == std::string_view{ "LLVM IR" }) {
+                    // TODO:concurrency
+                    // modules.emplace_back(std::move(scheduler.spawn(
+                    //    [ctx = &context(), llvmctx = llctx.get()](const Future<LinkableProgram>& linkable) {
+                    auto stage = context().getErrorHandler().enterStageStatic("parse LLVM Bitcode", PIPER_SOURCE_LOCATION());
+                    auto res = llvm::parseBitcodeFile(
+                        llvm::MemoryBufferRef{
+                            toStringRef(llvm::ArrayRef<uint8_t>{ reinterpret_cast<const uint8_t*>(unit->exchange.data()),
+                                                                 unit->exchange.size() }),
+                            "bitcode data" },
+                        *llctx);
+                    modules.push_back(scheduler.value(getLLVMResult(context(), PIPER_SOURCE_LOCATION(), std::move(res))));
+                } else if(unit->format == std::string_view{ "Native" }) {
+                    parseNative(context(), unit->exchange, nativeSymbol);
+                } else
+                    throw;
+            }
             // TODO:reduce Module cloning by std::move
             // TODO:remove unused functions
+            bool entryInNative = nativeSymbol.count(entry);
             auto kernel = scheduler.spawn(
-                [ctx = &context(), llvmctx = llctx.get(),
-                 entry](const Future<DynamicArray<std::unique_ptr<llvm::Module>>>& units) {
+                [ctx = &context(), llvmctx = llctx.get(), entry,
+                 entryInNative](const Future<DynamicArray<std::unique_ptr<llvm::Module>>>& units) {
                     auto& errorHandler = ctx->getErrorHandler();
                     auto stage = errorHandler.enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
                     auto kernel = std::make_unique<llvm::Module>("LLVM_kernel", *llvmctx);
@@ -326,8 +341,16 @@ namespace Piper {
                         llvm::Linker::linkModules(*kernel, llvm::CloneModule(*unit));
 
                     auto func = kernel->getFunction(llvm::StringRef{ entry.data(), entry.size() });
-                    if(!func)
-                        errorHandler.raiseException("Undefined entry " + entry, PIPER_SOURCE_LOCATION());
+                    if(!func) {
+                        if(entryInNative) {
+                            llvm::Type* params[] = { llvm::Type::getInt32Ty(*llvmctx), llvm::Type::getInt8PtrTy(*llvmctx) };
+                            auto FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*llvmctx),
+                                                              llvm::ArrayRef<llvm::Type*>{ params, 2 }, false);
+                            func = llvm::Function::Create(FT, llvm::GlobalValue::ExternalLinkage,
+                                                          llvm::Twine{ llvm::StringRef{ entry.data(), entry.size() } }, *kernel);
+                        } else
+                            errorHandler.raiseException("Undefined entry " + entry, PIPER_SOURCE_LOCATION());
+                    }
                     {
                         auto payload = func->getArg(1);
                         payload->addAttr(llvm::Attribute::NonNull);
@@ -397,7 +420,8 @@ namespace Piper {
                 },
                 scheduler.wrap(modules));
             return scheduler.spawn(
-                [ctx = &context(), llvmctx = std::move(llctx), entry, this](Future<std::unique_ptr<llvm::Module>> func) {
+                [ctx = &context(), llvmctx = std::move(llctx), entry, nativeSymbol,
+                 this](Future<std::unique_ptr<llvm::Module>> func) {
                     auto mod = std::move(*func);
 
                     // TODO:LLVM use fake host triple,use true host triple to initialize JITTargetMachineBuilder
@@ -482,6 +506,12 @@ namespace Piper {
                             PIPER_MATH_KERNEL_FUNC(cbrtf), PIPER_MATH_KERNEL_FUNC(hypotf),
 #undef PIPER_MATH_KERNEL_FUNC
                         };
+                        for(const auto& func : nativeSymbol)
+                            map.insert(std::make_pair(
+                                engine->getExecutionSession().intern(llvm::StringRef{ func.first.data(), func.first.size() }),
+                                llvm::JITEvaluatedSymbol{ reinterpret_cast<llvm::JITTargetAddress>(func.second),
+                                                          llvm::JITSymbolFlags::Callable | llvm::JITSymbolFlags::Exported |
+                                                              llvm::JITSymbolFlags::Absolute }));
                         static char ID;
                         auto MU = std::make_unique<llvm::orc::AbsoluteSymbolsMaterializationUnit>(
                             map, reinterpret_cast<llvm::orc::VModuleKey>(&ID));

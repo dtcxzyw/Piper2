@@ -14,6 +14,7 @@
    limitations under the License.
 */
 
+#pragma once
 #include "STLAllocator.hpp"
 #include <EASTL/unordered_map.h>
 

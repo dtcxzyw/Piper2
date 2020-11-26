@@ -20,20 +20,28 @@ namespace Piper {
     // lexicographical order
 
     class Accelerator;
+    class Allocator;
     class Config;
     class Environment;
     class ErrorHandler;
+    class FileSystem;
+    class FutureImpl;
     class Geometry;
     class Integrator;
     class Light;
     struct LinkableProgram;
+    class Logger;
     class Medium;
+    class ModuleLoader;
     class Object;
+    class PITUManager;
     class RenderDriver;
     class ResourceCacheManager;
     class ResourceHolder;
+    class Scheduler;
     class Sensor;
     class Surface;
     class Tracer;
+    class UnitManager;
 
 }  // namespace Piper

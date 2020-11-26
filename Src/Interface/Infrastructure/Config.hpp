@@ -65,6 +65,7 @@ namespace Piper {
                DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>>>* unused = nullptr)
             : Object(context), mValue(static_cast<intmax_t>(value)) {}
 
+        //TODO:reduce copy
         template <typename T>
         T get() const {
             return Piper::get<T>(mValue);

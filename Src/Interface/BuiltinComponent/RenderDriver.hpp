@@ -15,18 +15,19 @@
 */
 
 #pragma once
+#include "../../Kernel/Protocol.hpp"
 #include "Tracer.hpp"
 
 namespace Piper {
     struct RenderDriverProgram final {
         SharedPtr<RTProgram> accumulate;
-        SBTPayload payload;
     };
     class RenderDriver : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(RenderDriver, Object)
         virtual ~RenderDriver() = default;
-        virtual void renderFrame() = 0;
-        virtual RenderDriverProgram materialize(Tracer& tracer, ResourceHolder& holder) = 0;
+        virtual void renderFrame(DynamicArray<Spectrum<Radiance>>& res, uint32_t width, uint32_t height, Tracer& tracer,
+                                 Pipeline& pipeline) = 0;
+        virtual RenderDriverProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
     };
 }  // namespace Piper

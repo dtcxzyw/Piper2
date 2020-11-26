@@ -30,8 +30,7 @@ float MKcos(float x) noexcept {
 
 using namespace std::chrono_literals;
 
-void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator,
-                     const Piper::SharedPtr<Piper::PITUManager>& manager) {
+void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator) {
     auto& logger = context.getLogger();
 
     using Clock = std::chrono::high_resolution_clock;
@@ -53,7 +52,7 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     auto devZ = accelerator->createBuffer(count * sizeof(Float), 64);
 
     // TODO:concurrency
-    auto conv = manager->loadPITU("conv.bc");
+    auto conv = context.getPITUManager().loadPITU("conv.bc");
     conv.wait();
 
     auto linkable = conv->generateLinkable(accelerator->getSupportedLinkableFormat());
@@ -97,9 +96,8 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     for(Piper::Index i = 0; i < count; ++i)
         ASSERT_FLOAT_EQ(Z[i], standard[i]);
 }
-void generalAcceleratorTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator,
-                            const Piper::SharedPtr<Piper::PITUManager>& manager) {
-    convolutionTest(context, accelerator, manager);
+void generalAcceleratorTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator) {
+    convolutionTest(context, accelerator);
 }
 
 TEST_F(PiperCoreEnvironment, LLVM_CPU) {
@@ -117,8 +115,8 @@ TEST_F(PiperCoreEnvironment, LLVM_CPU) {
     auto manager = context->getModuleLoader().newInstance("Piper.Infrastructure.LLVMIR.LLVMIRManager", nullptr);
     accelerator.wait();
     manager.wait();
-    generalAcceleratorTest(*context, eastl::dynamic_shared_pointer_cast<Piper::Accelerator>(accelerator.get()),
-                           eastl::dynamic_shared_pointer_cast<Piper::PITUManager>(manager.get()));
+    contextOwner->setPITUManager(eastl::dynamic_shared_pointer_cast<Piper::PITUManager>(manager.get()));
+    generalAcceleratorTest(*context, eastl::dynamic_shared_pointer_cast<Piper::Accelerator>(accelerator.get()));
 }
 
 int main(int argc, char** argv) {

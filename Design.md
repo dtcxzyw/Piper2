@@ -15,3 +15,6 @@
 ---
 ## Rendering Components
 ---
+### References
+[Disney's Hyperion Renderer](https://www.disneyanimation.com/publications/the-design-and-evolution-of-disneys-hyperion-renderer/)
+[UE4 PostProcess Effects](https://docs.unrealengine.com/en-US/Engine/Rendering/PostProcessEffects/index.html)

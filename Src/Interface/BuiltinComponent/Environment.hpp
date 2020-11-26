@@ -26,6 +26,6 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Environment, Object)
         virtual ~Environment() = default;
-        virtual EnvironmentProgram materialize(Tracer& tracer, ResourceHolder& holder) = 0;
+        virtual EnvironmentProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
     };
 }  // namespace Piper

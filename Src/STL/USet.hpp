@@ -14,10 +14,11 @@
    limitations under the License.
 */
 
+#pragma once
 #include "STLAllocator.hpp"
 #include <EASTL/unordered_set.h>
 
 namespace Piper {
-    template <typename T, typename Hash = eastl::hash<Key>>
+    template <typename T, typename Hash = eastl::hash<T>>
     using USet = eastl::unordered_set<T, Hash>;
 }  // namespace Piper

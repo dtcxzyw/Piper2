@@ -21,11 +21,11 @@
 #include "Interface/Infrastructure/FileSystem.hpp"
 #include "Interface/Infrastructure/IO.hpp"
 #include "PiperContext.hpp"
+#include "STL/DynamicArray.hpp"
 #include "STL/Pair.hpp"
 #include "STL/SharedPtr.hpp"
 #include "STL/StringView.hpp"
 #include "STL/UniquePtr.hpp"
-#include "STL/DynamicArray.hpp"
 #include <Windows.h>
 #include <fileapi.h>
 #include <filesystem>
@@ -50,7 +50,8 @@ void freeModule(void* handle) {
         raiseWin32Error();
 }
 void* loadModule(const fs::path& path) {
-    auto res = LoadLibraryW(path.generic_wstring().c_str());
+    auto res = LoadLibraryExW(fs::absolute(path).wstring().c_str(), NULL,
+                              LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if(!res)
         raiseWin32Error();
     return res;
@@ -87,8 +88,8 @@ namespace Piper {
         SharedPtr<Pair<bool, DynamicArray<std::byte>>> data;
 
         ReadFuture(PiperContext& context, const STLAllocator& allocator, const size_t size)
-            : FutureImpl(context),
-              data(makeSharedPtr<Pair<bool, DynamicArray<std::byte>>>(allocator, false, DynamicArray<std::byte>{ size, allocator })) {}
+            : FutureImpl(context), data(makeSharedPtr<Pair<bool, DynamicArray<std::byte>>>(
+                                       allocator, false, DynamicArray<std::byte>{ size, allocator })) {}
         bool fastReady() const noexcept override {
             return data->first;
         }
@@ -195,7 +196,7 @@ namespace Piper {
             return mSpan;
         }
         ~MappedSpanImpl() noexcept {
-            if(!UnmapViewOfFile(mPtr))
+            if(mPtr && !UnmapViewOfFile(mPtr))
                 raiseWin32Error();
         }
     };
@@ -222,14 +223,14 @@ namespace Piper {
         MappedMemoryImpl(PiperContext& context, SharedPtr<void>&& handle, const FileAccessMode access, const size_t maxSize)
             : MappedMemory(context), mFileHandle(std::move(handle)), mSize(maxSize ? maxSize : getFileSize(mFileHandle.get())),
               mAccess(access) {
-            if(mSize == 0)
-                throw;
-            auto mapHandle =
-                CreateFileMappingW(mFileHandle.get(), nullptr, access == FileAccessMode::Read ? PAGE_READONLY : PAGE_READWRITE,
-                                   static_cast<DWORD>(maxSize >> 32), static_cast<DWORD>(maxSize), nullptr);
-            if(mapHandle == INVALID_HANDLE_VALUE)
-                raiseWin32Error();
-            mMapHandle.reset(mapHandle);
+            if(mSize != 0) {
+                auto mapHandle = CreateFileMappingW(mFileHandle.get(), nullptr,
+                                                    access == FileAccessMode::Read ? PAGE_READONLY : PAGE_READWRITE,
+                                                    static_cast<DWORD>(maxSize >> 32), static_cast<DWORD>(maxSize), nullptr);
+                if(mapHandle == INVALID_HANDLE_VALUE)
+                    raiseWin32Error();
+                mMapHandle.reset(mapHandle);
+            }
         }
         size_t size() const noexcept override {
             return mSize;
@@ -238,16 +239,19 @@ namespace Piper {
             return getMemoryAlignment();
         }
         SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
-            size_t end = offset + size;
-            size_t rem = offset % getMemoryAlignment();
-            size_t roffset = offset - rem;
-            auto ptr = reinterpret_cast<std::byte*>(
-                MapViewOfFile(mMapHandle.get(), mAccess == FileAccessMode::Read ? FILE_MAP_READ : FILE_MAP_WRITE,
-                              static_cast<DWORD>(roffset >> 32), static_cast<DWORD>(roffset), end - roffset));
-            if(ptr == nullptr)
-                throw;
-            auto base = ptr + offset - roffset;
-            return makeSharedObject<MappedSpanImpl>(context(), ptr, Span<std::byte>(base, base + size));
+            if(mMapHandle) {
+                size_t end = offset + size;
+                size_t rem = offset % getMemoryAlignment();
+                size_t roffset = offset - rem;
+                auto ptr = reinterpret_cast<std::byte*>(
+                    MapViewOfFile(mMapHandle.get(), mAccess == FileAccessMode::Read ? FILE_MAP_READ : FILE_MAP_WRITE,
+                                  static_cast<DWORD>(roffset >> 32), static_cast<DWORD>(roffset), end - roffset));
+                if(ptr == nullptr)
+                    throw;
+                auto base = ptr + offset - roffset;
+                return makeSharedObject<MappedSpanImpl>(context(), ptr, Span<std::byte>(base, base + size));
+            }
+            return makeSharedObject<MappedSpanImpl>(context(), nullptr, Span<std::byte>{});
         }
     };
 

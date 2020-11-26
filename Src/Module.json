@@ -1,40 +1,66 @@
 [
   {
     "Name": "Piper.Infrastructure.JemallocAllocator",
-    "Path": "Infrastructure/Allocator/JemallocAllocator",
-    "Dependencies": [
-      "Infrastructure/Allocator/jemalloc"
-    ]
+    "Path": "Infrastructure/Allocator/JemallocAllocator/JemallocAllocator"
   },
   {
     "Name": "Piper.Infrastructure.Taskflow",
-    "Path": "Infrastructure/Concurrency/Taskflow"
+    "Path": "Infrastructure/Concurrency/Taskflow/Taskflow"
   },
   {
     "Name": "Piper.Infrastructure.MemoryFS",
-    "Path": "Infrastructure/FileSystem/MemoryFS"
+    "Path": "Infrastructure/FileSystem/MemoryFS/MemoryFS"
   },
   {
     "Name": "Piper.Infrastructure.Spdlog",
-    "Path": "Infrastructure/Logger/Spdlog",
-    "Dependencies": [
-      "Infrastructure/Logger/fmt"
-    ]
+    "Path": "Infrastructure/Logger/Spdlog/Spdlog"
   },
   {
     "Name": "Piper.Infrastructure.LLVMIR",
-    "Path": "Infrastructure/Program/LLVMIR"
+    "Path": "Infrastructure/Program/LLVMIR/LLVMIR"
   },
   {
     "Name": "Piper.Infrastructure.Parallel",
-    "Path": "Infrastructure/Accelerator/Parallel"
+    "Path": "Infrastructure/Accelerator/Parallel/Parallel"
   },
   {
     "Name": "Piper.Infrastructure.Squirrel",
-    "Path": "Infrastructure/Concurrency/Squirrel"
+    "Path": "Infrastructure/Concurrency/Squirrel/Squirrel"
   },
   {
-    "Name": "Piper.Infrastructure.Builtin",
-    "Path": "Infrastructure/PerformancePrimitivesLibrary/Builtin"
+    "Name": "Piper.BuiltinComponent.PathTracing",
+    "Path": "BuiltinComponent/Integrator/PathTracing/PathTracing"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.PerspectiveCamera",
+    "Path": "BuiltinComponent/Sensor/PerspectiveCamera/PerspectiveCamera"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.ClassicSurface",
+    "Path": "BuiltinComponent/Surface/Classic/Classic"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.BasicLight",
+    "Path": "BuiltinComponent/Light/BasicLight/BasicLight"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.TriangleMesh",
+    "Path": "BuiltinComponent/Geometry/TriangleMesh/TriangleMesh"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.Embree",
+    "Path": "BuiltinComponent/Tracer/Embree/EmbreeWrapper"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.SampledEnvironment",
+    "Path": "BuiltinComponent/Environment/SampledEnvironment/SampledEnvironment"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.FixedSampler",
+    "Path": "BuiltinComponent/RenderDriver/FixedSampler/FixedSampler"
+  },
+  {
+    "Name": "Piper.Renderer",
+    "Path": "PiperRenderer"
   }
 ]

@@ -35,13 +35,14 @@ namespace Piper {
     // TODO:concurrency
     class PIPER_API ResourceCacheManager final : public Object {
     private:
-        // TOOD:use Any?
-        UMap<ResourceID, WeakPtr<Object>> mCache;
+        // TODO:use Any?
+        // TODO:use WeakPtr?
+        UMap<ResourceID, SharedPtr<Object>> mCache;
         SharedPtr<Object> lookupImpl(ResourceID id) const;
         void reserve(ResourceID id, const SharedPtr<Object>& cache);
 
     public:
-        ResourceCacheManager(PiperContext& context);
+        explicit ResourceCacheManager(PiperContext& context);
         template <typename T>
         SharedPtr<T> materialize(ResourceID id, const Function<SharedPtr<T>>& gen) {
             auto cache = lookup<T>(id);

@@ -15,9 +15,10 @@
 */
 
 #include "conv.hpp"
+#include "../PiperAPI.hpp"
 #include <cstdint>
 
-struct Payload {
+struct Payload final {
     uint64_t pX;
     uint64_t pY;
     uint64_t pZ;
@@ -26,7 +27,7 @@ struct Payload {
     uint32_t kernelSize;
 };
 
-extern "C" void conv(const uint32_t idx, const Payload* payload) {
+extern "C" void PIPER_CC conv(const uint32_t idx, const Payload* payload) {
     auto X = reinterpret_cast<const Float*>(payload->pX);
     auto Y = reinterpret_cast<const Float*>(payload->pY);
     auto Z = reinterpret_cast<Float*>(payload->pZ);

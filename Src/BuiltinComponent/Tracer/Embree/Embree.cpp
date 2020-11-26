@@ -119,8 +119,9 @@ namespace Piper {
             HitInfo hitInfo;
             // TODO:custom
             if(data->kind == HitKind::Builtin) {
-                hitInfo.builtin.Ng = result.surface.transform(Normal<Distance, FOR::World>{ Vector<Distance, FOR::World>{
-                    Distance{ hit.hit.Ng_x }, Distance{ hit.hit.Ng_y }, Distance{ hit.hit.Ng_z } } });
+                hitInfo.builtin.Ng = result.surface.transform(Normal<float, FOR::World>{ Vector<Dimensionless<float>, FOR::World>{
+                    Dimensionless<float>{ hit.hit.Ng_x }, Dimensionless<float>{ hit.hit.Ng_y },
+                    Dimensionless<float>{ hit.hit.Ng_z } } });
                 hitInfo.builtin.index = hit.hit.primID;
                 hitInfo.builtin.barycentric = { hit.hit.u, hit.hit.v };
             }
@@ -132,24 +133,25 @@ namespace Piper {
         } else {
             result.kind = TraceKind::Missing;
         }
-    }  // namespace Piper
+    }
+
     static float piperSample(RestrictedContext* context) {
         // auto SBT = reinterpret_cast<KernelArgument*>(context);
         // TODO:sampler
         return static_cast<float>(rand()) / RAND_MAX;
     }
 
-    static void piperMissing(FullContext* context, const RayInfo& ray, Spectrum<LuminousFlux<float>>& radiance) {
+    static void piperMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance) {
         auto SBT = reinterpret_cast<KernelArgument*>(context);
         SBT->missing(decay(context), SBT->MSPayload, ray, radiance);
     }
-    static void piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<Distance, FOR::Shading>& wi,
+    static void piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
                                    SurfaceSample& sample) {
         auto func = reinterpret_cast<const InstanceUserData*>(instance);
         func->sample(decay(context), func->SFPayload, wi, sample);
     }
-    static void piperSurfaceEvaluate(FullContext* context, uint64_t instance, const Normal<Distance, FOR::Shading>& wi,
-                                     const Normal<Distance, FOR::Shading>& wo, Spectrum<Dimensionless<float>>& f) {
+    static void piperSurfaceEvaluate(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
+                                     const Normal<float, FOR::Shading>& wo, Spectrum<Dimensionless<float>>& f) {
         auto func = reinterpret_cast<const InstanceUserData*>(instance);
         func->evaluate(decay(context), func->SFPayload, wi, wo, f);
     }
@@ -162,15 +164,18 @@ namespace Piper {
         KernelArgument* SBT;
     };
 
+    // TODO:move to Kernel
+
     static void piperEmbreeMain(uint32_t idx, const MainArgument* arg) {
         auto SBT = arg->SBT;
         uint32_t x = SBT->rect.left + idx % SBT->rect.width;
-        uint32_t y = SBT->rect.top + idx / SBT->rect.height;
+        uint32_t y = SBT->rect.top + idx / SBT->rect.width;
         // TODO:generate sample
         RayInfo ray;
         Vector2<float> point;
-        SBT->rayGen(reinterpret_cast<RestrictedContext*>(SBT), SBT->RGPayload, x, y, ray, point);
-        Spectrum<LuminousFlux<float>> sample;
+        SBT->rayGen(reinterpret_cast<RestrictedContext*>(SBT), SBT->RGPayload, x, y, SBT->rect.width, SBT->rect.height, ray,
+                    point);
+        Spectrum<Radiance> sample;
         SBT->trace(reinterpret_cast<FullContext*>(SBT), SBT->TRPayload, ray, sample);
         SBT->accumulate(reinterpret_cast<RestrictedContext*>(SBT), SBT->ACPayload, point, sample);
     }
@@ -221,10 +226,10 @@ namespace Piper {
     };
     using SceneHandle = UniquePtr<RTCSceneTy, SceneDeleter>;
 
-    // TODO:per-vertex TBN
+    // TODO:per-vertex TBN,TexCoord
     static void calcTriangleMeshSurface(RestrictedContext*, const void*, const HitInfo& hit, SurfaceIntersectionInfo& info) {
         info.N = hit.builtin.Ng;
-        Normal<Distance, FOR::Local> u1{ { 1.0f, 0.0f, 0.0f }, Unchecked{} }, u2{ { 0.0f, 1.0f, 0.0f }, Unchecked{} };
+        Normal<float, FOR::Local> u1{ { 1.0f, 0.0f, 0.0f }, Unchecked{} }, u2{ { 0.0f, 1.0f, 0.0f }, Unchecked{} };
         if(fabsf(dot(info.N, u1).val) < fabsf(dot(info.N, u2).val))
             info.T = cross(info.N, u1);
         else
@@ -253,7 +258,7 @@ namespace Piper {
                     auto index = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3,
                                                          sizeof(uint32_t) * 3, triDesc.triCount);
                     memcpy(index, reinterpret_cast<void*>(triDesc.index), sizeof(uint32_t) * 3 * triDesc.triCount);
-                    rtcSetGeometryTimeStepCount(mGeometry.get(), 1);
+                    // rtcSetGeometryTimeStepCount(mGeometry.get(), 1);
                     rtcSetGeometryMask(mGeometry.get(), 1);
                     if(triDesc.transform.has_value())
                         rtcSetGeometryTransform(mGeometry.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, triDesc.transform.value().A2B);
@@ -283,11 +288,10 @@ namespace Piper {
     };
 
     static void attachSubScene(RTCDevice device, RTCScene dest, RTCScene src,
-                               const Optional<Transform<Distance, Dimensionless<float>, FOR::Local, FOR::World>>& transform,
-                               void* userData) {
+                               const Optional<Transform<Distance, FOR::Local, FOR::World>>& transform, void* userData) {
         auto geo = GeometryHandle{ rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE) };
         rtcSetGeometryInstancedScene(geo.get(), src);
-        rtcSetGeometryTimeStepCount(geo.get(), 1);
+        // rtcSetGeometryTimeStepCount(geo.get(), 1);
         if(transform.has_value())
             rtcSetGeometryTransform(geo.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transform.value().A2B);
         rtcSetGeometryMask(geo.get(), 1);
@@ -385,21 +389,32 @@ namespace Piper {
     private:
         SharedPtr<RunnableProgram> mKernel;
         Accelerator& mAccelerator;
+        // TODO:temp arena?
         MemoryArena mArena;
         KernelArgument mArg;
         ResourceHolder mHolder;
+        SharedPtr<EmbreeNode> mScene;
+
+        void* upload(const SBTPayload& payload) {
+            if(payload.empty())
+                return nullptr;
+            auto ptr = reinterpret_cast<void*>(mArena.alloc(payload.size()));
+            memcpy(ptr, payload.data(), payload.size());
+            return ptr;
+        }
 
     public:
-        EmbreePipeline(PiperContext& context, Tracer& tracer, EmbreeNode& scene, Sensor& sensor, Environment& environment,
-                       Integrator& integrator, RenderDriver& renderDriver, Light& light)
-            : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context) {
+        EmbreePipeline(PiperContext& context, Tracer& tracer, SharedPtr<EmbreeNode> scene, Sensor& sensor,
+                       Environment& environment, Integrator& integrator, RenderDriver& renderDriver, Light& light)
+            : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
+              mScene(scene) {
             DynamicArray<Future<LinkableProgram>> modules(context.getAllocator());
             auto& scheduler = context.getScheduler();
             modules.push_back(scheduler.value(prepareKernelNative(context)));
 
-            mArg.scene = scene.getScene();
+            mArg.scene = scene->getScene();
             UMap<EmbreeLeafNode*, InstanceProgram> nodeProg{ context.getAllocator() };
-            scene.collect(nodeProg);
+            scene->collect(nodeProg);
 
             struct SurfaceInfo final {
                 void* payload;
@@ -416,14 +431,6 @@ namespace Piper {
                 HitKind kind;
             };
             UMap<Geometry*, GeometryInfo> geometryProg(context.getAllocator());
-
-            auto upload = [this](const SBTPayload& payload) -> void* {
-                if(payload.empty())
-                    return nullptr;
-                auto ptr = reinterpret_cast<void*>(mArena.alloc(payload.size()));
-                memcpy(ptr, payload.data(), payload.size());
-                return ptr;
-            };
 
             for(auto&& [_, prog] : nodeProg) {
                 if(!surfaceProg.count(prog.surface.get())) {
@@ -459,7 +466,7 @@ namespace Piper {
             auto ACP = renderDriver.materialize(tracer, mHolder);
             auto& ACRTP = dynamic_cast<EmbreeRTProgram&>(*ACP.accumulate);
             modules.push_back(ACRTP.program);
-            mArg.ACPayload = upload(ACP.payload);
+            mArg.ACPayload = nullptr;
 
             auto LIP = light.materialize(tracer, mHolder);
             auto& LIRTP = dynamic_cast<EmbreeRTProgram&>(*LIP.light);
@@ -516,10 +523,11 @@ namespace Piper {
             mArg.rayGen = reinterpret_cast<SensorFunc>(mKernel->lookup(RGRTP.symbol));
             mArg.trace = reinterpret_cast<IntegratorFunc>(mKernel->lookup(TRRTP.symbol));
         }
-        void run(const RenderRECT& rect) {
+        void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload) {
             MemoryArena arena(context().getAllocator(), 4096);
             auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
             mArg.rect = rect;
+            mArg.ACPayload = upload(renderDriverPayload);
             buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
             auto payload = mAccelerator.createPayload(InputResource{ buffer->ref() });
 
@@ -562,8 +570,8 @@ namespace Piper {
                 "Embree Error:" + toString(context().getAllocator(), static_cast<uint32_t>(ec)) + str, PIPER_SOURCE_LOCATION());
         }
         Embree(PiperContext& context, const SharedPtr<Config>& config) : Tracer(context), mCache(context) {
-            auto accel =
-                context.getModuleLoader().newInstance(config->at("Accelerator")->get<String>(), config->at("AcceleratorConfig"));
+            auto accelConfig = config->at("Accelerator");
+            auto accel = context.getModuleLoader().newInstance(accelConfig->at("ClassID")->get<String>(), config);
             accel.wait();
             mAccelerator = eastl::dynamic_shared_pointer_cast<Accelerator>(accel.get());
             mDevice.reset(rtcNewDevice(config->at("EmbreeDeviceConfig")->get<String>().c_str()));
@@ -593,16 +601,17 @@ namespace Piper {
             return makeSharedObject<EmbreeLeafNode>(context(), *this, mDevice.get(), eastl::get<GSMInstanceDesc>(desc));
         }
 
-        UniqueObject<Pipeline> buildPipeline(Node& scene, Sensor& sensor, Environment& environment, Integrator& integrator,
-                                             RenderDriver& renderDriver, Light& light) override {
-            return makeUniqueObject<Pipeline, EmbreePipeline>(context(), *this, dynamic_cast<EmbreeNode&>(scene), sensor,
+        UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Environment& environment,
+                                             Integrator& integrator, RenderDriver& renderDriver, Light& light) override {
+            return makeUniqueObject<Pipeline, EmbreePipeline>(context(), *this,
+                                                              eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), sensor,
                                                               environment, integrator, renderDriver, light);
         }
         Accelerator& getAccelerator() override {
             return *mAccelerator;
         }
-        void trace(Pipeline& pipeline, const RenderRECT& rect) override {
-            dynamic_cast<EmbreePipeline&>(pipeline).run(rect);
+        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload) override {
+            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, renderDriverPayload);
         }
     };
     class ModuleImpl final : public Module {
@@ -611,7 +620,7 @@ namespace Piper {
         explicit ModuleImpl(PiperContext& context, const char*) : Module(context) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
-            if(classID == "Embree") {
+            if(classID == "Tracer") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<Embree>(context(), config)));
             }

@@ -46,7 +46,7 @@ namespace Piper {
         virtual ~Allocator() = default;
     };
 
-    class PIPER_API MemoryArena final {
+    class PIPER_API MemoryArena final : private Uncopyable {
     private:
         Allocator& mAllocator;
         DynamicArray<Ptr> mBlocks;
