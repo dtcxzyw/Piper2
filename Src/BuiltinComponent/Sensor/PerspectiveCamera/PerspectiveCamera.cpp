@@ -27,6 +27,7 @@ namespace Piper {
     private:
         String mKernelPath;
         PCData mData;
+        float mAspectRatio;
 
     public:
         PerspectiveCamera(PiperContext& context, const String& path, const SharedPtr<Config>& config)
@@ -54,6 +55,10 @@ namespace Piper {
             mData.apertureX = right * apertureRadius;
             mData.apertureY = nup * apertureRadius;
             mData.forward = forward;
+            mAspectRatio = size.x / size.y;
+        }
+        float getAspectRatio() const noexcept override {
+            return mAspectRatio;
         }
         SensorProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SensorProgram res;

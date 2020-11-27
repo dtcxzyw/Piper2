@@ -27,6 +27,7 @@ namespace Piper {
     struct RayInfo final {
         Point<Distance, FOR::World> origin;
         Normal<float, FOR::World> direction;
+        float t;
     };
 
     enum class Face { Front, Back };
@@ -102,8 +103,12 @@ namespace Piper {
     using Intensity = Ratio<Flux, SolidAngle<float>>;
     using Radiance = Ratio<Irradiance, SolidAngle<float>>;
 
+    struct SensorNDCAffineTransform final {
+        float ox, oy, sx, sy;
+    };
+
     using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
-                                RayInfo& ray, Vector2<float>& point);
+                                const SensorNDCAffineTransform& transform, RayInfo& ray, Vector2<float>& point);
     using EnvironmentFunc = void (*)(RestrictedContext* context, const void* SBTData, const RayInfo& ray,
                                      Spectrum<Radiance>& radiance);
     enum class RayType { Reflection, Refraction };
@@ -114,11 +119,11 @@ namespace Piper {
         RayType type;
     };
     using SurfaceSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData,
-                                              const Normal<float, FOR::Shading>& wi, SurfaceSample& sample);
+                                              const Normal<float, FOR::Shading>& wi, float t, SurfaceSample& sample);
     using SurfaceEvaluateFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData,
                                                 const Normal<float, FOR::Shading>& wi, const Normal<float, FOR::Shading>& wo,
-                                                Spectrum<Dimensionless<float>>& f);
-    using GeometryFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const HitInfo& hit,
+                                                float t, Spectrum<Dimensionless<float>>& f);
+    using GeometryFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const HitInfo& hit, float t,
                                          SurfaceIntersectionInfo& info);
     using RenderDriverFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& point,
                                              const Spectrum<Radiance>& sample);
@@ -129,9 +134,11 @@ namespace Piper {
         bool valid;
     };
     using LightFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const Point<Distance, FOR::World>& hit,
-                                      LightSample& sample);
+                                      float t, LightSample& sample);
 
     using SampleFunc = void(PIPER_CC*)(const void* SBTData, uint32_t x, uint32_t y, uint32_t s, float* samples);
+    using TextureSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float u, float v, float t,
+                                              Spectrum<Dimensionless<float>>& sample);
 
     enum class TraceKind { Surface, Missing };
     struct TraceSurface final {
@@ -149,11 +156,11 @@ namespace Piper {
 
     extern "C" {
     void PIPER_CC piperMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance);
-    void PIPER_CC piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
+    void PIPER_CC piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi, float t,
                                      SurfaceSample& sample);
     void PIPER_CC piperSurfaceEvaluate(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
-                                       const Normal<float, FOR::Shading>& wo, Spectrum<Dimensionless<float>>& f);
-    void PIPER_CC piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, LightSample& sample);
+                                       const Normal<float, FOR::Shading>& wo, float t, Spectrum<Dimensionless<float>>& f);
+    void PIPER_CC piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, float t, LightSample& sample);
 
     void PIPER_CC piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result);
     // TODO:terminate/ignore insection

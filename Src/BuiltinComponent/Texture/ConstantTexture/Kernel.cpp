@@ -14,20 +14,12 @@
    limitations under the License.
 */
 
-#pragma once
-
-#include "Tracer.hpp"
+#include "Shared.hpp"
 
 namespace Piper {
-    struct TextureProgram final {
-        SBTPayload payload;
-        SharedPtr<RTProgram> sample;
-    };
-
-    class Texture : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Texture, Object)
-        virtual ~Texture() = default;
-        virtual TextureProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
-    };
+    extern "C" void PIPER_CC sample(RestrictedContext* context, const void* SBTData, float u, float v, float t,
+                                    Spectrum<Dimensionless<float>>& sample) {
+        sample = reinterpret_cast<const Data*>(SBTData)->texel;
+    }
+    static_assert(std::is_same_v<TextureSampleFunc, decltype(&sample)>);
 }  // namespace Piper

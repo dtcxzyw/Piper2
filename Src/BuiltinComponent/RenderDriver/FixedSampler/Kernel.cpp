@@ -20,9 +20,9 @@ namespace Piper {
     extern "C" void PIPER_CC accumulate(RestrictedContext*, const void* SBTData, const Vector2<float>& point,
                                         const Spectrum<Radiance>& sample) {
         auto data = reinterpret_cast<const Data*>(SBTData);
-        auto px = static_cast<uint32_t>(point.x);
+        auto px = static_cast<uint32_t>(point.x > 0.0f ? point.x : 0.0f);
         px = (px < data->w ? px : data->w - 1);
-        auto py = static_cast<uint32_t>(point.y);
+        auto py = static_cast<uint32_t>(point.y > 0.0f ? point.y : 0.0f);
         py = (py < data->h ? py : data->h - 1);
         // TODO:support atomicAdd?
         // TODO:Filter

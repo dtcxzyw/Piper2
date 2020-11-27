@@ -35,6 +35,15 @@
 #pragma warning(pop)
 
 namespace Piper {
+    enum class FitMode { Fill, OverScan };
+    FitMode str2FitMode(const String& mode) {
+        if(mode == "Fill")
+            return FitMode::Fill;
+        if(mode == "OverScan")
+            return FitMode::OverScan;
+        throw;
+    }
+
     class Render final : public Operator {
     private:
         auto parseTransform(const SharedPtr<Config>& config) {
@@ -89,9 +98,10 @@ namespace Piper {
         }
 
         UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
-                                             uint32_t width, uint32_t height) {
+                                             uint32_t width, uint32_t height, float& ratio) {
             // TODO:Asset
             auto sensor = syncLoad<Sensor>(config->at("Sensor"));
+            ratio = sensor->getAspectRatio();
             auto light = syncLoad<Light>(config->at("Light"));
             auto environment = syncLoad<Environment>(config->at("Environment"));
             auto integrator = syncLoad<Integrator>(config->at("Integrator"));
@@ -126,20 +136,55 @@ namespace Piper {
             auto height = static_cast<uint32_t>(sizeDesc[1]->get<uintmax_t>());
             auto scenePath = opt->at("SceneDesc")->get<String>();
             auto parserID = opt->at("SceneParser")->get<String>();
+            auto fitMode = str2FitMode(opt->at("FitMode")->get<String>());
+
             // TODO:concurrency
             auto parserFuture = context().getModuleLoader().newInstance(parserID, nullptr);
             parserFuture.wait();
             auto parser = eastl::dynamic_shared_pointer_cast<ConfigSerializer>(parserFuture.get());
 
             auto scene = parser->deserialize(scenePath);
-
             auto tracer = syncLoad<Tracer>(opt->at("Tracer"));
-
             auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));
 
-            auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height);
+            float deviceAspectRatio = -1.0f;
+            auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height, deviceAspectRatio);
+
+            RenderRECT rect;
+            SensorNDCAffineTransform transform;
+            auto imageAspectRatio = static_cast<float>(width) / static_cast<float>(height);
+            auto iiar = 1.0f / imageAspectRatio, idar = 1.0f / deviceAspectRatio;
+            if(fitMode == FitMode::Fill) {
+                rect = { 0, 0, width, height };
+                if(imageAspectRatio > deviceAspectRatio) {
+                    transform = { 0.0f, (idar - iiar) * 0.5f * deviceAspectRatio, 1.0f, iiar * deviceAspectRatio };
+                } else {
+                    transform = { (deviceAspectRatio - imageAspectRatio) * 0.5f * idar, 0.0f, imageAspectRatio * idar, 1.0f };
+                }
+            } else {
+                if(imageAspectRatio > deviceAspectRatio) {
+                    transform = { -(imageAspectRatio - deviceAspectRatio) * 0.5f * idar, 0.0f, imageAspectRatio * idar, 1.0f };
+                    rect = { static_cast<uint32_t>(floorf(std::max(
+                                 0.0f, static_cast<float>(width) * (imageAspectRatio - deviceAspectRatio) * 0.5f * iiar))),
+                             0,
+                             std::min(width,
+                                      static_cast<uint32_t>(ceilf(static_cast<float>(width) *
+                                                                  (imageAspectRatio + deviceAspectRatio) * 0.5f * iiar))),
+                             height };
+                    rect.width -= rect.left;
+                } else {
+                    transform = { 0.0f, -(iiar - idar) * 0.5f * deviceAspectRatio, 1.0f, deviceAspectRatio * iiar };
+                    rect = { 0,
+                             static_cast<uint32_t>(
+                                 floorf(std::max(0.0f, static_cast<float>(height) * (iiar - idar) * 0.5f * imageAspectRatio))),
+                             width,
+                             static_cast<uint32_t>(ceilf(static_cast<float>(height) * (iiar + idar) * 0.5f * imageAspectRatio)) };
+                    rect.height -= rect.top;
+                }
+            }
+
             DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
-            renderDriver->renderFrame(res, width, height, *tracer, *pipeline);
+            renderDriver->renderFrame(res, width, height, rect, transform, *tracer, *pipeline);
 
             auto output = opt->at("OutputFile")->get<String>();
             // TODO:remove exr

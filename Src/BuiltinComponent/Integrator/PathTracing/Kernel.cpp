@@ -38,18 +38,18 @@ namespace Piper {
 
             auto hit = ray.origin + ray.direction * Distance{ surface.t };
             LightSample light;
-            piperLightSample(context, hit, light);
+            piperLightSample(context, hit, ray.t, light);
             if(light.valid) {
                 // TODO:occlude test
                 auto delta = light.src - hit;
                 auto wo = surface.intersect.local2Shading(surface.transform(Normal<float, FOR::World>{ delta }));
                 Spectrum<Dimensionless<float>> f;
-                piperSurfaceEvaluate(context, surface.instance, wi, wo, f);
+                piperSurfaceEvaluate(context, surface.instance, wi, wo, ray.t, f);
                 sample += pf * f * light.rad;
             }
 
             SurfaceSample ss;
-            piperSurfaceSample(context, surface.instance, wi, ss);
+            piperSurfaceSample(context, surface.instance, wi, ray.t, ss);
             pf = pf * ss.f;
             ray.direction = surface.transform(surface.intersect.shading2Local(ss.wo));
             ray.origin = hit;  // TODO:bias?

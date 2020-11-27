@@ -15,19 +15,10 @@
 */
 
 #pragma once
-
-#include "Tracer.hpp"
+#include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct TextureProgram final {
-        SBTPayload payload;
-        SharedPtr<RTProgram> sample;
-    };
-
-    class Texture : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Texture, Object)
-        virtual ~Texture() = default;
-        virtual TextureProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
+    struct Data final {
+        Spectrum<Dimensionless<float>> texel;
     };
 }  // namespace Piper

@@ -103,6 +103,6 @@ namespace Piper {
         virtual Accelerator& getAccelerator() = 0;
         virtual ResourceCacheManager& getCacheManager() = 0;
         virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
-                           uint32_t sample) = 0;
+                           const SensorNDCAffineTransform& transform, uint32_t sample) = 0;
     };
 }  // namespace Piper

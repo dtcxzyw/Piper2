@@ -58,6 +58,7 @@ namespace Piper {
         float* samples;
         uint32_t sample;
         uint32_t maxDimension;
+        SensorNDCAffineTransform transform;
     };
     enum class HitKind { Builtin, Custom };
     struct InstanceUserData final : public Object {
@@ -93,7 +94,7 @@ namespace Piper {
         hit.ray.dir_x = ray.direction.x.val;
         hit.ray.dir_y = ray.direction.y.val;
         hit.ray.dir_z = ray.direction.z.val;
-        hit.ray.time = 0.0f;
+        hit.ray.time = 0.0f;  // TODO:motion blur
 
         hit.ray.tfar = maxT;
         hit.ray.mask = 1;  // TODO:mask
@@ -133,7 +134,8 @@ namespace Piper {
                 hitInfo.builtin.barycentric = { hit.hit.u, hit.hit.v };
             }
 
-            data->calcSurface(reinterpret_cast<RestrictedContext*>(context), data->GEPayload, hitInfo, result.surface.intersect);
+            data->calcSurface(reinterpret_cast<RestrictedContext*>(context), data->GEPayload, hitInfo, ray.t,
+                              result.surface.intersect);
 
             static_assert(sizeof(void*) == 8);
             result.surface.instance = reinterpret_cast<uint64_t>(data);
@@ -146,19 +148,19 @@ namespace Piper {
         auto SBT = reinterpret_cast<KernelArgument*>(context);
         SBT->missing(decay(context), SBT->MSPayload, ray, radiance);
     }
-    static void piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
+    static void piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi, float t,
                                    SurfaceSample& sample) {
         auto func = reinterpret_cast<const InstanceUserData*>(instance);
-        func->sample(decay(context), func->SFPayload, wi, sample);
+        func->sample(decay(context), func->SFPayload, wi, t, sample);
     }
     static void piperSurfaceEvaluate(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
-                                     const Normal<float, FOR::Shading>& wo, Spectrum<Dimensionless<float>>& f) {
+                                     const Normal<float, FOR::Shading>& wo, float t, Spectrum<Dimensionless<float>>& f) {
         auto func = reinterpret_cast<const InstanceUserData*>(instance);
-        func->evaluate(decay(context), func->SFPayload, wi, wo, f);
+        func->evaluate(decay(context), func->SFPayload, wi, wo, t, f);
     }
-    static void piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, LightSample& sample) {
+    static void piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, float t, LightSample& sample) {
         auto SBT = reinterpret_cast<KernelArgument*>(context);
-        SBT->light(decay(context), SBT->LIPayload, hit, sample);
+        SBT->light(decay(context), SBT->LIPayload, hit, t, sample);
     }
 
     struct MainArgument final {
@@ -186,8 +188,8 @@ namespace Piper {
         SBT->generate(SBT->SAPayload, x, y, SBT->sample, context.samples);
         RayInfo ray;
         Vector2<float> point;
-        SBT->rayGen(reinterpret_cast<RestrictedContext*>(&context), SBT->RGPayload, x, y, SBT->rect.width, SBT->rect.height, ray,
-                    point);
+        SBT->rayGen(reinterpret_cast<RestrictedContext*>(&context), SBT->RGPayload, x, y, SBT->rect.width, SBT->rect.height,
+                    SBT->transform, ray, point);
         Spectrum<Radiance> sample;
         SBT->trace(reinterpret_cast<FullContext*>(&context), SBT->TRPayload, ray, sample);
         SBT->accumulate(reinterpret_cast<RestrictedContext*>(&context), SBT->ACPayload, point, sample);
@@ -247,7 +249,8 @@ namespace Piper {
     using SceneHandle = UniquePtr<RTCSceneTy, SceneDeleter>;
 
     // TODO:per-vertex TBN,TexCoord
-    static void calcTriangleMeshSurface(RestrictedContext*, const void*, const HitInfo& hit, SurfaceIntersectionInfo& info) {
+    static void calcTriangleMeshSurface(RestrictedContext*, const void*, const HitInfo& hit, float t,
+                                        SurfaceIntersectionInfo& info) {
         info.N = hit.builtin.Ng;
         Normal<float, FOR::Local> u1{ { 1.0f, 0.0f, 0.0f }, Unchecked{} }, u2{ { 0.0f, 1.0f, 0.0f }, Unchecked{} };
         if(fabsf(dot(info.N, u1).val) < fabsf(dot(info.N, u2).val))
@@ -559,12 +562,14 @@ namespace Piper {
             mArg.generate = (sampler ? reinterpret_cast<SampleFunc>(mKernel->lookup(sampleSymbol)) :
                                        ([](const void* SBTData, uint32_t x, uint32_t y, uint32_t s, float* samples) {}));
         }
-        void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload, uint32_t sample) {
+        void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload, const SensorNDCAffineTransform& transform,
+                 uint32_t sample) {
             MemoryArena arena(context().getAllocator(), 4096);
             auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
             mArg.rect = rect;
             mArg.ACPayload = upload(renderDriverPayload);
             mArg.sample = sample;
+            mArg.transform = transform;
             buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
             auto payload = mAccelerator.createPayload(InputResource{ buffer->ref() });
 
@@ -648,8 +653,9 @@ namespace Piper {
         Accelerator& getAccelerator() override {
             return *mAccelerator;
         }
-        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload, uint32_t sample) override {
-            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, renderDriverPayload, sample);
+        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
+                   const SensorNDCAffineTransform& transform, uint32_t sample) override {
+            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, renderDriverPayload, transform, sample);
         }
     };
     class ModuleImpl final : public Module {

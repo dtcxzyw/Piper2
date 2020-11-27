@@ -36,7 +36,7 @@ namespace Piper {
     }
     */
     extern "C" void PIPER_CC blackBodySample(RestrictedContext* context, const void* SBTData,
-                                             const Normal<float, FOR::Shading>& wi, SurfaceSample& sample) {
+                                             const Normal<float, FOR::Shading>& wi, float t, SurfaceSample& sample) {
         sample.type = RayType::Reflection;
         sample.wo = wi;
         sample.f = { { 0.0f }, { 0.0f }, { 0.0f } };
@@ -44,7 +44,7 @@ namespace Piper {
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&blackBodySample)>);
     extern "C" void PIPER_CC blackBodyEvaluate(RestrictedContext* context, const void* SBTData,
                                                const Normal<float, FOR::Shading>& wi, const Normal<float, FOR::Shading>& wo,
-                                               Spectrum<Dimensionless<float>>& f) {
+                                               float t, Spectrum<Dimensionless<float>>& f) {
         f = { { 0.0f }, { 0.0f }, { 0.0f } };
     }
     static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&blackBodyEvaluate)>);

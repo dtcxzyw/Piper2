@@ -17,7 +17,7 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void PIPER_CC lightPoint(RestrictedContext*, const void* SBTData, const Point<Distance, FOR::World>& hit,
+    extern "C" void PIPER_CC lightPoint(RestrictedContext*, const void* SBTData, const Point<Distance, FOR::World>& hit, float t,
                                         LightSample& sample) {
         auto data = reinterpret_cast<const PointLightData*>(SBTData);
         sample.rad = data->intensity / lengthSquared(data->pos - hit);
