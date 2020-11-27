@@ -131,6 +131,8 @@ namespace Piper {
     using LightFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const Point<Distance, FOR::World>& hit,
                                       LightSample& sample);
 
+    using SampleFunc = void(PIPER_CC*)(const void* SBTData, uint32_t x, uint32_t y, uint32_t s, float* samples);
+
     enum class TraceKind { Surface, Missing };
     struct TraceSurface final {
         SurfaceIntersectionInfo intersect;

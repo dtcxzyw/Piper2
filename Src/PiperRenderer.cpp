@@ -28,6 +28,8 @@
 #include "Kernel/Protocol.hpp"
 #pragma warning(push)
 #define _CRT_SECURE_NO_WARNINGS
+#include "Interface/BuiltinComponent/Sampler.hpp"
+
 #include <OpenEXR/ImfRgbaFile.h>
 #undef _CRT_SECURE_NO_WARNINGS
 #pragma warning(pop)
@@ -86,14 +88,19 @@ namespace Piper {
             }
         }
 
-        UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config) {
+        UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
+                                             uint32_t width, uint32_t height) {
             // TODO:Asset
             auto sensor = syncLoad<Sensor>(config->at("Sensor"));
             auto light = syncLoad<Light>(config->at("Light"));
             auto environment = syncLoad<Environment>(config->at("Environment"));
             auto integrator = syncLoad<Integrator>(config->at("Integrator"));
             auto node = buildScene(tracer, config->at("Scene"));
-            return tracer.buildPipeline(node, *sensor, *environment, *integrator, renderDriver, *light);
+            auto attr = config->viewAsObject();
+            auto samplerDesc = attr.find(String{ "Sampler", context().getAllocator() });
+            auto sampler = samplerDesc != attr.cend() ? syncLoad<Sampler>(samplerDesc->second) : SharedPtr<Sampler>{};
+            return tracer.buildPipeline(node, *sensor, *environment, *integrator, renderDriver, *light, sampler.get(), width,
+                                        height);
         }
         void saveToFile(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, uint32_t width, uint32_t height) {
             DynamicArray<Imf::Rgba> rgba(res.size(), context().getAllocator());
@@ -130,7 +137,7 @@ namespace Piper {
 
             auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));
 
-            auto pipeline = buildPipeline(*tracer, *renderDriver, scene);
+            auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height);
             DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
             renderDriver->renderFrame(res, width, height, *tracer, *pipeline);
 

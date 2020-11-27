@@ -15,19 +15,17 @@
 */
 
 #pragma once
-#include "Tracer.hpp"
+
+#include "PhysicalQuantitySI.hpp"
+#include "Transform.hpp"
 
 namespace Piper {
-    struct SamplerProgram final {
-        SBTPayload payload;
-        SharedPtr<RTProgram> sample;
-        uint32_t maxDimension;
-    };
 
-    class Sampler : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Sampler, Object)
-        virtual ~Sampler() = default;
-        virtual SamplerProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
-    };
+    template <typename T>
+    Vector2<Dimensionless<T>> sampleUniformDisk(Vector2<Dimensionless<T>> u) {
+        auto ang = u.x * (Dimensionless<float>{ 2.0f } * Constants::pi<T>);
+        auto rad = sqrt(u.y);
+        // TODO:use sincos?
+        return { rad * cos(ang), rad * sin(ang) };
+    }
 }  // namespace Piper

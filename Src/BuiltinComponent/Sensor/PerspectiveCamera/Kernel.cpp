@@ -14,6 +14,7 @@
    limitations under the License.
 */
 
+#include "../../../Kernel/Sampling.hpp"
 #include "Shared.hpp"
 
 namespace Piper {
@@ -22,9 +23,14 @@ namespace Piper {
         point.x = static_cast<float>(x) + piperSample(context);
         point.y = static_cast<float>(y) + piperSample(context);
         auto data = reinterpret_cast<const PCData*>(SBTData);
-        ray.origin = data->anchor + data->offX * Dimensionless<float>{ 1.0f - point.x / static_cast<float>(w) } +
+        auto filmHit = data->anchor + data->offX * Dimensionless<float>{ 1.0f - point.x / static_cast<float>(w) } +
             data->offY * Dimensionless<float>{ 1.0f - point.y / static_cast<float>(h) };
-        ray.direction = Normal<float, FOR::World>{ data->focus - ray.origin };
+        auto lensOffset = sampleUniformDisk(Vector2<Dimensionless<float>>{ piperSample(context), piperSample(context) });
+        auto lensHit = data->lensCenter + data->apertureX * lensOffset.x + data->apertureY * lensOffset.y;
+        auto dir = data->lensCenter - filmHit;
+        auto planeOfFocusHit = data->lensCenter + dir * (data->focalDistance / dot(dir, data->forward));
+        ray.origin = lensHit;
+        ray.direction = normalize(planeOfFocusHit - ray.origin);
     }
     static_assert(std::is_same_v<SensorFunc, decltype(&rayGen)>);
 }  // namespace Piper

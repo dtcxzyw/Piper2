@@ -20,6 +20,7 @@
 #include "../../../Interface/BuiltinComponent/Integrator.hpp"
 #include "../../../Interface/BuiltinComponent/Light.hpp"
 #include "../../../Interface/BuiltinComponent/RenderDriver.hpp"
+#include "../../../Interface/BuiltinComponent/Sampler.hpp"
 #include "../../../Interface/BuiltinComponent/Sensor.hpp"
 #include "../../../Interface/BuiltinComponent/Surface.hpp"
 #include "../../../Interface/BuiltinComponent/Tracer.hpp"
@@ -29,6 +30,7 @@
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #include "../../../Kernel/Protocol.hpp"
+#include <random>
 
 #include <cassert>
 #include <embree3/rtcore.h>
@@ -51,6 +53,11 @@ namespace Piper {
         void* TRPayload;
         LightFunc light;
         void* LIPayload;
+        SampleFunc generate;
+        void* SAPayload;
+        float* samples;
+        uint32_t sample;
+        uint32_t maxDimension;
     };
     enum class HitKind { Builtin, Custom };
     struct InstanceUserData final : public Object {
@@ -135,12 +142,6 @@ namespace Piper {
         }
     }
 
-    static float piperSample(RestrictedContext* context) {
-        // auto SBT = reinterpret_cast<KernelArgument*>(context);
-        // TODO:sampler
-        return static_cast<float>(rand()) / RAND_MAX;
-    }
-
     static void piperMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance) {
         auto SBT = reinterpret_cast<KernelArgument*>(context);
         SBT->missing(decay(context), SBT->MSPayload, ray, radiance);
@@ -166,18 +167,37 @@ namespace Piper {
 
     // TODO:move to Kernel
 
+    using RandomEngine = std::mt19937_64;
+
+    struct PerSampleContext final {
+        KernelArgument argument;
+        RandomEngine eng;
+        uint32_t sampleIdx;
+        float* samples;
+    };
+
     static void piperEmbreeMain(uint32_t idx, const MainArgument* arg) {
         auto SBT = arg->SBT;
         uint32_t x = SBT->rect.left + idx % SBT->rect.width;
         uint32_t y = SBT->rect.top + idx / SBT->rect.width;
-        // TODO:generate sample
+        auto sampleIdx = x + y * SBT->rect.width;
+        PerSampleContext context{ *arg->SBT, RandomEngine{ sampleIdx * SBT->rect.height + SBT->sample }, 0,
+                                  SBT->samples + sampleIdx * SBT->maxDimension * sizeof(float) };
+        SBT->generate(SBT->SAPayload, x, y, SBT->sample, context.samples);
         RayInfo ray;
         Vector2<float> point;
-        SBT->rayGen(reinterpret_cast<RestrictedContext*>(SBT), SBT->RGPayload, x, y, SBT->rect.width, SBT->rect.height, ray,
+        SBT->rayGen(reinterpret_cast<RestrictedContext*>(&context), SBT->RGPayload, x, y, SBT->rect.width, SBT->rect.height, ray,
                     point);
         Spectrum<Radiance> sample;
-        SBT->trace(reinterpret_cast<FullContext*>(SBT), SBT->TRPayload, ray, sample);
-        SBT->accumulate(reinterpret_cast<RestrictedContext*>(SBT), SBT->ACPayload, point, sample);
+        SBT->trace(reinterpret_cast<FullContext*>(&context), SBT->TRPayload, ray, sample);
+        SBT->accumulate(reinterpret_cast<RestrictedContext*>(&context), SBT->ACPayload, point, sample);
+    }
+
+    static float piperSample(RestrictedContext* context) {
+        auto ctx = reinterpret_cast<PerSampleContext*>(context);
+        if(ctx->sampleIdx < ctx->argument.maxDimension)
+            return ctx->samples[ctx->sampleIdx++];
+        return std::generate_canonical<float, -1>(ctx->eng);
     }
 
     static LinkableProgram prepareKernelNative(PiperContext& context) {
@@ -398,14 +418,15 @@ namespace Piper {
         void* upload(const SBTPayload& payload) {
             if(payload.empty())
                 return nullptr;
-            auto ptr = reinterpret_cast<void*>(mArena.alloc(payload.size()));
+            auto ptr = reinterpret_cast<void*>(mArena.allocRaw(payload.size()));
             memcpy(ptr, payload.data(), payload.size());
             return ptr;
         }
 
     public:
         EmbreePipeline(PiperContext& context, Tracer& tracer, SharedPtr<EmbreeNode> scene, Sensor& sensor,
-                       Environment& environment, Integrator& integrator, RenderDriver& renderDriver, Light& light)
+                       Environment& environment, Integrator& integrator, RenderDriver& renderDriver, Light& light,
+                       Sampler* sampler, uint32_t width, uint32_t height)
             : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
               mScene(scene) {
             DynamicArray<Future<LinkableProgram>> modules(context.getAllocator());
@@ -488,6 +509,18 @@ namespace Piper {
             modules.push_back(TRRTP.program);
             mArg.TRPayload = upload(TRP.payload);
 
+            String sampleSymbol;
+            if(sampler) {
+                auto SAP = sampler->materialize(tracer, mHolder);
+                auto& SARTP = dynamic_cast<EmbreeRTProgram&>(*SAP.sample);
+                modules.push_back(SARTP.program);
+                mArg.SAPayload = upload(SAP.payload);
+                mArg.maxDimension = SAP.maxDimension;
+                mArg.samples = mArena.alloc<float>(width * height * SAP.maxDimension);
+                sampleSymbol = SARTP.symbol;
+            } else
+                mArg.maxDimension = 0;
+
             auto& accelerator = tracer.getAccelerator();
             auto kernel =
                 accelerator.compileKernel(Span<Future<LinkableProgram>>{ modules.data(), modules.data() + modules.size() },
@@ -522,12 +555,16 @@ namespace Piper {
             mArg.missing = reinterpret_cast<EnvironmentFunc>(mKernel->lookup(MSRTP.symbol));
             mArg.rayGen = reinterpret_cast<SensorFunc>(mKernel->lookup(RGRTP.symbol));
             mArg.trace = reinterpret_cast<IntegratorFunc>(mKernel->lookup(TRRTP.symbol));
+
+            mArg.generate = (sampler ? reinterpret_cast<SampleFunc>(mKernel->lookup(sampleSymbol)) :
+                                       ([](const void* SBTData, uint32_t x, uint32_t y, uint32_t s, float* samples) {}));
         }
-        void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload) {
+        void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload, uint32_t sample) {
             MemoryArena arena(context().getAllocator(), 4096);
             auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
             mArg.rect = rect;
             mArg.ACPayload = upload(renderDriverPayload);
+            mArg.sample = sample;
             buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
             auto payload = mAccelerator.createPayload(InputResource{ buffer->ref() });
 
@@ -602,16 +639,17 @@ namespace Piper {
         }
 
         UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Environment& environment,
-                                             Integrator& integrator, RenderDriver& renderDriver, Light& light) override {
-            return makeUniqueObject<Pipeline, EmbreePipeline>(context(), *this,
-                                                              eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), sensor,
-                                                              environment, integrator, renderDriver, light);
+                                             Integrator& integrator, RenderDriver& renderDriver, Light& light, Sampler* sampler,
+                                             uint32_t width, uint32_t height) override {
+            return makeUniqueObject<Pipeline, EmbreePipeline>(
+                context(), *this, eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), sensor, environment, integrator,
+                renderDriver, light, sampler, width, height);
         }
         Accelerator& getAccelerator() override {
             return *mAccelerator;
         }
-        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload) override {
-            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, renderDriverPayload);
+        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload, uint32_t sample) override {
+            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, renderDriverPayload, sample);
         }
     };
     class ModuleImpl final : public Module {

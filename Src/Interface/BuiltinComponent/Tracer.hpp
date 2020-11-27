@@ -95,11 +95,14 @@ namespace Piper {
         // TODO:update structure
         virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
         virtual SharedPtr<Node> buildNode(const NodeDesc& desc) = 0;
+        // TODO:callee
         virtual SharedPtr<RTProgram> buildProgram(Future<LinkableProgram> linkable, String symbol) = 0;
         virtual UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Environment& environment,
-                                                     Integrator& integrator, RenderDriver& renderDriver, Light& light) = 0;
+                                                     Integrator& integrator, RenderDriver& renderDriver, Light& light,
+                                                     Sampler* sampler, uint32_t width, uint32_t height) = 0;
         virtual Accelerator& getAccelerator() = 0;
         virtual ResourceCacheManager& getCacheManager() = 0;
-        virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload) = 0;
+        virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
+                           uint32_t sample) = 0;
     };
 }  // namespace Piper

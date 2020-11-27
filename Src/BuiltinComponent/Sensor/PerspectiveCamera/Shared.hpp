@@ -21,7 +21,11 @@ namespace Piper {
     struct PCData final {
         Point<Distance, FOR::World> anchor;  // left-top
         Vector<Distance, FOR::World> offX;
-        Vector<Distance,FOR::World> offY;
-        Point<Distance,FOR::World> focus;
+        Vector<Distance, FOR::World> offY;
+        Point<Distance, FOR::World> lensCenter;
+        Distance focalDistance;
+        Vector<Distance, FOR::World> apertureX;
+        Vector<Distance, FOR::World> apertureY;
+        Normal<float, FOR::World> forward;
     };
 }  // namespace Piper

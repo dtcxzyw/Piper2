@@ -431,7 +431,7 @@ namespace Piper {
                     // TODO:test settings
                     // TODO:FP Precise/Atomic
                     JTMB.setCodeGenOptLevel(llvm::CodeGenOpt::Aggressive);
-                    JTMB.setRelocationModel(llvm::Reloc::Static);
+                    JTMB.setRelocationModel(llvm::Reloc::PIC_);
                     JTMB.setCodeModel(llvm::CodeModel::Small);
 
                     llvm::TargetOptions& options = JTMB.getOptions();

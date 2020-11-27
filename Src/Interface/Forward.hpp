@@ -38,6 +38,7 @@ namespace Piper {
     class RenderDriver;
     class ResourceCacheManager;
     class ResourceHolder;
+    class Sampler;
     class Scheduler;
     class Sensor;
     class Surface;

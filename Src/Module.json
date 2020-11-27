@@ -60,6 +60,10 @@
     "Path": "BuiltinComponent/RenderDriver/FixedSampler/FixedSampler"
   },
   {
+    "Name": "Piper.BuiltinComponent.ScrambledSobolSampler",
+    "Path": "BuiltinComponent/Sampler/ScrambledSobolSampler/ScrambledSobolSampler"
+  },
+  {
     "Name": "Piper.Renderer",
     "Path": "PiperRenderer"
   }

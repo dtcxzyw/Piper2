@@ -79,7 +79,7 @@ namespace Piper {
 
     MemoryArena::MemoryArena(Allocator& allocator, size_t blockSize)
         : mAllocator(allocator), mBlocks(allocator), mCurrent(0), mCurEnd(0), mBlockSize(blockSize) {}
-    Ptr MemoryArena::alloc(const size_t size, const size_t align) {
+    Ptr MemoryArena::allocRaw(const size_t size, const size_t align) {
         if(size >= mBlockSize) {
             auto ptr = mAllocator.alloc(size, align);
             mBlocks.push_back(ptr);

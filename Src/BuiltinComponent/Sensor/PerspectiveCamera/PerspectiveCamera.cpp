@@ -23,7 +23,6 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    // TODO:DoF
     class PerspectiveCamera final : public Sensor {
     private:
         String mKernelPath;
@@ -32,20 +31,29 @@ namespace Piper {
     public:
         PerspectiveCamera(PiperContext& context, const String& path, const SharedPtr<Config>& config)
             : Sensor(context), mKernelPath(path + "/Kernel.bc") {
+            // TODO:aperture mask
             auto base = parsePoint<Distance, FOR::World>(config->at("Position"));
             auto lookat = parsePoint<Distance, FOR::World>(config->at("LookAt"));
             auto size = parseVector2<float>(config->at("SensorSize")) * 1e-3f;
             auto up = parseVector<Distance, FOR::World>(config->at("Up"));
             // TODO:FOV
             // TODO:mm unit
-            auto focusLength = Distance{ static_cast<float>(config->at("FocusLength")->get<double>()) * 1e-3f };
+            auto focalLength = Distance{ static_cast<float>(config->at("FocalLength")->get<double>()) * 1e-3f };
+            auto apertureRadius =
+                focalLength / Dimensionless<float>{ 2.0f * static_cast<float>(config->at("FStop")->get<double>()) };
             auto forward = Normal<float, FOR::World>{ lookat - base };
             auto right = cross(forward, Normal<float, FOR::World>(up));
             auto nup = cross(right, forward);
             mData.anchor = base + nup * Distance{ size.x * 0.5f } - right * Distance{ size.y * 0.5f };
-            mData.focus = base + forward * focusLength;
+            // TODO:AF/MF mode support
+            mData.focalDistance = dot(lookat - base, forward);
+            auto filmDistance = inverse(inverse(focalLength) - inverse(mData.focalDistance));
+            mData.lensCenter = base + forward * filmDistance;
             mData.offX = right * Distance{ size.x };
             mData.offY = nup * Distance{ -size.y };
+            mData.apertureX = right * apertureRadius;
+            mData.apertureY = nup * apertureRadius;
+            mData.forward = forward;
         }
         SensorProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SensorProgram res;

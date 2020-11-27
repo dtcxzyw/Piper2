@@ -129,7 +129,7 @@ namespace Piper {
         return a * (static_cast<Float>(1.0) - u) + b * u;
     }
 
-    enum class FOR { Camera, World, Local, Shading };
+    enum class FOR { World, Local, Shading };
 
     template <typename Float, FOR ref>
     struct Vector {
@@ -172,16 +172,6 @@ namespace Piper {
     template <typename T, typename U, FOR ref>
     auto operator*(T lhs, Vector<U, ref> rhs) noexcept {
         return rhs * lhs;
-    }
-
-    template <typename Float, FOR ref>
-    Float dot(Vector<Float, ref> a, Vector<Float, ref> b) noexcept {
-        return a.x * b.x + a.y * b.y + a.z * b.z;
-    }
-
-    template <typename Float, FOR ref>
-    Vector<Float, ref> cross(Vector<Float, ref> a, Vector<Float, ref> b) noexcept {
-        return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
     }
 
     template <typename Float, FOR ref>
@@ -271,6 +261,11 @@ namespace Piper {
         return dot(a.x, b.x) + dot(a.y, b.y) + dot(a.z, b.z);
     }
 
+    template <typename T, FOR ref, typename U>
+    T dot(Vector<T, ref> a, Normal<U, ref> b) noexcept {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
     template <typename Float, FOR ref>
     Normal<Float, ref> halfVector(Normal<Float, ref> a, Normal<Float, ref> b) {
         return Normal<Float, ref>{ Vector<Dimensionless<Float>, ref>{ a.x + b.x, a.y + b.y, a.z + b.z } };
@@ -279,6 +274,11 @@ namespace Piper {
     template <typename Float, FOR ref>
     Dimensionless<Float> cosTheta(Normal<Float, ref> a) {
         return a.z;
+    }
+
+    template <typename T, FOR ref>
+    auto normalize(Vector<T, ref> v) {
+        return Normal<typename T::FT, ref>{ v };
     }
 
     // TODO:Quaternion

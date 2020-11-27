@@ -47,7 +47,8 @@ namespace Piper {
             payload.res = res.data();
 
             for(uint32_t i = 0; i < mSample; ++i) {
-                tracer.trace(pipeline, RenderRECT{ 0, 0, width, height }, packSBTPayload(context().getAllocator(), payload));
+                tracer.trace(pipeline, RenderRECT{ 0, 0, width, height }, packSBTPayload(context().getAllocator(), payload), i);
+                printf("progress %d\n", i);
             }
 
             // auto bufferCPU = buffer->download();

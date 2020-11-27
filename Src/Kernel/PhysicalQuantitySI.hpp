@@ -77,6 +77,10 @@ namespace Piper {
 
     template <typename T>
     using Inverse = typename InverseImpl<T>::Type;
+    template <typename T>
+    constexpr auto inverse(T x) {
+        return Inverse<T>{ static_cast<typename T::FT>(1.0) / x.val };
+    }
 
     namespace detail {
         template <typename... T>
@@ -145,6 +149,16 @@ namespace Piper {
     template <typename Float>
     using Radian = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 1, 0>;
 
+    template <typename T>
+    auto cos(Radian<T> x) {
+        return Dimensionless<T>{ std::cos(x.val) };
+    }
+
+    template <typename T>
+    auto sin(Radian<T> x) {
+        return Dimensionless<T>{ std::sin(x.val) };
+    }
+
     template <typename Float>
     using SolidAngle = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 0, 1>;
 
@@ -204,10 +218,10 @@ namespace Piper {
         constexpr Ratio<LuminousFlux<Float>, Power<Float>> Kcd = static_cast<Float>(683);
 
         template <typename Float>
-        constexpr Float pi = Float{ static_cast<typename Float::FT>(3.1415926535897932384626433832795) };
+        constexpr Radian<Float> pi = Radian<Float>{ static_cast<Float>(3.1415926535897932384626433832795) };
 
         template <typename Float>
-        constexpr Float areaOfSphere = Float{ static_cast<typename Float::FT>(12.566370614359172953850573533118) };
+        constexpr SolidAngle<Float> areaOfSphere = SolidAngle<Float>{ static_cast<Float>(12.566370614359172953850573533118) };
 
     }  // namespace Constants
 

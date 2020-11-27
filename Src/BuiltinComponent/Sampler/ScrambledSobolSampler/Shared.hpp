@@ -15,19 +15,9 @@
 */
 
 #pragma once
-#include "Tracer.hpp"
+#include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct SamplerProgram final {
-        SBTPayload payload;
-        SharedPtr<RTProgram> sample;
-        uint32_t maxDimension;
-    };
-
-    class Sampler : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Sampler, Object)
-        virtual ~Sampler() = default;
-        virtual SamplerProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
+    struct Data final {
     };
 }  // namespace Piper
