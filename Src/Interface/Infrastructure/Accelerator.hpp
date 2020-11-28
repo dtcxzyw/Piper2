@@ -41,7 +41,8 @@ namespace Piper {
 
     public:
         Resource(PiperContext& context, const ResourceHandle handle) : Object(context), mHandle(handle) {}
-        ResourceHandle getHandle() const noexcept {
+
+        [[nodiscard]] ResourceHandle getHandle() const noexcept {
             return mHandle;
         }
         virtual ~Resource() = default;
@@ -86,7 +87,7 @@ namespace Piper {
         template <typename T>
         DataHolder(SharedPtr<T> holder, void* ptr) : mHolder(std::move(holder)), mPtr(ptr) {}
 
-        void* get() const noexcept {
+        [[nodiscard]] void* get() const noexcept {
             return mPtr;
         }
     };
@@ -95,13 +96,13 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Buffer, Object);
         virtual ~Buffer() = default;
-        virtual size_t size() const noexcept = 0;
+        [[nodiscard]] virtual size_t size() const noexcept = 0;
         virtual void upload(Future<DataHolder> data) = 0;
         // TODO:provide destination
-        virtual Future<DynamicArray<std::byte>> download() const = 0;
+        [[nodiscard]] virtual Future<DynamicArray<std::byte>> download() const = 0;
         virtual void reset() = 0;
         // TODO:immutable access limitation?
-        virtual SharedPtr<Resource> ref() const = 0;
+        [[nodiscard]] virtual SharedPtr<Resource> ref() const = 0;
     };
 
     struct ExtraInputResource {
@@ -127,9 +128,9 @@ namespace Piper {
     // TODO:compiled kernel cache
     class Accelerator : public Object {
     private:
-        virtual SharedPtr<Payload> createPayloadImpl() const = 0;
+        [[nodiscard]] virtual SharedPtr<Payload> createPayloadImpl() const = 0;
 
-        void append(const SharedPtr<Payload>&) const {}
+        static void append(const SharedPtr<Payload>&) {}
 
         template <typename First, typename... Args>
         auto append(const SharedPtr<Payload>& payload, const First& first, const Args&... args) const
@@ -170,8 +171,8 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Accelerator, Object);
         virtual ~Accelerator() = default;
 
-        virtual Span<const CString> getSupportedLinkableFormat() const = 0;
-        virtual SharedPtr<ResourceBinding> createResourceBinding() const = 0;
+        [[nodiscard]] virtual Span<const CString> getSupportedLinkableFormat() const = 0;
+        [[nodiscard]] virtual SharedPtr<ResourceBinding> createResourceBinding() const = 0;
 
         template <typename... Args>
         SharedPtr<Payload> createPayload(const Args&... args) const {
@@ -180,8 +181,8 @@ namespace Piper {
             return res;
         }
 
-        // TODO:Resource Name
-        virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
+        // TODO:Resource name for debug
+        [[nodiscard]] virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
         virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<LinkableProgram>>& linkable,
                                                                  const String& entry) = 0;
         virtual Future<void> runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,

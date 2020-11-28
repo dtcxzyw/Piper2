@@ -18,6 +18,7 @@
 #include "../STL/SharedPtr.hpp"
 #include "../STL/UniquePtr.hpp"
 // forward declaration
+// ReSharper disable once CppUnusedIncludeDirective
 #include "Forward.hpp"
 
 namespace Piper {
@@ -28,6 +29,7 @@ namespace Piper {
         Uncopyable(Uncopyable&& rhs) = default;
         Uncopyable& operator=(const Uncopyable& rhs) = delete;
         Uncopyable& operator=(Uncopyable&& rhs) = default;
+        ~Uncopyable() = default;
     };
 
     class Unmovable {
@@ -38,13 +40,14 @@ namespace Piper {
     class PiperContext;
     class Allocator;
 
-    class Object : private Unmovable {
+    class Object : private Unmovable {  // NOLINT(cppcoreguidelines-special-member-functions)
     private:
         PiperContext& mContext;
 
     public:
         explicit Object(PiperContext& context) noexcept : mContext(context) {}
-        PiperContext& context() const noexcept {
+
+        [[nodiscard]] PiperContext& context() const noexcept {
             return mContext;
         }
         virtual ~Object() = default;
@@ -55,6 +58,7 @@ namespace Piper {
 
     template <typename T, typename... Args>
     auto makeSharedObject(PiperContext& context, Args&&... args) {
+        // ReSharper disable once CppClassIsIncomplete
         auto& allocator = context.getAllocator();
         return makeSharedPtr<T>(allocator, context, std::forward<Args>(args)...);
     }
@@ -62,8 +66,9 @@ namespace Piper {
     using UniqueObject = UniquePtr<T, DefaultDeleter<Object>>;
     template <typename Base, typename T, typename... Args>
     auto makeUniqueObject(PiperContext& context, Args&&... args) {
+        // ReSharper disable once CppClassIsIncomplete
         STLAllocator allocator = context.getAllocator();
-        auto ptr = reinterpret_cast<T*>(allocator.allocate(sizeof(T)));
+        auto ptr = static_cast<T*>(allocator.allocate(sizeof(T)));
         new(ptr) T(context, std::forward<Args>(args)...);
         return UniqueObject<Base>{ ptr, DefaultDeleter<Object>{ allocator } };
     }

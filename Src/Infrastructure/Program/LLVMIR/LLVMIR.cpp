@@ -33,15 +33,15 @@
 //#include <llvm/IR/PassManager.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Linker/Linker.h>
+#include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #pragma warning(pop)
-#include <llvm/IR/Verifier.h>
-#include <llvm/Support/ManagedStatic.h>
 #include <mutex>
 #include <new>
 #include <utility>
@@ -53,16 +53,18 @@ namespace Piper {
 
     public:
         explicit LLVMStream(DynamicArray<std::byte>& data) : raw_pwrite_stream(true), mData(data) {}
-        void pwrite_impl(const char* ptr, size_t size, uint64_t offset) override {
+        void pwrite_impl(const char* ptr, const size_t size, const uint64_t offset) override {
             if(offset != mData.size())
                 throw;
             write_impl(ptr, size);
         }
-        void write_impl(const char* ptr, size_t size) override {
-            auto beg = reinterpret_cast<const std::byte*>(ptr), end = beg + size;
+        void write_impl(const char* ptr, const size_t size) override {
+            const auto* beg = reinterpret_cast<const std::byte*>(ptr);
+            const auto* end = beg + size;
             mData.insert(mData.cend(), beg, end);
         }
-        uint64_t current_pos() const override {
+
+        [[nodiscard]] uint64_t current_pos() const override {
             return mData.size();
         }
     };
@@ -70,6 +72,7 @@ namespace Piper {
     static void verifyLLVMModule(PiperContext& context, llvm::Module& module) {
         std::string output;
         llvm::raw_string_ostream out(output);
+        // ReSharper disable once CppRedundantQualifier
         if(llvm::verifyModule(module, &out)) {
             out.flush();
             context.getErrorHandler().raiseException(("Bad module:" + output).c_str(), PIPER_SOURCE_LOCATION());
@@ -83,10 +86,11 @@ namespace Piper {
         mutable std::mutex mMutex;
 
     public:
-        LLVMIR(PiperContext& context, SharedPtr<llvm::LLVMContext> llvmctx, std::unique_ptr<llvm::Module> module)
-            : PITU(context), mContext(std::move(llvmctx)), mModule(std::move(module)) {}
+        LLVMIR(PiperContext& context, SharedPtr<llvm::LLVMContext> llvmCtx, std::unique_ptr<llvm::Module> module)
+            : PITU(context), mContext(std::move(llvmCtx)), mModule(std::move(module)) {}
         // TODO:reduce clone
         std::unique_ptr<llvm::Module> cloneModule() const {
+            // ReSharper disable once CppRedundantQualifier
             return llvm::CloneModule(*mModule);
         }
         String humanReadable() const override {
@@ -116,14 +120,14 @@ namespace Piper {
                         scheduler.value(cloneModule()));
                 }
                 std::string error;
-                auto target = llvm::TargetRegistry::lookupTarget(format, error);
+                const auto target = llvm::TargetRegistry::lookupTarget(format, error);
                 if(target) {
                     return scheduler.spawn(
                         [target, format, ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
                             auto stage = ctx->getErrorHandler().enterStageStatic("generate linkable", PIPER_SOURCE_LOCATION());
                             // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
-                            auto cpu = "generic";
-                            auto features = "";
+                            const auto* cpu = "generic";
+                            const auto* features = "";
 
                             llvm::TargetOptions opt;
                             auto RM = llvm::Optional<llvm::Reloc::Model>();
@@ -145,8 +149,12 @@ namespace Piper {
                         scheduler.value(cloneModule()));
                 }
             }
-            // TODO:llvm::TargetRegistry::printRegisteredTargetsForVersion();
-            context().getErrorHandler().raiseException("No supported linkable program format", PIPER_SOURCE_LOCATION());
+            std::string out;
+            llvm::raw_string_ostream output(out);
+            llvm::TargetRegistry::printRegisteredTargetsForVersion(output);
+            output.flush();
+            context().getErrorHandler().raiseException(
+                ("No supported linkable program format.Only target " + out + " are supported.").c_str(), PIPER_SOURCE_LOCATION());
         }
     };
 
@@ -157,33 +165,34 @@ namespace Piper {
     public:
         explicit LLVMIRManager(PiperContext& context)
             : PITUManager(context), mContext(makeSharedPtr<llvm::LLVMContext>(context.getAllocator())) {}
-        Future<SharedPtr<PITU>> loadPITU(const String& path) const override {
-            return context().getScheduler().spawn([ctx = &context(), path, llvmctx = mContext] {
+        [[nodiscard]] Future<SharedPtr<PITU>> loadPITU(const String& path) const override {
+            return context().getScheduler().spawn([ctx = &context(), path, llvmCtx = mContext] {
                 auto stage = ctx->getErrorHandler().enterStage("load PITU " + path, PIPER_SOURCE_LOCATION());
-                auto file = ctx->getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
-                auto map = file->map(0, file->size());
-                auto span = map->get();
-                auto beg = reinterpret_cast<uint8_t*>(span.data()), end = beg + span.size();
-                stage.switchToStatic("parse LLVM Bitcode", PIPER_SOURCE_LOCATION());
+                const auto file = ctx->getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
+                const auto map = file->map(0, file->size());
+                const auto span = map->get();
+                const auto beg = reinterpret_cast<uint8_t*>(span.data());
+                const auto end = beg + span.size();
+                stage.switchToStatic("parse LLVM bitcode", PIPER_SOURCE_LOCATION());
                 auto res = llvm::parseBitcodeFile(
-                    llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{ beg, end }), "bitcode data" }, *llvmctx);
+                    llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{ beg, end }), "llvm bitcode data" }, *llvmCtx);
                 if(res)
-                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmctx, std::move(res.get())));
-                auto error = toString(res.takeError());
+                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmCtx, std::move(res.get())));
+                const auto error = toString(res.takeError());
                 ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
             });
         }
-        Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
+        [[nodiscard]] Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
             return context().getScheduler().spawn(
-                [ctx = &context(), llvmctx = mContext](const Future<DynamicArray<SharedPtr<PITU>>>& pitus) {
+                [ctx = &context(), llvmCtx = mContext](const Future<DynamicArray<SharedPtr<PITU>>>& modules) {
                     auto stage = ctx->getErrorHandler().enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
 
                     // TODO:module ID param
-                    auto module = std::make_unique<llvm::Module>("merged_module", *llvmctx);
+                    auto module = std::make_unique<llvm::Module>("merged_module", *llvmCtx);
                     llvm::Linker linker(*module);
 
-                    for(auto& mod : *pitus) {
-                        auto ir = dynamic_cast<const LLVMIR*>(mod.get());
+                    for(auto& mod : *modules) {
+                        const auto* ir = dynamic_cast<const LLVMIR*>(mod.get());
                         if(!ir)
                             ctx->getErrorHandler().raiseException("Unsupported PITU", PIPER_SOURCE_LOCATION());
                         linker.linkInModule(ir->cloneModule());
@@ -191,7 +200,7 @@ namespace Piper {
 
                     verifyLLVMModule(*ctx, *module);
 
-                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmctx, std::move(module)));
+                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmCtx, std::move(module)));
                 },
                 pitus);
         }
@@ -200,12 +209,12 @@ namespace Piper {
     public:
         explicit ModuleImpl(PiperContext& context, const char*) : Module(context) {
             if(!llvm::llvm_is_multithreaded())
-                throw;
-            // TODO:reduce
-            llvm::InitializeAllTargetInfos();
+                context.getErrorHandler().raiseException("LLVM should be compiled with multi-threading flag.",
+                                                         PIPER_SOURCE_LOCATION());
+            // llvm::InitializeAllTargetInfos();
             llvm::InitializeAllTargets();
-            llvm::InitializeAllTargetMCs();
-            llvm::InitializeAllAsmParsers();
+            // llvm::InitializeAllTargetMCs();
+            // llvm::InitializeAllAsmParsers();
             llvm::InitializeAllAsmPrinters();
         }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
@@ -214,9 +223,9 @@ namespace Piper {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<LLVMIRManager>(context())));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
-        ~ModuleImpl() noexcept {
+        ~ModuleImpl() noexcept override {
             llvm::llvm_shutdown();
         }
     };

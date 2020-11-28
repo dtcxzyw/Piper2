@@ -24,13 +24,12 @@
 #include <new>
 #include <nlohmann/json.hpp>
 
-// TODO:use STLAllocator/String
-using Json = nlohmann::json;
-
 namespace Piper {
+    // TODO:use STLAllocator/String,but nlohmann::basic_json doesn't support custom stateful allocator.
+    using Json = nlohmann::json;
     class JsonSerializer final : public ConfigSerializer {
     private:
-        SharedPtr<Config> buildFromJson(const Json& json) const {
+        [[nodiscard]] SharedPtr<Config> buildFromJson(const Json& json) const {
             switch(json.type()) {
                 case Json::value_t::null:
                     return makeSharedObject<Config>(context(), MonoState{});
@@ -51,26 +50,28 @@ namespace Piper {
                     return makeSharedObject<Config>(context(), std::move(elements));
                 }
                 case Json::value_t::string: {
-                    auto str = json.get<std::string>();
+                    const auto str = json.get<std::string>();
                     return makeSharedObject<Config>(context(), StringView{ str.c_str(), str.size() });
                 }
-                case Json::value_t::boolean:
+                case Json::value_t::boolean: {
                     return makeSharedObject<Config>(context(), json.get<bool>());
-                case Json::value_t::number_integer:
+                }
+                case Json::value_t::number_integer: {
                     return makeSharedObject<Config>(context(), json.get<intmax_t>());
-                case Json::value_t::number_unsigned:
+                }
+                case Json::value_t::number_unsigned: {
                     return makeSharedObject<Config>(context(), json.get<uintmax_t>());
-                case Json::value_t::number_float:
+                }
+                case Json::value_t::number_float: {
                     return makeSharedObject<Config>(context(), json.get<double>());
-                case Json::value_t::binary:
-                    context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
-                case Json::value_t::discarded:
+                }
+                case nlohmann::detail::value_t::binary:
+                case nlohmann::detail::value_t::discarded:
                     context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             }
-            // TODO:disable warining C4715
         }
 
-        Json buildJson(const SharedPtr<Config>& config) const {
+        [[nodiscard]] Json buildJson(const SharedPtr<Config>& config) const {
             switch(config->type()) {
                 case NodeType::FloatingPoint:
                     return config->get<double>();
@@ -86,40 +87,40 @@ namespace Piper {
                     Json res;
                     for(auto&& element : config->viewAsArray())
                         res.push_back(buildJson(element));
-                    return std::move(res);
+                    return res;
                 }
                 case NodeType::Object: {
                     Json res;
                     for(auto&& attr : config->viewAsObject())
                         res[attr.first.c_str()] = buildJson(attr.second);
-                    return std::move(res);
+                    return res;
                 }
                 case NodeType::Null:
                     return {};
             }
-            // TODO:disable warning C4715
         }
 
     public:
         PIPER_INTERFACE_CONSTRUCT(JsonSerializer, ConfigSerializer)
-        SharedPtr<Config> deserialize(const String& path) const override {
+        [[nodiscard]] SharedPtr<Config> deserialize(const String& path) const override {
             auto stage = context().getErrorHandler().enterStage("parse configuration " + path, PIPER_SOURCE_LOCATION());
-            auto file = context().getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
-            auto map = file->map(0, file->size());
-            auto span = map->get();
-            auto beg = reinterpret_cast<char8_t*>(span.data()), end = beg + span.size();
-            // TODO:parser callback
-            auto json = Json::parse(beg, end);
+            const auto file = context().getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
+            const auto map = file->map(0, file->size());
+            const auto span = map->get();
+            const auto* beg = reinterpret_cast<char8_t*>(span.data());
+            const auto* end = beg + span.size();
+            const auto json = Json::parse(beg, end);
             stage.switchToStatic("build from json", PIPER_SOURCE_LOCATION());
             return buildFromJson(json);
         }
         void serialize(const SharedPtr<Config>& config, const String& path) const override {
             auto stage = context().getErrorHandler().enterStageStatic("build json from configuration", PIPER_SOURCE_LOCATION());
-            auto content = buildJson(config).dump();
+            const auto content = buildJson(config).dump();
             stage.switchTo("output json to " + path, PIPER_SOURCE_LOCATION());
-            auto file = context().getFileSystem().mapFile(path, FileAccessMode::Write, FileCacheHint::Sequential, content.size());
-            auto map = file->map(0, file->size());
-            auto span = map->get();
+            const auto file =
+                context().getFileSystem().mapFile(path, FileAccessMode::Write, FileCacheHint::Sequential, content.size());
+            const auto map = file->map(0, file->size());
+            const auto span = map->get();
             memcpy(span.data(), content.c_str(), content.size());
         }
     };
@@ -132,7 +133,7 @@ namespace Piper {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<JsonSerializer>(context())));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

@@ -39,7 +39,7 @@ namespace Piper {
                                                          { hashStringView("Info"), LogLevel::Info },
                                                          { hashStringView("Warning"), LogLevel::Warning } };
             auto&& settings = config->viewAsObject();
-            auto iter = settings.find(String("level", context.getAllocator()));
+            const auto iter = settings.find(String("level", context.getAllocator()));
             if(iter != settings.cend()) {
                 for(auto&& level : iter->second->viewAsArray()) {
                     auto key = hashStringView(level->get<String>());
@@ -54,14 +54,15 @@ namespace Piper {
             // TODO:format
             // TODO:color
         }
-        bool allow(const LogLevel level) const noexcept override {
+        [[nodiscard]] bool allow(const LogLevel level) const noexcept override {
             return static_cast<uint32_t>(mLevel) & static_cast<uint32_t>(level);
         }
-        void record(const LogLevel level, const StringView& message, const SourceLocation& sourceLocation) noexcept {
+        [[nodiscard]] void record(const LogLevel level, const StringView& message,
+                                  const SourceLocation& sourceLocation) noexcept override {
             if(!allow(level))
                 return;
-            auto castLevel = [](const LogLevel level) -> spdlog::level::level_enum {
-                switch(level) {
+            auto castLevel = [](const LogLevel lv) -> spdlog::level::level_enum {
+                switch(lv) {
                     case LogLevel::Info:
                         return spdlog::level::info;
                     case LogLevel::Warning:
@@ -75,10 +76,10 @@ namespace Piper {
                 }
                 throw;
             };
-            spdlog::source_loc loc{ sourceLocation.file, sourceLocation.line, sourceLocation.func };
+            const auto loc = spdlog::source_loc{ sourceLocation.file, sourceLocation.line, sourceLocation.func };
             spdlog::log(loc, castLevel(level), std::string_view{ message.data(), message.size() });
         }
-        void flush() noexcept {
+        void flush() noexcept override {
             spdlog::default_logger()->flush();
         }
     };
@@ -86,12 +87,12 @@ namespace Piper {
     public:
         ModuleImpl(PiperContext& context, const char*) : Module(context) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
-                                                 const Future<void>& module) override {
+                                              const Future<void>& module) override {
             if(classID == "Spdlog") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<Spdlog>(context(), config)));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

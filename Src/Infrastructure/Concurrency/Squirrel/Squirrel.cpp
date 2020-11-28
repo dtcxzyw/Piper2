@@ -30,7 +30,7 @@ namespace Piper {
     struct SharedContext;
     struct DelayedTask;
 
-    void decreaseDepCount(SharedContext& context, DelayedTask* task);
+    static void decreaseDepCount(SharedContext& context, DelayedTask* task);
 
     class FutureStorage final : public FutureImpl {
     private:
@@ -58,7 +58,9 @@ namespace Piper {
             return !mRemain;
         }
         void wait() const override {
-            // TODO: warning
+            auto& logger = context().getLogger();
+            if(logger.allow(LogLevel::Warning))
+                logger.record(LogLevel::Warning, "Busy waiting of future may cause bad performance.", PIPER_SOURCE_LOCATION());
             while(mRemain)
                 std::this_thread::yield();
         }
@@ -87,9 +89,9 @@ namespace Piper {
             mSuccessor.clear();
             mSuccessor.shrink_to_fit();
         }
-        ~FutureStorage() noexcept {
+        ~FutureStorage() noexcept override {
             if(mRemain)
-                throw;
+                context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
         }
     };
 
@@ -135,7 +137,7 @@ namespace Piper {
 
     static void readyToRun(SharedContext& context, Task task) {
         std::lock_guard<std::recursive_mutex> guard{ context.todoMutex };
-        auto idx = task.work.index();
+        const auto idx = task.work.index();
         if(idx == 1 || get<Optional<Closure<>>>(task.work).has_value()) {
             context.todo.push_back(std::move(task));
             if(idx)
@@ -148,7 +150,6 @@ namespace Piper {
         }
     }
 
-    // TODO:std::move task
     static void decreaseDepCount(SharedContext& context, DelayedTask* task) {
         if(--task->depCount)
             return;
@@ -184,32 +185,28 @@ namespace Piper {
                     auto& task = context.todo.back();
                     SharedPtr<FutureStorage> future;
                     auto acquireWork = [&] {
-                        switch(task.work.index()) {
-                            case 0: {
-                                auto work = Work{ std::move(get<Optional<Closure<>>>(task.work).value()) };
+                        if(task.work.index()) {
+                            auto& ref = get<Pair<SharedPtr<Closure<uint32_t>>, uint32_t>>(task.work);
+                            --ref.second;
+                            if(ref.second == 0) {
+                                auto val = std::move(ref);
                                 future = std::move(task.future);
                                 context.todo.pop_back();
-                                return std::move(work);
+                                return Work{ std::move(val) };
                             }
-                            case 1: {
-                                auto& ref = get<Pair<SharedPtr<Closure<uint32_t>>, uint32_t>>(task.work);
-                                --ref.second;
-                                if(ref.second == 0) {
-                                    auto val = std::move(ref);
-                                    future = std::move(task.future);
-                                    context.todo.pop_back();
-                                    return Work{ std::move(val) };
-                                }
-                                future = task.future;
-                                return Work{ ref };
-                            }
-                            default:
-                                break;
+                            future = task.future;
+                            return Work{ ref };
+                        } else {
+                            auto work = Work{ std::move(get<Optional<Closure<>>>(task.work).value()) };
+                            future = std::move(task.future);
+                            context.todo.pop_back();
+                            return std::move(work);
                         }
                     };
                     auto work = acquireWork();
                     guard.unlock();
 
+                    // ReSharper disable once CppDefaultCaseNotHandledInSwitchStatement
                     switch(work.index()) {
                         case 0: {
                             get<Closure<>>(work)();
@@ -218,8 +215,6 @@ namespace Piper {
                             auto& ref = get<Pair<SharedPtr<Closure<uint32_t>>, uint32_t>>(work);
                             (*ref.first)(ref.second);
                         } break;
-                        default:
-                            break;
                     }
 
                     future->finishOne(context);
@@ -232,6 +227,7 @@ namespace Piper {
                     // Another worker is checking futures
                     if(!guard.owns_lock())
                         break;
+                    // ReSharper disable once CppRedundantQualifier
                     eastl::erase_if(context.checkExternalFuture, [&context](const Pair<FutureImpl*, ExternalFuture>& val) {
                         auto&& future = val.second;
                         if(!future.ref->ready())
@@ -261,7 +257,7 @@ namespace Piper {
                 // Perhaps future will call finishExternal before the task is complete,so we should increase depCount before
                 // future->readyOrNotify
                 ++delay->depCount;
-                if(auto future = dynamic_cast<FutureStorage*>(dep.get())) {
+                if(auto* future = dynamic_cast<FutureStorage*>(dep.get())) {
                     if(future->readyOrNotify(delay))
                         --delay->depCount;
                     else {
@@ -270,7 +266,7 @@ namespace Piper {
                     }
                 } else {
                     auto appendDep = [&](std::mutex& lock, UMap<FutureImpl*, ExternalFuture>& cont) {
-                        auto key = dep.get();
+                        auto* key = dep.get();
                         std::lock_guard<std::mutex> guard{ lock };
                         auto iter = cont.find(key);
                         if(iter == cont.cend())
@@ -318,7 +314,8 @@ namespace Piper {
             result->setRemain(blockCount);
             auto closure = makeSharedObject<Closure<uint32_t>>(context(), context().getAllocator(),
                                                                [call = std::move(func), chunkSize, n](const uint32_t idx) {
-                                                                   auto beg = idx * chunkSize, end = std::min(beg + chunkSize, n);
+                                                                   auto beg = idx * chunkSize;
+                                                                   const auto end = std::min(beg + chunkSize, n);
                                                                    while(beg < end) {
                                                                        call(beg);
                                                                        ++beg;
@@ -346,7 +343,7 @@ namespace Piper {
             for(auto&& successor : future.successor)
                 decreaseDepCount(mContext, successor);
         }
-        ~SchedulerImpl() noexcept {
+        ~SchedulerImpl() noexcept override {
             mContext.run = false;
             mContext.cv.notify_all();
             for(auto&& worker : mThreadPool)
@@ -363,7 +360,7 @@ namespace Piper {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<SchedulerImpl>(context())));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

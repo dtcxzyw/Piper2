@@ -16,13 +16,13 @@
 
 #pragma once
 #include "../../PiperContext.hpp"
+#include "../../STL/DynamicArray.hpp"
 #include "../../STL/GSL.hpp"
 #include "../../STL/Pair.hpp"
 #include "../../STL/String.hpp"
 #include "../../STL/StringView.hpp"
 #include "../../STL/UMap.hpp"
 #include "../../STL/Variant.hpp"
-#include "../../STL/DynamicArray.hpp"
 #include "../Object.hpp"
 
 namespace Piper {
@@ -65,18 +65,18 @@ namespace Piper {
                DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>>>* unused = nullptr)
             : Object(context), mValue(static_cast<intmax_t>(value)) {}
 
-        //TODO:reduce copy
+        // TODO:reduce copy
         template <typename T>
         T get() const {
             return Piper::get<T>(mValue);
         }
 
         // TODO:move to core
-        const UMap<String, SharedPtr<Config>>& viewAsObject() const {
+        [[nodiscard]] const UMap<String, SharedPtr<Config>>& viewAsObject() const {
             return Piper::get<UMap<String, SharedPtr<Config>>>(mValue);
         }
 
-        const DynamicArray<SharedPtr<Config>>& viewAsArray() const {
+        [[nodiscard]] const DynamicArray<SharedPtr<Config>>& viewAsArray() const {
             return Piper::get<DynamicArray<SharedPtr<Config>>>(mValue);
         };
 

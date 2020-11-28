@@ -57,7 +57,7 @@ namespace Piper {
         MemoryArena(Allocator& allocator, size_t blockSize);
         Ptr allocRaw(const size_t size, const size_t align = alignof(max_align_t));
         template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
-        T* alloc(size_t size = 1, size_t align = alignof(T)) {
+        T* alloc(const size_t size = 1, const size_t align = alignof(T)) {
             return reinterpret_cast<T*>(allocRaw(sizeof(T) * size, align));
         }
         ~MemoryArena();

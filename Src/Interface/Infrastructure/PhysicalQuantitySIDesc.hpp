@@ -34,8 +34,8 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(UnitManager, Object);
         virtual ~UnitManager() = default;
         virtual void addTranslation(const PhysicalQuantitySIDesc& desc, const StringView& name) = 0;  // prefixPower==0
-        virtual String serialize(const PhysicalQuantitySIDesc& desc, const bool forceUseSIUnit) const = 0;
-        virtual PhysicalQuantitySIDesc deserialize(const StringView& name) const = 0;
+        [[nodiscard]] virtual String serialize(const PhysicalQuantitySIDesc& desc, const bool forceUseSIUnit) const = 0;
+        [[nodiscard]] virtual PhysicalQuantitySIDesc deserialize(const StringView& name) const = 0;
     };
 
 }  // namespace Piper

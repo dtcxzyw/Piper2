@@ -19,37 +19,36 @@
 #include "../Infrastructure/Config.hpp"
 
 namespace Piper {
-    // TODO:remove narrow convert
     template <typename Float>
     Vector2<Float> parseVector2(const SharedPtr<Config>& config) {
-        auto& arr = config->viewAsArray();
+        const auto& arr = config->viewAsArray();
         if(arr.size() != 2)
-            throw;
+            config->context().getErrorHandler().raiseException("Dimension must be 2", PIPER_SOURCE_LOCATION());
         return { Float{ static_cast<float>(arr[0]->get<double>()) }, Float{ static_cast<float>(arr[1]->get<double>()) } };
     }
 
     template <typename Float, FOR ref>
     Vector<Float, ref> parseVector(const SharedPtr<Config>& config) {
-        auto& arr = config->viewAsArray();
+        const auto& arr = config->viewAsArray();
         if(arr.size() != 3)
-            throw;
+            config->context().getErrorHandler().raiseException("Dimension must be 3", PIPER_SOURCE_LOCATION());
         return { Float{ static_cast<float>(arr[0]->get<double>()) }, Float{ static_cast<float>(arr[1]->get<double>()) },
                  Float{ static_cast<float>(arr[2]->get<double>()) } };
     }
     template <typename Float, FOR ref>
     Point<Float, ref> parsePoint(const SharedPtr<Config>& config) {
-        auto& arr = config->viewAsArray();
+        const auto& arr = config->viewAsArray();
         if(arr.size() != 3)
-            throw;
+            config->context().getErrorHandler().raiseException("Dimension must be 3", PIPER_SOURCE_LOCATION());
         return Point<Float, ref>{ Float{ static_cast<float>(arr[0]->get<double>()) },
                                   Float{ static_cast<float>(arr[1]->get<double>()) },
                                   Float{ static_cast<float>(arr[2]->get<double>()) } };
     }
     template <typename Float>
     Spectrum<Float> parseSpectrum(const SharedPtr<Config>& config) {
-        auto& arr = config->viewAsArray();
+        const auto& arr = config->viewAsArray();
         if(arr.size() != 3)
-            throw;
+            config->context().getErrorHandler().raiseException("Dimension must be 3", PIPER_SOURCE_LOCATION());
         return Spectrum<Float>{ Float{ static_cast<float>(arr[0]->get<double>()) },
                                 Float{ static_cast<float>(arr[1]->get<double>()) },
                                 Float{ static_cast<float>(arr[2]->get<double>()) } };

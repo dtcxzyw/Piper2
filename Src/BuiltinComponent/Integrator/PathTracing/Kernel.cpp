@@ -18,7 +18,7 @@
 
 namespace Piper {
     extern "C" void PIPER_CC trace(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample) {
-        auto data = reinterpret_cast<const Data*>(SBTData);
+        const auto* data = static_cast<const Data*>(SBTData);
 
         Spectrum<Dimensionless<float>> pf{ { 1.0f }, { 1.0f }, { 1.0f } };
         sample = { { 0.0f }, { 0.0f }, { 0.0f } };

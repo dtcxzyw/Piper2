@@ -27,21 +27,21 @@ namespace Piper {
     };
 
     // PlatformIndependentTranslationUnit
-    class PITU : public Object {
+    class PITU : public Object {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         PIPER_INTERFACE_CONSTRUCT(PITU, Object)
         virtual ~PITU() = default;
-        virtual Future<LinkableProgram> generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
-        virtual String humanReadable() const = 0;
+        [[nodiscard]] virtual Future<LinkableProgram> generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
+        [[nodiscard]] virtual String humanReadable() const = 0;
     };
 
     // TODO:Optimize
     // TODO:PPL
-    class PITUManager : public Object {
+    class PITUManager : public Object {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         PIPER_INTERFACE_CONSTRUCT(PITUManager, Object)
         virtual ~PITUManager() = default;
-        virtual Future<SharedPtr<PITU>> loadPITU(const String& path) const = 0;
-        virtual Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const = 0;
+        [[nodiscard]] virtual Future<SharedPtr<PITU>> loadPITU(const String& path) const = 0;
+        [[nodiscard]] virtual Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const = 0;
     };
 }  // namespace Piper

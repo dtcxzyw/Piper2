@@ -16,10 +16,11 @@
 
 #pragma once
 #include "../../PiperContext.hpp"
+#include "../../STL/DynamicArray.hpp"
 #include "../../STL/Optional.hpp"
 #include "../../STL/String.hpp"
 #include "../../STL/UniquePtr.hpp"
-#include "../../STL/DynamicArray.hpp"
+#include "ErrorHandler.hpp"
 
 #include <future>
 
@@ -29,11 +30,11 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(FutureImpl, Object)
         virtual ~FutureImpl() = default;
-        virtual bool fastReady() const noexcept = 0;
-        virtual bool ready() const noexcept = 0;
+        [[nodiscard]] virtual bool fastReady() const noexcept = 0;
+        [[nodiscard]] virtual bool ready() const noexcept = 0;
         virtual void wait() const = 0;
-        virtual const void* storage() const = 0;
-        virtual bool supportNotify() const noexcept {
+        [[nodiscard]] virtual const void* storage() const = 0;
+        [[nodiscard]] virtual bool supportNotify() const noexcept {
             return false;
         }
     };
@@ -83,7 +84,7 @@ namespace Piper {
         bool ready() const noexcept {
             if(mReady)
                 return true;
-            auto res = mImpl->ready();
+            const auto res = mImpl->ready();
             if(res)
                 mReady = true;
             return res;
@@ -105,27 +106,27 @@ namespace Piper {
         auto operator->() const {
             if(!ready())
                 throw;
-            return detail::RemovePointer<T>::getPointer(reinterpret_cast<const T*>(mImpl->storage()));
+            return detail::RemovePointer<T>::getPointer(static_cast<const T*>(mImpl->storage()));
         }
 
         auto operator->() {
             if(!ready())
                 throw;
-            return detail::RemovePointer<T>::getPointer(reinterpret_cast<T*>(const_cast<void*>(mImpl->storage())));
+            return detail::RemovePointer<T>::getPointer(static_cast<T*>(const_cast<void*>(mImpl->storage())));
         }
 
         T& get() {
-            return *reinterpret_cast<T*>(const_cast<void*>(mImpl->storage()));
+            return *static_cast<T*>(const_cast<void*>(mImpl->storage()));
         }
 
         const T& get() const {
-            return *reinterpret_cast<const T*>(mImpl->storage());
+            return *static_cast<const T*>(mImpl->storage());
         }
 
         ~Future() noexcept {
             // TODO:formal check
             if(mImpl && mImpl.unique() && !ready()) {
-                throw;
+                mImpl->context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
             }
         }
     };
@@ -192,7 +193,7 @@ namespace Piper {
 
         template <typename Callable>
         Owner<ClosureStorage<Args...>*> alloc(STLAllocator allocator, Callable&& func) {
-            auto ptr = reinterpret_cast<ClosureStorageImpl<Callable, Args...>*>(
+            auto ptr = static_cast<ClosureStorageImpl<Callable, Args...>*>(
                 allocator.allocate(sizeof(ClosureStorageImpl<Callable, Args...>)));
             return new(ptr) ClosureStorageImpl<Callable, Args...>(std::move(func));
         }
@@ -236,6 +237,17 @@ namespace Piper {
             return moveApplyImpl(std::forward<Callable>(func), std::forward<Tuple>(args),
                                  std::make_index_sequence<std::tuple_size_v<std::decay_t<Tuple>>>{});
         }
+
+        template <typename... Args>
+        struct NoArgument final {
+            static constexpr bool value = false;
+        };
+
+        template <>
+        struct NoArgument<> final {
+            static constexpr bool value = true;
+        };
+
     }  // namespace detail
 
     // TODO:support pipe
@@ -249,28 +261,18 @@ namespace Piper {
                                const SharedPtr<FutureImpl>& res) = 0;
         virtual void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
                                      const SharedPtr<FutureImpl>& res) = 0;
-        virtual SharedPtr<FutureImpl> newFutureImpl(const size_t size, const bool ready) = 0;
+        virtual SharedPtr<FutureImpl> newFutureImpl(size_t size, bool ready) = 0;
 
     private:
-        template <typename... Args>
-        struct NoArgument final {
-            static constexpr bool value = false;
-        };
-
-        template <>
-        struct NoArgument<> final {
-            static constexpr bool value = true;
-        };
-
         template <typename ReturnType, typename Callable, typename... Args>
         std::enable_if_t<std::is_void_v<ReturnType>, Future<void>> spawnDispatch(Callable&& callable, Args&&... args) {
             // TODO:std::move dependencies
-            auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
-            auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
+            const auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
+            const auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
 
             // zero argument optimization
-            if constexpr(NoArgument<Args...>::value) {
+            if constexpr(detail::NoArgument<Args...>::value) {
                 spawnImpl(Closure<>{ context(), context().getAllocator(), std::forward<Callable>(callable) }, {}, result);
             } else {
                 spawnImpl(
@@ -298,19 +300,19 @@ namespace Piper {
         std::enable_if_t<!std::is_void_v<ReturnType> && !IsFuture<ReturnType>::value, Future<ReturnType>>
         spawnDispatch(Callable&& callable, Args&&... args) {
             // TODO:std::move dependencies
-            auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
-            auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
+            const auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
+            const auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(sizeof(ReturnType), false);
 
             spawnImpl(Closure<>{ context(), context().getAllocator(),
                                  [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
                                   ptr = result->storage()] {
-                                     new(reinterpret_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(detail::moveApply(
+                                     new(static_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(detail::moveApply(
                                          std::move(call), std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple))));
                                  } },
                       depSpan, result);
 
-            return Future<ReturnType>(result);
+            return Future<ReturnType>{ std::move(result) };
         }
 
     public:
@@ -325,7 +327,8 @@ namespace Piper {
             return Future<StorageType>{ std::move(res) };
         }
 
-        Future<void> ready() {
+        // ReSharper disable once CppMemberFunctionMayBeStatic
+        [[nodiscard]] Future<void> ready() const noexcept {
             return Future<void>(nullptr);
         }
 
@@ -344,7 +347,7 @@ namespace Piper {
                 dep.push_back(future.raw());
             spawnImpl(Closure<>{ context(), context().getAllocator(),
                                  [fs = std::move(futures), ptr = result->storage(), allocator = &context().getAllocator()] {
-                                     auto vec = reinterpret_cast<DynamicArray<T>*>(const_cast<void*>(ptr));
+                                     auto vec = static_cast<DynamicArray<T>*>(const_cast<void*>(ptr));
                                      new(vec) DynamicArray<T>(*allocator);
                                      vec->reserve(fs.size());
                                      for(auto&& future : const_cast<DynamicArray<Future<T>>&>(fs))
@@ -352,7 +355,7 @@ namespace Piper {
                                          vec->emplace_back(std::move(future.get()));
                                  } },
                       Span<const SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
-            return Future<DynamicArray<T>>{ result };
+            return Future<DynamicArray<T>>{ std::move(result) };
         }
 
         // TODO:reduce empty node
@@ -364,19 +367,18 @@ namespace Piper {
             for(auto&& future : futures)
                 dep.push_back(future.raw());
             spawnImpl(Optional<Closure<>>(eastl::nullopt), Span<const SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
-            return Future<void>{ result };
+            return Future<void>{ std::move(result) };
         }
 
-        virtual bool supportNotify() const noexcept {
+        [[nodiscard]] virtual bool supportNotify() const noexcept {
             return false;
         }
         virtual void notify(FutureImpl* event) {}
 
-        // TODO:hint for schedule strategy
         template <typename Callable, typename... Args, typename = std::enable_if_t<IsFuture<std::decay_t<Args>...>::value>>
-        Future<void> parallelFor(uint32_t n, Callable&& callable, Args&&... args) {
-            auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
-            auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
+        Future<void> parallelFor(const uint32_t n, Callable&& callable, Args&&... args) {
+            const auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
+            const auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
 
             // TODO:copy?
@@ -388,9 +390,9 @@ namespace Piper {
                      ptr = result->storage()](uint32_t idx) { std::apply(call, std::tuple_cat(std::make_tuple(idx), tuple)); } },
                 depSpan, result);
 
-            return Future<void>(result);
+            return Future<void>{ std::move(result) };
         }
-        // TODO: reduce
+        // TODO: reduce(ordered/unordered? + associative laws)
     };
 
 }  // namespace Piper

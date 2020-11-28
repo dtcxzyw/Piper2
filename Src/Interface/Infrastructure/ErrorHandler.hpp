@@ -43,6 +43,7 @@ namespace Piper {
 
         // for runtime error
         [[noreturn]] virtual void raiseException(const StringView& message, const SourceLocation& loc) = 0;
+        [[noreturn]] virtual void unresolvedClassID(const StringView& classID, const SourceLocation& loc) = 0;
 
         // for coding error
         // TODO:error information
@@ -65,7 +66,7 @@ namespace Piper {
             return StageGuard{ *this };
         }
         StageGuard enterStageStatic(const CString stage, const SourceLocation& loc) {
-            // TODO:no allocation stroage
+            // TODO:no allocation storage
             enterStageImpl(String(stage, context().getAllocator()), loc);
             return StageGuard{ *this };
         }

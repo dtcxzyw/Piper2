@@ -28,8 +28,8 @@ struct Payload final {
 };
 
 extern "C" void PIPER_CC conv(const uint32_t idx, const Payload* payload) {
-    auto X = reinterpret_cast<const Float*>(payload->pX);
-    auto Y = reinterpret_cast<const Float*>(payload->pY);
-    auto Z = reinterpret_cast<Float*>(payload->pZ);
+    const auto* X = reinterpret_cast<const Float*>(payload->pX);
+    const auto* Y = reinterpret_cast<const Float*>(payload->pY);
+    auto* Z = reinterpret_cast<Float*>(payload->pZ);
     conv(idx, X, Y, Z, payload->width, payload->height, payload->kernelSize);
 }

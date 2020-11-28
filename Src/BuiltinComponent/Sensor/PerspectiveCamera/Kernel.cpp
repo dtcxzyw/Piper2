@@ -18,18 +18,19 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void PIPER_CC rayGen(RestrictedContext* context, const void* SBTData, uint32_t x, uint32_t y, uint32_t w,
-                                    uint32_t h, const SensorNDCAffineTransform& transform, RayInfo& ray, Vector2<float>& point) {
+    extern "C" void PIPER_CC rayGen(RestrictedContext* context, const void* SBTData, const uint32_t x, const uint32_t y,
+                                    const uint32_t w, const uint32_t h, const SensorNDCAffineTransform& transform, RayInfo& ray,
+                                    Vector2<float>& point) {
         point.x = static_cast<float>(x) + piperSample(context);
         point.y = static_cast<float>(y) + piperSample(context);
-        auto data = reinterpret_cast<const PCData*>(SBTData);
-        auto filmHit = data->anchor +
+        const auto* data = static_cast<const PCData*>(SBTData);
+        const auto filmHit = data->anchor +
             data->offX * Dimensionless<float>{ 1.0f - (transform.ox + transform.sx * point.x / static_cast<float>(w)) } +
             data->offY * Dimensionless<float>{ 1.0f - (transform.oy + transform.sy * point.y / static_cast<float>(h)) };
-        auto lensOffset = sampleUniformDisk(Vector2<Dimensionless<float>>{ piperSample(context), piperSample(context) });
-        auto lensHit = data->lensCenter + data->apertureX * lensOffset.x + data->apertureY * lensOffset.y;
-        auto dir = data->lensCenter - filmHit;
-        auto planeOfFocusHit = data->lensCenter + dir * (data->focalDistance / dot(dir, data->forward));
+        const auto lensOffset = sampleUniformDisk(Vector2<Dimensionless<float>>{ { piperSample(context) }, { piperSample(context) } });
+        const auto lensHit = data->lensCenter + data->apertureX * lensOffset.x + data->apertureY * lensOffset.y;
+        const auto dir = data->lensCenter - filmHit;
+        const auto planeOfFocusHit = data->lensCenter + dir * (data->focalDistance / dot(dir, data->forward));
         ray.origin = lensHit;
         ray.direction = normalize(planeOfFocusHit - ray.origin);
         ray.t = 0.0f;  // TODO:motion blur

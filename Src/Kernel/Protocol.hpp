@@ -53,14 +53,18 @@ namespace Piper {
     struct SurfaceIntersectionInfo final {
         Normal<float, FOR::Local> T, B, N;
         Vector2<float> texCoord;
-        Normal<float, FOR::Shading> local2Shading(Normal<float, FOR::Local> v) const noexcept {
-            return { Vector<Dimensionless<float>, FOR::Shading>{ dot(T, v), dot(B, v), dot(N, v) }, Unchecked{} };
+
+        [[nodiscard]] auto local2Shading(Normal<float, FOR::Local> v) const noexcept {
+            return Normal<float, FOR::Shading>{ Vector<Dimensionless<float>, FOR::Shading>{ dot(T, v), dot(B, v), dot(N, v) },
+                                                Unchecked{} };
         }
-        Normal<float, FOR::Local> shading2Local(Normal<float, FOR::Shading> v) const noexcept {
-            return { Vector<Dimensionless<float>, FOR::Local>{ dot(T.x, v.x) + dot(B.x, v.y) + dot(N.x, v.z),
-                                                               dot(T.y, v.x) + dot(B.y, v.y) + dot(N.y, v.z),
-                                                               dot(T.z, v.x) + dot(B.z, v.y) + dot(N.z, v.z) },
-                     Unchecked{} };
+
+        [[nodiscard]] auto shading2Local(Normal<float, FOR::Shading> v) const noexcept {
+            return Normal<float, FOR::Local>{ Vector<Dimensionless<float>, FOR::Local>{
+                                                  dot(T.x, v.x) + dot(B.x, v.y) + dot(N.x, v.z),
+                                                  dot(T.y, v.x) + dot(B.y, v.y) + dot(N.y, v.z),
+                                                  dot(T.z, v.x) + dot(B.z, v.y) + dot(N.z, v.z) },
+                                              Unchecked{} };
         }
     };
 
@@ -151,7 +155,7 @@ namespace Piper {
         TraceKind kind;
         union {
             TraceSurface surface;
-        };
+        } ;
     };
 
     extern "C" {

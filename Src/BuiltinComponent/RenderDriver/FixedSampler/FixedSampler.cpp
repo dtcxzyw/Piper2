@@ -82,7 +82,7 @@ namespace Piper {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<FixedSampler>(context(), mPath, config)));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

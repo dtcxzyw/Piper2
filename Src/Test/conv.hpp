@@ -13,21 +13,23 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-#include <cmath>
+#pragma once
+
 #include <cstdint>
 
 using Float = float;
 
-void conv(const uint32_t idx, const Float* X, const Float* Y, Float* Z, const uint32_t width, const uint32_t height,
-          const uint32_t kernelSize) {
-    int32_t half = kernelSize / 2;
-    int32_t y = idx / width, x = idx % width;
-    Float res = 0.0f;
-    for(int32_t i = 0; i < static_cast<int32_t>(kernelSize); ++i) {
-        int32_t nx = x + i - half;
+inline void conv(const uint32_t idx, const Float* X, const Float* Y, Float* Z, const uint32_t width, const uint32_t height,
+                 const uint32_t kernelSize) {
+    const auto half = kernelSize / 2;
+    const auto y = idx / width;
+    const auto x = idx % width;
+    auto res = 0.0f;
+    for(auto i = 0; i < static_cast<int32_t>(kernelSize); ++i) {
+        const int32_t nx = x + i - half;
         if(nx >= 0 && nx < static_cast<int32_t>(width))
-            for(int32_t j = 0; j < static_cast<int32_t>(kernelSize); ++j) {
-                int32_t ny = y + j - half;
+            for(auto j = 0; j < static_cast<int32_t>(kernelSize); ++j) {
+                const int32_t ny = y + j - half;
                 if(ny >= 0 && ny < static_cast<int32_t>(height)) {
                     res += X[ny * width + nx] * Y[i * kernelSize + j];
                 }

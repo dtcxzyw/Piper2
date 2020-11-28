@@ -38,7 +38,7 @@ namespace Piper {
         StorageUnit(PiperContext& context, FileTag) : Object(context), mData(DynamicArray<std::byte>{ context.getAllocator() }) {}
         StorageUnit(PiperContext& context, DirTag)
             : Object(context), mData(UMap<String, SharedPtr<StorageUnit>>{ context.getAllocator() }) {}
-        bool isFile() const noexcept {
+        [[nodiscard]] bool isFile() const noexcept {
             return mData.index() == 1;
         }
         auto& viewAsFile() {
@@ -63,7 +63,7 @@ namespace Piper {
         }
         StorageUnit* locate(const String& key) {
             auto& dir = viewAsDir();
-            auto iter = dir.find(key);
+            const auto iter = dir.find(key);
             if(iter == dir.cend())
                 return nullptr;
             return iter->second.get();
@@ -78,15 +78,23 @@ namespace Piper {
     public:
         StreamImpl(PiperContext& context, DynamicArray<std::byte>& data, const FileAccessMode access)
             : Stream(context), mData(data), mAccess(access) {}
-        size_t size() const noexcept override {
+        [[nodiscard]] size_t size() const noexcept override {
             return mData.size();
         }
         Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            return Future<DynamicArray<std::byte>>{ nullptr };
+            /*
             if(mAccess != FileAccessMode::Read)
                 throw;
-            return context().getScheduler().value(DynamicArray<std::byte>(mData.cbegin() + offset, mData.cbegin() + offset + size));
+            return context().getScheduler().value(
+                DynamicArray<std::byte>(mData.cbegin() + offset, mData.cbegin() + offset + size));
+                */
         }
         Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            return Future<void>{ nullptr };
+            /*
             if(mAccess != FileAccessMode::Write)
                 throw;
             return context().getScheduler().spawn(
@@ -95,6 +103,7 @@ namespace Piper {
                     // TODO:extend/thread safety
                 },
                 data);
+                */
         }
     };
 
@@ -104,7 +113,7 @@ namespace Piper {
 
     public:
         MappedSpanImpl(PiperContext& context, const Span<std::byte>& data) : MappedSpan(context), mData(data) {}
-        Span<std::byte> get() const noexcept override {
+        [[nodiscard]] Span<std::byte> get() const noexcept override {
             return mData;
         }
     };
@@ -117,13 +126,13 @@ namespace Piper {
     public:
         MappedMemoryImpl(PiperContext& context, DynamicArray<std::byte>& data, const size_t maxSize)
             : MappedMemory(context), mData(data), mMaxSize(maxSize) {}
-        size_t size() const noexcept override {
+        [[nodiscard]] size_t size() const noexcept override {
             return mMaxSize == std::numeric_limits<size_t>::max() ? mData.size() : mMaxSize;
         }
-        size_t alignment() const noexcept override {
+        [[nodiscard]] size_t alignment() const noexcept override {
             return 1 << 16;
         }
-        SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
+        [[nodiscard]] SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
             if(this->size() <= offset + size)
                 throw;
             if(mData.size() <= offset + size)
@@ -136,7 +145,8 @@ namespace Piper {
     class MemoryFS final : public FileSystem {
     private:
         StorageUnit mRoot;
-        auto normalize(const StringView& path) {
+
+        static auto normalize(const StringView& path) {
             DynamicArray<StringView> stack;
             Index lastPos = 0;
             for(Index i = 0; i <= path.size(); ++i) {
@@ -157,7 +167,7 @@ namespace Piper {
             StorageUnit* res = &mRoot;
             for(auto&& part : path) {
                 if(res) {
-                    auto ptr = res->locate(String{ part, context().getAllocator() });
+                    auto* ptr = res->locate(String{ part, context().getAllocator() });
                     if(ptr) {
                         if(parent)
                             *parent = res;
@@ -176,14 +186,14 @@ namespace Piper {
             }
             return res;
         }
-        StringView name(const DynamicArray<StringView>& path) {
+        [[nodiscard]] static StringView name(const DynamicArray<StringView>& path) {
             return path.back();
         }
 
         DynamicArray<std::byte>& openFile(const StringView& path, const FileAccessMode access) {
-            auto np = normalize(path);
+            const auto np = normalize(path);
             StorageUnit* parent = nullptr;
-            auto unit = locate(np, &parent);
+            auto* unit = locate(np, &parent);
             if(access == FileAccessMode::Read) {
                 if(!unit)
                     throw;
@@ -200,41 +210,41 @@ namespace Piper {
     public:
         explicit MemoryFS(PiperContext& context) : FileSystem(context), mRoot(context, DirTag{}) {}
         // TODO:memory protection
-        SharedPtr<Stream> openFileStream(const StringView& path, const FileAccessMode access, const FileCacheHint) {
+        SharedPtr<Stream> openFileStream(const StringView& path, const FileAccessMode access, const FileCacheHint) override {
             return makeSharedObject<StreamImpl>(context(), openFile(path, access), access);
         }
         SharedPtr<MappedMemory> mapFile(const StringView& path, const FileAccessMode access, const FileCacheHint,
-                                           const size_t maxSize) override {
+                                        const size_t maxSize) override {
             return makeSharedObject<MappedMemoryImpl>(
                 context(), openFile(path, access), access == FileAccessMode::Read ? std::numeric_limits<size_t>::max() : maxSize);
         }
         void removeFile(const StringView& path) override {
-            auto np = normalize(path);
+            const auto np = normalize(path);
             StorageUnit* parent = nullptr;
-            StorageUnit* unit = locate(np, &parent);
+            auto* const unit = locate(np, &parent);
             if(!parent || !unit || !unit->isFile())
                 throw;
             parent->remove(unit);
         }
         void createDir(const StringView& path) override {
-            auto np = normalize(path);
+            const auto np = normalize(path);
             StorageUnit* parent = nullptr;
-            StorageUnit* unit = locate(np, &parent);
+            auto* const unit = locate(np, &parent);
             if(!parent || parent->isFile() || unit)
                 throw;
             parent->insert(String{ name(np), context().getAllocator() }, makeSharedObject<StorageUnit>(context(), DirTag{}));
         }
         void removeDir(const StringView& path) override {
-            auto np = normalize(path);
+            const auto np = normalize(path);
             StorageUnit* parent = nullptr;
-            StorageUnit* unit = locate(np, &parent);
+            auto* const unit = locate(np, &parent);
             if(!parent || !unit || unit->isFile())
                 throw;
             parent->remove(unit);
         }
 
         bool exist(const StringView& path) override {
-            auto np = normalize(path);
+            const auto np = normalize(path);
             return locate(np, nullptr);
         }
     };
@@ -242,12 +252,12 @@ namespace Piper {
     public:
         ModuleImpl(PiperContext& context, const char*) : Module(context) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
-                                                 const Future<void>& module) override {
+                                              const Future<void>& module) override {
             if(classID == "MemoryFS") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<MemoryFS>(context())));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

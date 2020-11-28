@@ -19,7 +19,7 @@
 namespace Piper {
     extern "C" void PIPER_CC sample(RestrictedContext* context, const void* SBTData, float u, float v, float t,
                                     Spectrum<Dimensionless<float>>& sample) {
-        sample = reinterpret_cast<const Data*>(SBTData)->texel;
+        sample = static_cast<const Data*>(SBTData)->texel;
     }
     static_assert(std::is_same_v<TextureSampleFunc, decltype(&sample)>);
 }  // namespace Piper

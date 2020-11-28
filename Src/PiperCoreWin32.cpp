@@ -15,9 +15,10 @@
 */
 
 #define PIPER_EXPORT
-#define NOMINMAX
+
 #include "Interface/Infrastructure/Allocator.hpp"
 #include "Interface/Infrastructure/Concurrency.hpp"
+#include "Interface/Infrastructure/ErrorHandler.hpp"
 #include "Interface/Infrastructure/FileSystem.hpp"
 #include "Interface/Infrastructure/IO.hpp"
 #include "PiperContext.hpp"
@@ -26,34 +27,49 @@
 #include "STL/SharedPtr.hpp"
 #include "STL/StringView.hpp"
 #include "STL/UniquePtr.hpp"
+
+#pragma warning(push,0)
+#define NOMINMAX
 #include <Windows.h>
 #include <fileapi.h>
+#pragma warning(pop)
+
 #include <filesystem>
-#include <stdexcept>
 #include <string>
 
 namespace fs = std::filesystem;
 
-void* allocMemory(size_t alignment, size_t size) {
+void* allocMemory(const size_t alignment, const size_t size) {
     return _aligned_malloc(size, alignment);
 }
 void freeMemory(void* ptr) noexcept {
     _aligned_free(ptr);
 }
 
-[[noreturn]] static void raiseWin32Error() {
-    throw std::runtime_error(std::to_string(GetLastError()));
+[[noreturn]] static void raiseWin32Error(Piper::PiperContext& context, Piper::CString func, const Piper::SourceLocation& loc) {
+    const auto code = GetLastError();
+    char buf[1024];
+    Piper::String err = Piper::String{ "Failed to call function ", context.getAllocator() } + func +
+        "\nError Code:" + Piper::toString(context.getAllocator(), static_cast<uint64_t>(code)) + "\nReason:";
+    // TODO:use en-US
+    // https://docs.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-formatmessagea
+    if(FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, nullptr, code, 0, buf, sizeof(buf), nullptr))
+        err += buf;
+    else
+        err += "Unknown";
+
+    context.getErrorHandler().raiseException(err, loc);
 }
 
-void freeModule(void* handle) {
-    if(!FreeLibrary(reinterpret_cast<HMODULE>(handle)))
-        raiseWin32Error();
+void freeModule(Piper::PiperContext& context, void* handle) {
+    if(!FreeLibrary(static_cast<HMODULE>(handle)))
+        raiseWin32Error(context, "FreeLibrary", PIPER_SOURCE_LOCATION());
 }
-void* loadModule(const fs::path& path) {
-    auto res = LoadLibraryExW(fs::absolute(path).wstring().c_str(), NULL,
-                              LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+void* loadModule(Piper::PiperContext& context, const fs::path& path) {
+    const auto res = LoadLibraryExW(fs::absolute(path).wstring().c_str(), nullptr,
+                                    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if(!res)
-        raiseWin32Error();
+        raiseWin32Error(context, "LoadLibraryExW", PIPER_SOURCE_LOCATION());
     return res;
 }
 Piper::CString getModuleExtension() {
@@ -66,11 +82,11 @@ static size_t getFileSize(void* handle) {
     size += static_cast<size_t>(high) << 32;
     return size;
 }
-void* getModuleSymbol(void* handle, const Piper::CString symbol) {
-    auto res = GetProcAddress(reinterpret_cast<HMODULE>(handle), symbol);
+void* getModuleSymbol(Piper::PiperContext& context, void* handle, const Piper::CString symbol) {
+    const auto res = GetProcAddress(static_cast<HMODULE>(handle), symbol);
     if(res)
-        return res;
-    raiseWin32Error();
+        return static_cast<void*>(res);
+    raiseWin32Error(context, "GetProcAddress", PIPER_SOURCE_LOCATION());
 }
 
 namespace Piper {
@@ -90,17 +106,18 @@ namespace Piper {
         ReadFuture(PiperContext& context, const STLAllocator& allocator, const size_t size)
             : FutureImpl(context), data(makeSharedPtr<Pair<bool, DynamicArray<std::byte>>>(
                                        allocator, false, DynamicArray<std::byte>{ size, allocator })) {}
-        bool fastReady() const noexcept override {
+
+        [[nodiscard]] bool fastReady() const noexcept override {
             return data->first;
         }
-        bool ready() const noexcept {
+        bool ready() const noexcept override {
             return data->first;
         }
         void wait() const override {
             while(!data->first)
                 std::this_thread::yield();
         }
-        const void* storage() const {
+        const void* storage() const override {
             return &data->second;
         }
         bool supportNotify() const noexcept override {
@@ -136,7 +153,7 @@ namespace Piper {
 
             auto low = static_cast<LONG>(offset), high = static_cast<LONG>(offset >> 32);
             {
-                std::lock_guard guard{ mMutex };
+                std::lock_guard<std::mutex> guard{ mMutex };
                 size_t readCount = 0;
                 // TODO:ReadFileScatter
                 SetFilePointer(mHandle.get(), low, &high, FILE_BEGIN);
@@ -145,7 +162,7 @@ namespace Piper {
                     auto res = ReadFile(mHandle.get(), future->data->second.data() + readCount, needRead, nullptr,
                                         reinterpret_cast<LPOVERLAPPED>(payload));
                     if(!res)
-                        raiseWin32Error();
+                        raiseWin32Error(context(), "ReadFile", PIPER_SOURCE_LOCATION());
                     readCount += needRead;
                 }
             }
@@ -192,12 +209,14 @@ namespace Piper {
     public:
         MappedSpanImpl(PiperContext& context, void* ptr, const Span<std::byte>& span)
             : MappedSpan(context), mPtr(ptr), mSpan(span) {}
+
         Span<std::byte> get() const noexcept override {
             return mSpan;
         }
-        ~MappedSpanImpl() noexcept {
+
+        virtual ~MappedSpanImpl() noexcept {
             if(mPtr && !UnmapViewOfFile(mPtr))
-                raiseWin32Error();
+                raiseWin32Error(context(), "UnmapViewOfFile", PIPER_SOURCE_LOCATION());
         }
     };
 
@@ -228,7 +247,7 @@ namespace Piper {
                                                     access == FileAccessMode::Read ? PAGE_READONLY : PAGE_READWRITE,
                                                     static_cast<DWORD>(maxSize >> 32), static_cast<DWORD>(maxSize), nullptr);
                 if(mapHandle == INVALID_HANDLE_VALUE)
-                    raiseWin32Error();
+                    raiseWin32Error(context, "CreateFileMappingW", PIPER_SOURCE_LOCATION());
                 mMapHandle.reset(mapHandle);
             }
         }
@@ -264,7 +283,7 @@ namespace Piper {
 
         auto openFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint, bool async) {
             const auto nativePath = fs::u8path(path.cbegin(), path.cend());
-            auto handle = CreateFileW(
+            const auto handle = CreateFileW(
                 nativePath.generic_wstring().c_str(),
                 (access == FileAccessMode::Read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE),
                 (access == FileAccessMode::Write ? 0 : FILE_SHARE_READ), nullptr,
@@ -273,12 +292,12 @@ namespace Piper {
                     (async ? FILE_FLAG_OVERLAPPED : 0),
                 nullptr);
             if(handle == INVALID_HANDLE_VALUE)
-                raiseWin32Error();
+                raiseWin32Error(context(), "CreateFileW", PIPER_SOURCE_LOCATION());
 
             // TODO:FILE_FLAG_WRITE_THROUGH
             if(async) {
                 if(CreateIoCompletionPort(handle, mIOCP.get(), 0, static_cast<DWORD>(mWorkers.size())) != mIOCP.get())
-                    raiseWin32Error();
+                    raiseWin32Error(context(), "CreateIoCompletePort", PIPER_SOURCE_LOCATION());
                 // TODO:SetFileIoOverlappedRange
                 // if(!SetFileIoOverlappedRange(handle, 0, getFileSize(handle)))
                 // raiseWin32Error();
@@ -289,22 +308,22 @@ namespace Piper {
 
     public:
         explicit FileSystemImpl(PiperContext& context) : FileSystem(context), mWorkers(context.getAllocator()) {
-            auto poolSize = 2 * std::thread::hardware_concurrency();
+            const auto poolSize = 2 * std::thread::hardware_concurrency();
             // TODO:shared with socket
-            auto handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, poolSize);
+            const auto handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, poolSize);
             if(!handle)
-                raiseWin32Error();
+                raiseWin32Error(context, "CreateIoCompletionPort", PIPER_SOURCE_LOCATION());
             mIOCP.reset(handle);
             auto worker = [this, &context] {
                 while(true) {
                     DWORD count;
-                    ULONG_PTR key;  // TOOD:IO Type
+                    ULONG_PTR key;  // TODO:IO Type for file/socket
                     LPOVERLAPPED overlapped;
                     if(!GetQueuedCompletionStatus(mIOCP.get(), &count, &key, &overlapped, INFINITE))
-                        raiseWin32Error();
+                        raiseWin32Error(context, "GetQueuedCompletionStatus", PIPER_SOURCE_LOCATION());
                     if(key == exitFlag)
                         return;
-                    auto payload = reinterpret_cast<IOPayload*>(overlapped);
+                    auto* payload = reinterpret_cast<IOPayload*>(overlapped);
                     payload->remainSize -= count;
                     if((--payload->remainCount) == 0) {
                         if(payload->remainSize != 0)
@@ -323,10 +342,11 @@ namespace Piper {
             for(size_t i = 0; i < poolSize; ++i)
                 mWorkers.emplace_back(std::thread(worker));
         }
-        ~FileSystemImpl() noexcept {
+
+        virtual ~FileSystemImpl() noexcept {
             for(Index i = 0; i < mWorkers.size(); ++i)
                 if(!PostQueuedCompletionStatus(mIOCP.get(), 0, exitFlag, nullptr))
-                    raiseWin32Error();
+                    raiseWin32Error(context(), "PostQueuedCompletionStatus", PIPER_SOURCE_LOCATION());
             for(auto&& t : mWorkers)
                 t.join();
         }

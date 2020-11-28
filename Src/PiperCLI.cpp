@@ -17,6 +17,9 @@
 #include "Interface/Infrastructure/Allocator.hpp"
 #include "Interface/Infrastructure/Concurrency.hpp"
 #include "Interface/Infrastructure/Config.hpp"
+#include "Interface/Infrastructure/ErrorHandler.hpp"
+#include "Interface/Infrastructure/FileSystem.hpp"
+#include "Interface/Infrastructure/Logger.hpp"
 #include "Interface/Infrastructure/Module.hpp"
 #include "Interface/Infrastructure/Operator.hpp"
 #include "Interface/Infrastructure/Program.hpp"
@@ -39,36 +42,58 @@ static Piper::SharedPtr<T> syncLoad(Piper::PiperContext& context, const Piper::S
 }
 
 static void setupInfrastructure(Piper::PiperContextOwner& context, const Piper::SharedPtr<Piper::Config>& config) {
-    // auto&& attr = config->viewAsObject();
-    // TODO:exist test
-    auto pmgr = syncLoad<Piper::PITUManager>(context, config->at("PITUManager"));
-    context.setPITUManager(pmgr);
-    auto allocator = syncLoad<Piper::Allocator>(context, config->at("Allocator"));
-    context.setAllocator(allocator);
-    auto scheduler = syncLoad<Piper::Scheduler>(context, config->at("Scheduler"));
-    context.setScheduler(scheduler);
-    // TODO:other infrastructure
+    const auto& attr = config->viewAsObject();
+
+    const auto loggerDesc = attr.find(Piper::String{ "Logger", context.getAllocator() });
+    if(loggerDesc != attr.cend()) {
+        auto logger = syncLoad<Piper::Logger>(context, loggerDesc->second);
+        context.setLogger(std::move(logger));
+    }
+
+    const auto allocatorDesc = attr.find(Piper::String{ "Allocator", context.getAllocator() });
+    if(allocatorDesc != attr.cend()) {
+        auto allocator = syncLoad<Piper::Allocator>(context, allocatorDesc->second);
+        context.setAllocator(std::move(allocator));
+    }
+
+    const auto schedulerDesc = attr.find(Piper::String{ "Scheduler", context.getAllocator() });
+    if(schedulerDesc != attr.cend()) {
+        auto scheduler = syncLoad<Piper::Scheduler>(context, schedulerDesc->second);
+        context.setScheduler(std::move(scheduler));
+    }
+
+    const auto mgrDesc = attr.find(Piper::String{ "PITUManager", context.getAllocator() });
+    if(mgrDesc != attr.cend()) {
+        auto mgr = syncLoad<Piper::PITUManager>(context, mgrDesc->second);
+        context.setPITUManager(std::move(mgr));
+    }
+
+    const auto fsDesc = attr.find(Piper::String{ "FileSystem", context.getAllocator() });
+    if(fsDesc != attr.cend()) {
+        auto fs = syncLoad<Piper::FileSystem>(context, fsDesc->second);
+        context.setFileSystem(std::move(fs));
+    }
 }
 
 static Piper::SharedPtr<Piper::ConfigSerializer> getParser(Piper::PiperContext& context) {
-    auto base = Piper::String{ ".", context.getAllocator() };
+    const auto base = Piper::String{ ".", context.getAllocator() };
     auto name = Piper::makeSharedObject<Piper::Config>(context, "Piper.Infrastructure.NlohmannJson");
     auto path = Piper::makeSharedObject<Piper::Config>(context, "Infrastructure/Config/NlohmannJson/NlohmannJson");
     Piper::UMap<Piper::String, Piper::SharedPtr<Piper::Config>> desc{ context.getAllocator() };
     desc.insert(Piper::makePair(Piper::String{ "Name", context.getAllocator() }, name));
     desc.insert(Piper::makePair(Piper::String{ "Path", context.getAllocator() }, path));
     // TODO:concurrency
-    auto mod = context.getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(context, std::move(desc)), base);
+    const auto mod = context.getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(context, std::move(desc)), base);
     auto inst = context.getModuleLoader().newInstance("Piper.Infrastructure.NlohmannJson.JsonSerializer", nullptr, mod);
     inst.wait();
     auto parser = eastl::dynamic_shared_pointer_cast<Piper::ConfigSerializer>(inst.get());
     return parser;
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[], [[maybe_unused]] const char* envp[]) {
     Piper::UniquePtr<Piper::PiperContextOwner, ContextDeleter> context(piperCreateContext());
     // TODO:fix resource leak
-    {
+    try {
         auto opt = cxxopts::Options("PiperCLI", "Piper2 Command Line Interface");
         std::string config, option, command;
         // TODO:custom config parser
@@ -78,26 +103,28 @@ int main(int argc, char* argv[]) {
             "c,command", "Command operator", cxxopts::value(command))("o,option", "command option", cxxopts::value(option));
         opt.parse(argc, argv);
 
-        auto parser = getParser(*context);
+        const auto parser = getParser(*context);
 
-        auto modules = parser->deserialize(Piper::String{ "Module.json", context->getAllocator() });
-        auto base = Piper::String{ ".", context->getAllocator() };
+        const auto modules = parser->deserialize(Piper::String{ "Module.json", context->getAllocator() });
+        const auto base = Piper::String{ ".", context->getAllocator() };
         for(auto&& desc : modules->viewAsArray())
             context->getModuleLoader().addModuleDescription(desc, base);
 
         setupInfrastructure(*context, parser->deserialize(Piper::String{ config.c_str(), context->getAllocator() }));
 
         // TODO:pass environment variable via config
+
         auto op = context->getModuleLoader().newInstance(Piper::StringView{ command.c_str(), command.size() }, nullptr);
         op.wait();
         auto cop = eastl::dynamic_shared_pointer_cast<Piper::Operator>(op.get());
-        try {
-            cop->execute(parser->deserialize(Piper::String{ option.c_str(), option.size(), context->getAllocator() }));
-        } catch(...) {
-            // TODO:log
-            return EXIT_FAILURE;
-        }
+
+        cop->execute(parser->deserialize(Piper::String{ option.c_str(), option.size(), context->getAllocator() }));
+    } catch(const std::exception& ex) {
+        context->getErrorHandler().raiseException(ex.what(), PIPER_SOURCE_LOCATION());
+    } catch(...) {
+        context->getErrorHandler().raiseException("Unknown Error", PIPER_SOURCE_LOCATION());
     }
+
     context.reset();
     return EXIT_SUCCESS;
 }

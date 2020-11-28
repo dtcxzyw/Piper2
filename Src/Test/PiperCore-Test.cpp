@@ -106,7 +106,7 @@ TEST_F(PiperCoreEnvironment, ModuleLoaderTest) {
     auto inst = loader.newInstance("Piper.Infrastructure.MemoryFS.MemoryFS", Piper::makeSharedObject<Piper::Config>(*context));
     inst.wait();
     {
-        auto object = std::move(*inst);
+        const auto object = std::move(*inst);
         ASSERT_EQ(context, &object.context());
     }
 }

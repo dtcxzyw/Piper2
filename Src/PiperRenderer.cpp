@@ -20,16 +20,16 @@
 #include "Interface/BuiltinComponent/Integrator.hpp"
 #include "Interface/BuiltinComponent/Light.hpp"
 #include "Interface/BuiltinComponent/RenderDriver.hpp"
+#include "Interface/BuiltinComponent/Sampler.hpp"
 #include "Interface/BuiltinComponent/Sensor.hpp"
 #include "Interface/BuiltinComponent/Surface.hpp"
 #include "Interface/BuiltinComponent/Tracer.hpp"
+#include "Interface/Infrastructure/ErrorHandler.hpp"
 #include "Interface/Infrastructure/Module.hpp"
 #include "Interface/Infrastructure/Operator.hpp"
 #include "Kernel/Protocol.hpp"
 #pragma warning(push)
 #define _CRT_SECURE_NO_WARNINGS
-#include "Interface/BuiltinComponent/Sampler.hpp"
-
 #include <OpenEXR/ImfRgbaFile.h>
 #undef _CRT_SECURE_NO_WARNINGS
 #pragma warning(pop)
@@ -46,9 +46,9 @@ namespace Piper {
 
     class Render final : public Operator {
     private:
-        auto parseTransform(const SharedPtr<Config>& config) {
+        static auto parseTransform(const SharedPtr<Config>& config) {
             Transform<Distance, FOR::Local, FOR::World> transform;
-            auto arr = config->viewAsArray();
+            const auto& arr = config->viewAsArray();
             if(arr.size() != 12)
                 throw;
             for(uint32_t i = 0; i < 3; ++i)
@@ -87,7 +87,7 @@ namespace Piper {
                     desc.surface = syncLoad<Surface>(config->at("Surface"));
                     desc.geometry = syncLoad<Geometry>(config->at("Geometry"));
                     auto&& attr = config->viewAsObject();
-                    auto iter = attr.find(String{ "Transform", context().getAllocator() });
+                    const auto iter = attr.find(String{ "Transform", context().getAllocator() });
                     if(iter != attr.cend())
                         desc.transform = parseTransform(iter->second);
                     return tracer.buildNode(desc);
@@ -100,22 +100,23 @@ namespace Piper {
         UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
                                              uint32_t width, uint32_t height, float& ratio) {
             // TODO:Asset
-            auto sensor = syncLoad<Sensor>(config->at("Sensor"));
+            const auto sensor = syncLoad<Sensor>(config->at("Sensor"));
             ratio = sensor->getAspectRatio();
-            auto light = syncLoad<Light>(config->at("Light"));
-            auto environment = syncLoad<Environment>(config->at("Environment"));
-            auto integrator = syncLoad<Integrator>(config->at("Integrator"));
-            auto node = buildScene(tracer, config->at("Scene"));
-            auto attr = config->viewAsObject();
-            auto samplerDesc = attr.find(String{ "Sampler", context().getAllocator() });
-            auto sampler = samplerDesc != attr.cend() ? syncLoad<Sampler>(samplerDesc->second) : SharedPtr<Sampler>{};
+            const auto light = syncLoad<Light>(config->at("Light"));
+            const auto environment = syncLoad<Environment>(config->at("Environment"));
+            const auto integrator = syncLoad<Integrator>(config->at("Integrator"));
+            const auto node = buildScene(tracer, config->at("Scene"));
+            const auto& attr = config->viewAsObject();
+            const auto samplerDesc = attr.find(String{ "Sampler", context().getAllocator() });
+            const auto sampler = samplerDesc != attr.cend() ? syncLoad<Sampler>(samplerDesc->second) : SharedPtr<Sampler>{};
             return tracer.buildPipeline(node, *sensor, *environment, *integrator, renderDriver, *light, sampler.get(), width,
                                         height);
         }
-        void saveToFile(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, uint32_t width, uint32_t height) {
+        void saveToFile(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, const uint32_t width,
+                        const uint32_t height) const {
             DynamicArray<Imf::Rgba> rgba(res.size(), context().getAllocator());
 
-            eastl::transform(res.cbegin(), res.cend(), rgba.begin(), [](Spectrum<Radiance> rad) {
+            eastl::transform(res.cbegin(), res.cend(), rgba.begin(), [](const Spectrum<Radiance> rad) {
                 return Imf::Rgba{ rad.r.val, rad.g.val, rad.b.val };
             });
             // TODO:filesystem
@@ -150,8 +151,8 @@ namespace Piper {
             float deviceAspectRatio = -1.0f;
             auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height, deviceAspectRatio);
 
-            RenderRECT rect;
-            SensorNDCAffineTransform transform;
+            RenderRECT rect{};
+            SensorNDCAffineTransform transform{};
             auto imageAspectRatio = static_cast<float>(width) / static_cast<float>(height);
             auto iiar = 1.0f / imageAspectRatio, idar = 1.0f / deviceAspectRatio;
             if(fitMode == FitMode::Fill) {
@@ -187,7 +188,7 @@ namespace Piper {
             renderDriver->renderFrame(res, width, height, rect, transform, *tracer, *pipeline);
 
             auto output = opt->at("OutputFile")->get<String>();
-            // TODO:remove exr
+            // TODO:move OpenEXR to ImageIO
             saveToFile(output, res, width, height);
         }
     };
@@ -203,7 +204,7 @@ namespace Piper {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<Render>(context())));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

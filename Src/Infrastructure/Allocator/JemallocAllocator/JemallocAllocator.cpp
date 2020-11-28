@@ -27,7 +27,7 @@ namespace Piper {
     class JemallocAllocator final : public Allocator {
     public:
         PIPER_INTERFACE_CONSTRUCT(JemallocAllocator, Allocator)
-        Ptr alloc(const size_t size, const size_t align = 8) override {
+        Ptr alloc(const size_t size, const size_t align) override {
             return reinterpret_cast<Ptr>(je_aligned_alloc(align, size));
         }
         void free(const Ptr ptr) noexcept override {
@@ -43,7 +43,7 @@ namespace Piper {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<JemallocAllocator>(context())));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

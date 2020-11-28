@@ -81,10 +81,9 @@ namespace Piper {
             return mPtr;
         }
 
-        // TODO:formal check
-        ~FutureStorage() noexcept {
+        ~FutureStorage() noexcept override {
             if(!ready())
-                throw;
+                context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
         }
     };
 
@@ -94,14 +93,12 @@ namespace Piper {
 
         void commit(FutureContext& ctx, const tf::Task& task, const Span<const SharedPtr<FutureImpl>>& dependencies) {
             auto src = ctx.flow.placeholder();
-            // TODO:check overhead
             for(auto&& dep : dependencies) {
                 if(!dep || dep->fastReady())
                     continue;
 
                 auto cond = ctx.flow.emplace([dep] { return dep->ready(); });
                 auto node = ctx.flow.placeholder();
-                // TODO:remove node
                 cond.precede(cond, node);
                 node.precede(task);
                 src.precede(cond);
@@ -109,10 +106,19 @@ namespace Piper {
             ctx.future = mExecutor.run(ctx.flow);
         }
 
+        static size_t parseWorkerCount(PiperContext& context, const SharedPtr<Config>& config) {
+            const auto& attr = config->viewAsObject();
+            const auto iter = attr.find(String{ "WorkerCount", context.getAllocator() });
+            if(iter != attr.cend())
+                return iter->second->get<uintmax_t>();
+            return std::thread::hardware_concurrency();
+        }
+
     public:
         // TODO:thread num from config
         // TODO:spring worker (alloc 2*hardware_concurrency sleep half)
-        explicit SchedulerTaskflow(PiperContext& context) : Scheduler(context), mExecutor(std::thread::hardware_concurrency()) {
+        explicit SchedulerTaskflow(PiperContext& context, const SharedPtr<Config>& config)
+            : Scheduler(context), mExecutor(parseWorkerCount(context, config)) {
             auto&& logger = context.getLogger();
             if(logger.allow(LogLevel::Info))
                 logger.record(LogLevel::Info, "Taskflow workers : " + toString(context.getAllocator(), mExecutor.num_workers()),
@@ -121,15 +127,15 @@ namespace Piper {
         void spawnImpl(Optional<Closure<>> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
                        const SharedPtr<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
-            auto task = (func.has_value() ? ctx.flow.emplace(std::move(func.value())) : ctx.flow.placeholder());
+            const auto task = (func.has_value() ? ctx.flow.emplace(std::move(func.value())) : ctx.flow.placeholder());
             commit(ctx, task, dependencies);
         }
         void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
                              const SharedPtr<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
             // TODO:performance
-            auto worker = static_cast<uint32_t>(mExecutor.num_workers());
-            auto chunkSize = std::max(1U, n / (worker * 5));
+            const auto worker = static_cast<uint32_t>(mExecutor.num_workers());
+            const auto chunkSize = std::max(1U, n / (worker * 5));
             // auto task =
             //    ctx.flow.for_each_index_static(static_cast<uint32_t>(0), n, static_cast<uint32_t>(1), std::move(func),
             //    chunkSize);
@@ -152,14 +158,14 @@ namespace Piper {
     };
     class ModuleImpl final : public Module {
     public:
-        ModuleImpl(PiperContext& context, const char*) : Module(context) {}
+        ModuleImpl(PiperContext& context, CString) : Module(context) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "Scheduler") {
                 return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<SchedulerTaskflow>(context())));
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<SchedulerTaskflow>(context(), config)));
             }
-            throw;
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

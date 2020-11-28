@@ -19,8 +19,8 @@
 
 namespace Piper {
     // TODO:unit test
-    // TODO:explicit NotInitialized
-    // struct NotInitialized final {};
+    // TODO:Uninitialized
+    // struct Uninitialized final {};
     struct Unchecked final {};
 
     template <typename Float>
@@ -285,7 +285,11 @@ namespace Piper {
     template <typename Float, FOR refA, FOR refB>
     struct Transform final {
         using Storage = Dimensionless<typename Float::FT>;
-        Storage A2B[3][4], B2A[3][4];
+        Storage A2B[3][4];
+        Storage B2A[3][4];
+        // explicit Transform(Uninitialized) {}
+        Transform() = default;
+
         Vector<Float, refB> operator()(Vector<Float, refA> v) const noexcept {
             return { A2B[0][0] * v.x + A2B[0][1] * v.y + A2B[0][2] * v.z, A2B[1][0] * v.x + A2B[1][1] * v.y + A2B[1][2] * v.z,
                      A2B[2][0] * v.x + A2B[2][1] * v.y + A2B[2][2] * v.z };
@@ -345,6 +349,7 @@ namespace Piper {
         B2A[3][2] = -(B2A[2][0] * A2B[3][0] + B2A[2][1] * A2B[3][1] + B2A[2][2] * A2B[3][2]);
     }
 
+    /*
     template <typename Float, FOR ref>
     Normal<Float, ref> reflect(Normal<Float, ref> in, Normal<Float, ref> N) noexcept {}
 
@@ -352,6 +357,7 @@ namespace Piper {
     bool refract(Normal<Float, ref> in, Normal<Float, ref> N, Float ior, Normal<Float, ref>& out) noexcept {}
 
     template <typename Float, FOR ref>
-    Vector<Float, ref> faceforward(Vector<Float, ref> in, Normal<Float, ref> N) noexcept {}
+    Vector<Float, ref> faceForward(Vector<Float, ref> in, Normal<Float, ref> N) noexcept {}
+    */
 
 }  // namespace Piper

@@ -18,7 +18,7 @@
 #include "../Object.hpp"
 
 namespace Piper {
-    class Profiler : public Object {
+    class Profiler : public Object {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         PIPER_INTERFACE_CONSTRUCT(Profiler, Object)
         virtual ~Profiler() = default;

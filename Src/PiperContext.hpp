@@ -19,7 +19,7 @@
 #include "PiperAPI.hpp"
 
 namespace Piper {
-    class PiperContext : private Unmovable {
+    class PiperContext : private Unmovable {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         virtual Logger& getLogger() noexcept = 0;
         virtual ModuleLoader& getModuleLoader() noexcept = 0;
@@ -35,15 +35,14 @@ namespace Piper {
 
         virtual ~PiperContext() = default;
     };
-    // TODO:stateless
+
     class PiperContextOwner : public PiperContext {
     public:
-        virtual void setLogger(const SharedPtr<Logger>& logger) noexcept = 0;
-        virtual void setScheduler(const SharedPtr<Scheduler>& scheduler) noexcept = 0;
-        virtual void setFileSystem(const SharedPtr<FileSystem>& filesystem) noexcept = 0;
-        virtual void setAllocator(const SharedPtr<Allocator>& allocator) noexcept = 0;
-        virtual void setPITUManager(const SharedPtr<PITUManager>& manager) noexcept = 0;
-        virtual ~PiperContextOwner() = default;
+        virtual void setLogger(SharedPtr<Logger> logger) noexcept = 0;
+        virtual void setScheduler(SharedPtr<Scheduler> scheduler) noexcept = 0;
+        virtual void setFileSystem(SharedPtr<FileSystem> filesystem) noexcept = 0;
+        virtual void setAllocator(SharedPtr<Allocator> allocator) noexcept = 0;
+        virtual void setPITUManager(SharedPtr<PITUManager> manager) noexcept = 0;
     };
 }  // namespace Piper
 

@@ -18,7 +18,7 @@
 
 namespace Piper {
     extern "C" void PIPER_CC missing(RestrictedContext*, const void* SBTData, const RayInfo& ray, Spectrum<Radiance>& sample) {
-        auto data = reinterpret_cast<const Data*>(SBTData);
+        const auto* data = static_cast<const Data*>(SBTData);
         sample = data->background;
     }
     static_assert(std::is_same_v<EnvironmentFunc, decltype(&missing)>);
