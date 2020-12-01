@@ -43,24 +43,25 @@ namespace Piper {
                     [path = mPath, &tracer, ctx = &context()]() -> SharedPtr<AccelerationStructure> {
                         // TODO:filesystem
                         Assimp::Importer importer;
-                        const auto scene =
+                        const auto* scene =
                             importer.ReadFile(path.c_str(),
                                               aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType |
                                                   aiProcess_GenSmoothNormals | aiProcess_GenUVCoords |
                                                   aiProcess_FixInfacingNormals | aiProcess_ImproveCacheLocality);
 
                         if(!scene || scene->mFlags == AI_SCENE_FLAGS_INCOMPLETE)
-                            throw;
+                            ctx->getErrorHandler().raiseException("Failed to load scene " + path, PIPER_SOURCE_LOCATION());
                         if(scene->mNumMeshes != 1)
-                            throw;
-                        const auto mesh = scene->mMeshes[0];
+                            ctx->getErrorHandler().raiseException("Only one mesh is supported.", PIPER_SOURCE_LOCATION());
+                        const auto* mesh = scene->mMeshes[0];
 
                         TriangleIndexedGeometryDesc desc{};
                         DynamicArray<uint32_t> index(ctx->getAllocator());
                         index.resize(3 * mesh->mNumFaces);
                         for(Index i = 0; i < mesh->mNumFaces; ++i) {
                             if(mesh->mFaces[i].mNumIndices != 3)
-                                throw;
+                                ctx->getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant,
+                                                                    "Only triangle is supported.", PIPER_SOURCE_LOCATION());
                             memcpy(index.data() + i * 3, mesh->mFaces[i].mIndices, sizeof(uint32_t) * 3);
                         }
 
@@ -74,7 +75,7 @@ namespace Piper {
                         auto res = tracer.buildAcceleration({ PrimitiveShapeType::TriangleIndexed, { desc } });
                         // TODO:RAII
                         importer.FreeScene();
-                        return res;
+                        return std::move(res);
                     } });
             return *res;
         }
@@ -92,8 +93,9 @@ namespace Piper {
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "TriangleMesh") {
-                return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<TriangleMesh>(context(), config)));
+                return context().getScheduler().spawn([ctx = &context(), config] {
+                    return eastl::static_shared_pointer_cast<Object>(makeSharedObject<TriangleMesh>(*ctx, config));
+                });
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }

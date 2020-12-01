@@ -37,10 +37,8 @@ namespace Piper {
         IntegratorProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             IntegratorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            res.trace =
-                tracer.buildProgram(pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()), "trace");
+            res.trace = tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "trace");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }

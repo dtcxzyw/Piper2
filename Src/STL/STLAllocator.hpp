@@ -19,7 +19,6 @@
 #include "../PiperAPI.hpp"
 #define EASTL_USER_DEFINED_ALLOCATOR
 #define EASTLAllocatorType Piper::STLAllocator
-// TODO:throw exception
 #define EASTLAllocatorDefault() nullptr
 #include "GSL.hpp"
 #include <eastl/internal/config.h>

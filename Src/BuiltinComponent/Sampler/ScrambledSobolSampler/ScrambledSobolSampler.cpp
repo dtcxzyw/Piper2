@@ -36,10 +36,8 @@ namespace Piper {
         SamplerProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            res.sample =
-                tracer.buildProgram(pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()), "generate");
+            res.sample = tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "generate");
             // res.payload = ;
             // res.maxDimension = ;
             return res;

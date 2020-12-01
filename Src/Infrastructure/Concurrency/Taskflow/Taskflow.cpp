@@ -91,13 +91,13 @@ namespace Piper {
     private:
         tf::Executor mExecutor;
 
-        void commit(FutureContext& ctx, const tf::Task& task, const Span<const SharedPtr<FutureImpl>>& dependencies) {
+        void commit(FutureContext& ctx, const tf::Task& task, const Span<SharedPtr<FutureImpl>>& dependencies) {
             auto src = ctx.flow.placeholder();
             for(auto&& dep : dependencies) {
                 if(!dep || dep->fastReady())
                     continue;
 
-                auto cond = ctx.flow.emplace([dep] { return dep->ready(); });
+                auto cond = ctx.flow.emplace([ownerDep = std::move(dep)] { return ownerDep->ready(); });
                 auto node = ctx.flow.placeholder();
                 cond.precede(cond, node);
                 node.precede(task);
@@ -107,10 +107,12 @@ namespace Piper {
         }
 
         static size_t parseWorkerCount(PiperContext& context, const SharedPtr<Config>& config) {
-            const auto& attr = config->viewAsObject();
-            const auto iter = attr.find(String{ "WorkerCount", context.getAllocator() });
-            if(iter != attr.cend())
-                return iter->second->get<uintmax_t>();
+            if(config->type() == NodeType::Object) {
+                const auto& attr = config->viewAsObject();
+                const auto iter = attr.find(String{ "WorkerCount", context.getAllocator() });
+                if(iter != attr.cend())
+                    return iter->second->get<uintmax_t>();
+            }
             return std::thread::hardware_concurrency();
         }
 
@@ -124,13 +126,13 @@ namespace Piper {
                 logger.record(LogLevel::Info, "Taskflow workers : " + toString(context.getAllocator(), mExecutor.num_workers()),
                               PIPER_SOURCE_LOCATION());
         }
-        void spawnImpl(Optional<Closure<>> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        void spawnImpl(Optional<Closure<>> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                        const SharedPtr<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
             const auto task = (func.has_value() ? ctx.flow.emplace(std::move(func.value())) : ctx.flow.placeholder());
             commit(ctx, task, dependencies);
         }
-        void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                              const SharedPtr<FutureImpl>& res) override {
             auto&& ctx = dynamic_cast<FutureStorage*>(res.get())->getFutureContext();
             // TODO:performance

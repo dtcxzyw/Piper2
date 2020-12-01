@@ -36,9 +36,14 @@ namespace Piper {
         virtual Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) = 0;
         virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                                       const Future<void>& module) = 0;
+        virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config) = 0;
+
+        template <typename T, typename... Args>
+        Future<SharedPtr<T>> newInstanceT(Args&&... args) {
+            return dynamicSharedPtrCast<T>(newInstance(std::forward<Args>(args)...));
+        }
 
         virtual Future<void> loadModule(const String& moduleID) = 0;
-        virtual Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config) = 0;
         virtual void addModuleDescription(const SharedPtr<Config>& moduleDesc, const String& descPath) = 0;
         virtual ~ModuleLoader() = default;
     };
@@ -55,7 +60,7 @@ namespace Piper {
         };                                                                                                         \
         Piper::UniquePtr<CLASS, Deleter> ptr = { reinterpret_cast<CLASS*>(allocator.alloc(sizeof(CLASS))),         \
                                                  Deleter{ allocator } };                                           \
-        new(ptr.get()) CLASS(context,path);                                                                             \
+        new(ptr.get()) CLASS(context, path);                                                                       \
         return ptr.release();                                                                                      \
     }                                                                                                              \
     extern "C" PIPER_API const char* piperGetProtocol() {                                                          \

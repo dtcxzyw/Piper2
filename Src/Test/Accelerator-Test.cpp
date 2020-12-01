@@ -51,11 +51,8 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     devY->upload(scheduler.value(Piper::DataHolder{ Y, Y->data() }));
     auto devZ = accelerator->createBuffer(count * sizeof(Float), 64);
 
-    // TODO:concurrency
     auto conv = context.getPITUManager().loadPITU("conv.bc");
-    conv.wait();
-
-    auto linkable = conv->generateLinkable(accelerator->getSupportedLinkableFormat());
+    auto linkable = PIPER_FUTURE_CALL(conv, generateLinkable)(accelerator->getSupportedLinkableFormat());
     auto kernel = accelerator->compileKernel(Piper::Span<Piper::Future<Piper::LinkableProgram>>{ &linkable, 1 }, "conv");
     auto payload = accelerator->createPayload(Piper::InputResource{ devX->ref() }, Piper::InputResource{ devY->ref() },
                                               Piper::OutputResource{ devZ->ref() }, width, height, kernelSize);
@@ -92,7 +89,7 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
         logger.record(Piper::LogLevel::Debug, "Duration (Native)  : " + Piper::toString(context.getAllocator(), dur) + " ms",
                       PIPER_SOURCE_LOCATION());
 
-    auto Z = reinterpret_cast<const Float*>(dataZ->data());
+    auto Z = reinterpret_cast<const Float*>(dataZ.get().data());
     for(Piper::Index i = 0; i < count; ++i)
         ASSERT_FLOAT_EQ(Z[i], standard[i]);
 }

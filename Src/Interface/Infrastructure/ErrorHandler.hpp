@@ -18,18 +18,19 @@
 #include "../../PiperContext.hpp"
 #include "../../STL/GSL.hpp"
 #include "../../STL/String.hpp"
+#include "../../STL/Variant.hpp"
 #include "../Object.hpp"
 #include "Logger.hpp"
 
 namespace Piper {
+    // TODO:cross-thread stage chain
     class PIPER_API StageGuard final : private Unmovable {
     private:
         ErrorHandler& mHandler;
 
     public:
         explicit StageGuard(ErrorHandler& handler) noexcept : mHandler(handler) {}
-        void switchTo(const String& stage, const SourceLocation& loc);
-        void switchToStatic(const CString stage, const SourceLocation& loc);
+        void next(Variant<CString, String> stage, const SourceLocation& loc);
         ~StageGuard() noexcept;
     };
 
@@ -61,20 +62,15 @@ namespace Piper {
         // virtual void addFinalAction() = 0;
 
         // for tracing
-        StageGuard enterStage(const String& stage, const SourceLocation& loc) {
-            enterStageImpl(stage, loc);
-            return StageGuard{ *this };
-        }
-        StageGuard enterStageStatic(const CString stage, const SourceLocation& loc) {
-            // TODO:no allocation storage
-            enterStageImpl(String(stage, context().getAllocator()), loc);
+        StageGuard enterStage(Variant<CString, String> stage, const SourceLocation& loc) {
+            enterStageImpl(std::move(stage), loc);
             return StageGuard{ *this };
         }
 
     private:
         friend class StageGuard;
         virtual void exitStage() noexcept = 0;
-        virtual void enterStageImpl(const String& stage, const SourceLocation& loc) = 0;
+        virtual void enterStageImpl(Variant<CString, String> stage, const SourceLocation& loc) = 0;
     };
 
 #define PIPER_CHECK_IMPL(handler, level, expr)                           \

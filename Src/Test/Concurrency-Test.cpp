@@ -17,57 +17,109 @@
 #include "../Interface/Infrastructure/Allocator.hpp"
 #include "../Interface/Infrastructure/Config.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
-#include "../STL/DynamicArray.hpp"
 #include "TestEnvironment.hpp"
 #include <atomic>
 
 using namespace std::chrono_literals;
 
-// TODO:change test layer
-void generalConcurrencyTest(Piper::PiperContext& context) {
-    auto a = context.getScheduler().value(1);
+static constexpr auto magic = 142342;
+
+void valueAndReady(Piper::Scheduler& scheduler) {
+    {
+        auto val = scheduler.value(magic);
+        ASSERT_TRUE(val.ready());
+        ASSERT_EQ(val.get(), magic);
+    }
+    {
+        auto hold = std::make_unique<int32_t>(magic);
+        auto val = scheduler.value(std::move(hold));
+        ASSERT_FALSE(hold.get());
+        ASSERT_TRUE(val.get());
+        ASSERT_EQ(*val.get(), magic);
+    }
+    {
+        const auto ready = scheduler.ready();
+        ASSERT_TRUE(ready.ready());
+    }
+}
+void commonSpawn(Piper::Scheduler& scheduler) {
+    // T
+    auto a = scheduler.value(1);
     ASSERT_TRUE(a.ready());
-    ASSERT_EQ(*a, 1);
-    auto b = context.getScheduler().value(2);
+    ASSERT_EQ(a.get(), 1);
+    auto b = scheduler.value(2);
     ASSERT_TRUE(b.ready());
-    ASSERT_EQ(*b, 2);
-    std::atomic_size_t count{ 0 };
-    auto c = context.getScheduler().spawn(
-        [&count](const Piper::Future<int32_t>& x, const Piper::Future<int32_t>& y) {
-            ++count;
-            // simulate long computation
-            std::this_thread::sleep_for(1000ms);
-            return *x + *y;
-        },
-        a, b);
-    ASSERT_FALSE(c.ready());
+    ASSERT_EQ(b.get(), 2);
+    auto c = scheduler.spawn([](const int32_t x, const int32_t y) { return x + y; }, a, b);
     c.wait();
     ASSERT_TRUE(c.ready());
-    auto d = context.getScheduler().spawn([](const Piper::Future<int32_t>& x) { return (*x) * (*x); }, c);
-    d.wait();
-    ASSERT_EQ(*d, 9);
-    auto e = context.getScheduler().spawn(
-        [](const Piper::Future<int32_t>& x, const Piper::Future<int32_t>& y) { return (*x) + (*y); }, c, c);
-    e.wait();
-    ASSERT_EQ(*e, 6);
+    ASSERT_EQ(c.get(), 3);
+    // void
+    auto call1 = false, call2 = false, call3 = false;
+    auto foo1 = scheduler.spawn([&call1] {
+        std::this_thread::sleep_for(10ms);
+        call1 = true;
+    });
+    auto foo2 = scheduler.spawn(
+        [&call2](Piper::PlaceHolder) {
+            std::this_thread::sleep_for(10ms);
+            call2 = true;
+        },
+        foo1);
+    const auto foo3 = scheduler.spawn(
+        [&call3](Piper::PlaceHolder) {
+            std::this_thread::sleep_for(10ms);
+            call3 = true;
+        },
+        foo2);
+    foo3.wait();
+    ASSERT_TRUE(foo1.ready());
+    ASSERT_TRUE(call1);
+    ASSERT_TRUE(foo2.ready());
+    ASSERT_TRUE(call2);
+    ASSERT_TRUE(foo3.ready());
+    ASSERT_TRUE(call3);
+    // reference
+}
+void nonBlocking(Piper::Scheduler& scheduler) {
+    auto x = scheduler.spawn([] {
+        std::this_thread::sleep_for(10ms);
+        return magic;
+    });
+    ASSERT_FALSE(x.ready());
+    x.wait();
+    ASSERT_TRUE(x.ready());
+    ASSERT_EQ(x.get(), magic);
+}
+void callOnce(Piper::Scheduler& scheduler) {
+    std::atomic_size_t count{ 0 };
+    auto c = scheduler.spawn(
+        [&count](const int32_t x, const int32_t y) {
+            ++count;
+            std::this_thread::sleep_for(10ms);
+            return x + y;
+        },
+        1, 2);
+    c.wait();
+    ASSERT_TRUE(c.ready());
+    ASSERT_EQ(c.get(), 3);
     ASSERT_EQ(count, 1);
-    // exception
+}
+void zeroCopy(Piper::Scheduler& scheduler) {
 
-    // zero-copy
     // compilation time
     {
         struct UncopyableValue final {
             size_t value;
-            explicit UncopyableValue(size_t val) : value(val) {}
+            explicit UncopyableValue(const size_t val) : value(val) {}
             UncopyableValue(const UncopyableValue& rhs) = delete;
             UncopyableValue& operator=(const UncopyableValue& rhs) = delete;
             UncopyableValue(UncopyableValue&& rhs) = default;
             UncopyableValue& operator=(UncopyableValue&& rhs) = delete;
         };
-        auto trans = context.getScheduler().spawn([](Piper::Future<UncopyableValue> x) { return std::move(*x); },
-                                                  context.getScheduler().value(UncopyableValue{ 5 }));
+        auto trans = scheduler.spawn([](UncopyableValue x) { return std::move(x); }, scheduler.value(UncopyableValue{ magic }));
         trans.wait();
-        ASSERT_EQ(trans->value, 5);
+        ASSERT_EQ(trans.get().value, magic);
     }
     // runtime
     {
@@ -75,47 +127,190 @@ void generalConcurrencyTest(Piper::PiperContext& context) {
             size_t copyCount;
             CopyCount() : copyCount(0) {}
             CopyCount(const CopyCount& rhs) : copyCount(rhs.copyCount + 1) {}
-            CopyCount& operator=(const CopyCount&) {
-                throw;
+            void operator=(const CopyCount&) const {
+                FAIL();
             }
             CopyCount(CopyCount&& rhs) = default;
             CopyCount& operator=(CopyCount&&) = default;
         };
-        auto trans = context.getScheduler().spawn([](Piper::Future<CopyCount> x) { return std::move(*x); },
-                                                  context.getScheduler().value(CopyCount{}));
+        auto trans = scheduler.spawn([](CopyCount x) { return x; }, scheduler.value(CopyCount{}));
         trans.wait();
-        ASSERT_EQ(trans->copyCount, 0);
+        ASSERT_EQ(trans.get().copyCount, 0);
     }
-    // ownership
-    {
-        auto src = std::make_unique<int>(5);
-        auto trans = context.getScheduler().spawn([](Piper::Future<std::unique_ptr<int32_t>> x) { return std::move(*x); },
-                                                  context.getScheduler().value(std::move(src)));
-        ASSERT_FALSE(src.get());
-        trans.wait();
-        ASSERT_TRUE(trans->get());
-        ASSERT_EQ(*trans->get(), 5);
-    }
-    // wrap
-    // event
-    // event+notify
+}
+void ownership(Piper::Scheduler& scheduler) {
+    auto src = std::make_unique<int>(magic);
+    auto trans = scheduler.spawn([](std::unique_ptr<int32_t> x) { return std::move(x); }, scheduler.value(std::move(src)));
+    ASSERT_FALSE(src.get());
+    trans.wait();
+    ASSERT_TRUE(trans.get().get());
+    ASSERT_EQ(*trans.get().get(), magic);
+}
+void wrap(Piper::Scheduler& scheduler) {
+    // T
+    Piper::DynamicArray<Piper::Future<size_t>> data(scheduler.context().getAllocator());
+    for(size_t i = 0; i < 10; ++i)
+        data.emplace_back(scheduler.spawn(
+            [](size_t i) {
+                std::this_thread::sleep_for(10ms);
+                return i + 1;
+            },
+            i));
+    auto wrap = scheduler.wrap(data);
+    wrap.wait();
+    ASSERT_EQ(wrap.get().size(), 10);
+    for(size_t i = 0; i < 10; ++i)
+        ASSERT_EQ(wrap.get()[i], i + 1);
+    // void
+    Piper::DynamicArray<Piper::Future<void>> events(scheduler.context().getAllocator());
+}
+void returnFuture(Piper::Scheduler& scheduler) {
+    auto future = scheduler.spawn([ctx = &scheduler.context()] { return ctx->getScheduler().value(magic); });
+    future.wait();
+    ASSERT_EQ(future.get(), magic);
+}
+void parallel(Piper::Scheduler& scheduler) {
+    Piper::DynamicArray<int32_t> res(100, scheduler.context().getAllocator());
+    scheduler.parallelFor(static_cast<uint32_t>(res.size()), [&res](uint32_t i) { res[i] = i + 10; }).wait();
+    for(size_t i = 0; i < res.size(); ++i)
+        ASSERT_EQ(res[i], i + 10);
+}
+void notify(Piper::Scheduler& scheduler) {
+    struct Event final : public Piper::FutureImpl {
+        bool readyFlag;
+        int32_t mPayload;
+        explicit Event(Piper::PiperContext& context) : Piper::FutureImpl(context), readyFlag(false), mPayload(magic) {}
+
+        [[nodiscard]] bool fastReady() const noexcept override {
+            return readyFlag;
+        }
+
+        [[nodiscard]] bool ready() const noexcept override {
+            return readyFlag;
+        }
+        void wait() const override {
+            while(!readyFlag)
+                std::this_thread::yield();
+        }
+
+        [[nodiscard]] const void* storage() const override {
+            return &mPayload;
+        }
+
+        [[nodiscard]] bool supportNotify() const noexcept override {
+            return true;
+        }
+    };
+    auto eventHandle = Piper::makeSharedObject<Event>(scheduler.context());
+    auto event = Piper::Future<int32_t>{ eventHandle };
+    ASSERT_FALSE(event.ready());
+    auto future = scheduler.spawn([](int32_t x) { return x * 2; }, event);
+    const auto yetAnotherThread = std::async([eventHandle, ctx = &scheduler.context()] {
+        std::this_thread::sleep_for(1000ms);
+        eventHandle->readyFlag = true;
+        ctx->notify(eventHandle.get());
+    });
+    ASSERT_FALSE(future.ready());
+    future.wait();
+    ASSERT_TRUE(yetAnotherThread.wait_for(0ms) == std::future_status::ready);
+    ASSERT_TRUE(future.ready());
+    ASSERT_EQ(future.get(), 2 * magic);
+}
+void futureCallProxy(Piper::Scheduler& scheduler) {
+    class Instance final : public Piper::Object {
+    private:
+        int32_t mData;
+
+    public:
+        explicit Instance(Piper::PiperContext& context, const int32_t data) : Piper::Object(context), mData(0) {
+            std::this_thread::sleep_for(100ms);
+            mData = data;
+        }
+        Piper::Future<int32_t> apply(Piper::Scheduler* scheduler) const {
+            std::this_thread::sleep_for(10ms);
+            return scheduler->value(mData);
+        }
+    };
+    auto inst = scheduler.spawn([](Piper::PiperContext* context) { return Piper::makeSharedObject<Instance>(*context, magic); },
+                                &scheduler.context());
+    auto future = PIPER_FUTURE_CALL(inst, apply)(&scheduler);
+    ASSERT_FALSE(inst.ready());
+    ASSERT_FALSE(future.ready());
+    future.wait();
+    ASSERT_TRUE(inst.ready());
+    ASSERT_TRUE(future.ready());
+    ASSERT_EQ(future.get(), magic);
+}
+void futureMemberAccess(Piper::Scheduler& scheduler) {
+    struct Instance final : public Piper::Object {
+        int32_t data;
+
+        explicit Instance(Piper::PiperContext& context, const int32_t input) : Piper::Object(context) {
+            std::this_thread::sleep_for(100ms);
+            data = input;
+        }
+    };
+    auto inst = scheduler.spawn([](Piper::PiperContext* context) { return Piper::makeSharedObject<Instance>(*context, magic); },
+                                &scheduler.context());
+    auto future = PIPER_FUTURE_ACCESS(inst, data);
+    ASSERT_FALSE(inst.ready());
+    ASSERT_FALSE(future.ready());
+    future.wait();
+    ASSERT_TRUE(inst.ready());
+    ASSERT_TRUE(future.ready());
+    ASSERT_EQ(future.get(), magic);
+}
+void dynamicParallelism(Piper::Scheduler& scheduler) {
+    auto future = scheduler.spawn([ctx = &scheduler.context()] {
+        std::this_thread::sleep_for(100ms);
+        return ctx->getScheduler().spawn([ctx] {
+            std::this_thread::sleep_for(100ms);
+            return ctx->getScheduler().spawn([ctx] {
+                std::this_thread::sleep_for(100ms);
+                return ctx->getScheduler().value(magic);
+            });
+        });
+    });
+    future.wait();
+    ASSERT_EQ(future.get(), magic);
 }
 
-TEST_F(PiperCoreEnvironment, Taskflow) {
-    auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.Taskflow.Scheduler",
-                                                       Piper::makeSharedObject<Piper::Config>(*context));
-    inst.wait();
-    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst.get()));
-    generalConcurrencyTest(*context);
-}
+#define TEST_ENVIRONMENT(NAME, CLASS_ID)                                                                                    \
+    class NAME : public PiperCoreEnvironment {                                                                              \
+    protected:                                                                                                              \
+        void SetUp() override {                                                                                             \
+            PiperCoreEnvironment::SetUp();                                                                                  \
+            auto inst = context->getModuleLoader().newInstance(CLASS_ID, Piper::makeSharedObject<Piper::Config>(*context)); \
+            inst.wait();                                                                                                    \
+            contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst.get()));                   \
+        }                                                                                                                   \
+    };
 
-TEST_F(PiperCoreEnvironment, Squirrel) {
-    auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.Squirrel.Scheduler",
-                                                       Piper::makeSharedObject<Piper::Config>(*context));
-    inst.wait();
-    contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst.get()));
-    generalConcurrencyTest(*context);
-}
+#define TEST_CONTENT(NAME, FUNC)       \
+    TEST_F(NAME, NAME##_##FUNC) {      \
+        FUNC(context->getScheduler()); \
+    }
+#define TEST_MODULE(NAME, CLASS_ID)        \
+    TEST_ENVIRONMENT(NAME, CLASS_ID)       \
+    TEST_CONTENT(NAME, valueAndReady)      \
+    TEST_CONTENT(NAME, commonSpawn)        \
+    TEST_CONTENT(NAME, nonBlocking)        \
+    TEST_CONTENT(NAME, callOnce)           \
+    TEST_CONTENT(NAME, zeroCopy)           \
+    TEST_CONTENT(NAME, ownership)          \
+    TEST_CONTENT(NAME, wrap)               \
+    TEST_CONTENT(NAME, returnFuture)       \
+    TEST_CONTENT(NAME, parallel)           \
+    TEST_CONTENT(NAME, notify)             \
+    TEST_CONTENT(NAME, futureCallProxy)    \
+    TEST_CONTENT(NAME, futureMemberAccess) \
+    TEST_CONTENT(NAME, dynamicParallelism)
+
+TEST_MODULE(Taskflow, "Piper.Infrastructure.Taskflow.Scheduler")
+TEST_MODULE(Squirrel, "Piper.Infrastructure.Squirrel.Scheduler")
+#undef TEST_CONTENT
+#undef TEST_MODULE
+#undef TEST_ENVIRONMENT
 
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);

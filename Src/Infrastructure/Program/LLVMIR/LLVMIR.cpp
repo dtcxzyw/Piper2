@@ -47,15 +47,23 @@
 #include <utility>
 
 namespace Piper {
+    struct Context final {
+        llvm::LLVMContext context;
+        std::mutex mutex;
+    };
+
     class LLVMStream final : public llvm::raw_pwrite_stream {
     private:
+        PiperContext& mContext;
         DynamicArray<std::byte>& mData;
 
     public:
-        explicit LLVMStream(DynamicArray<std::byte>& data) : raw_pwrite_stream(true), mData(data) {}
+        explicit LLVMStream(PiperContext& context, DynamicArray<std::byte>& data)
+            : raw_pwrite_stream(true), mContext(context), mData(data) {}
         void pwrite_impl(const char* ptr, const size_t size, const uint64_t offset) override {
             if(offset != mData.size())
-                throw;
+                mContext.getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant,
+                                                        "Bitcode buffer internal error occurred.", PIPER_SOURCE_LOCATION());
             write_impl(ptr, size);
         }
         void write_impl(const char* ptr, const size_t size) override {
@@ -81,15 +89,16 @@ namespace Piper {
 
     class LLVMIR final : public PITU, public eastl::enable_shared_from_this<LLVMIR> {
     private:
-        mutable SharedPtr<llvm::LLVMContext> mContext;
+        mutable SharedPtr<Context> mContext;
         mutable std::unique_ptr<llvm::Module> mModule;
         mutable std::mutex mMutex;
 
     public:
-        LLVMIR(PiperContext& context, SharedPtr<llvm::LLVMContext> llvmCtx, std::unique_ptr<llvm::Module> module)
+        LLVMIR(PiperContext& context, SharedPtr<Context> llvmCtx, std::unique_ptr<llvm::Module> module)
             : PITU(context), mContext(std::move(llvmCtx)), mModule(std::move(module)) {}
         // TODO:reduce clone
         std::unique_ptr<llvm::Module> cloneModule() const {
+            std::lock_guard<std::mutex> guard{ mContext->mutex };
             // ReSharper disable once CppRedundantQualifier
             return llvm::CloneModule(*mModule);
         }
@@ -110,39 +119,40 @@ namespace Piper {
                 if(StringView{ format } == "LLVM IR") {
                     // TODO:lazy parse linkable and directly return data
                     return scheduler.spawn(
-                        [ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
+                        [ctx = &context()](const std::unique_ptr<llvm::Module> mod) {
                             DynamicArray<std::byte> data{ ctx->getAllocator() };
-                            LLVMStream stream(data);
-                            llvm::WriteBitcodeToFile(*mod.get(), stream);
+                            LLVMStream stream(*ctx, data);
+                            llvm::WriteBitcodeToFile(*mod, stream);
                             stream.flush();
                             return LinkableProgram{ std::move(data), "LLVM IR" };
                         },
                         scheduler.value(cloneModule()));
                 }
                 std::string error;
-                const auto target = llvm::TargetRegistry::lookupTarget(format, error);
+                const auto* target = llvm::TargetRegistry::lookupTarget(format, error);
                 if(target) {
                     return scheduler.spawn(
-                        [target, format, ctx = &context()](Future<std::unique_ptr<llvm::Module>> mod) {
-                            auto stage = ctx->getErrorHandler().enterStageStatic("generate linkable", PIPER_SOURCE_LOCATION());
+                        [target, format, ctx = &context()](std::unique_ptr<llvm::Module> mod) {
+                            auto stage = ctx->getErrorHandler().enterStage("generate linkable", PIPER_SOURCE_LOCATION());
                             // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
                             const auto* cpu = "generic";
                             const auto* features = "";
 
                             llvm::TargetOptions opt;
                             auto RM = llvm::Optional<llvm::Reloc::Model>();
-                            auto targetMachine = target->createTargetMachine(format, cpu, features, opt, RM);
-                            mod.get()->setDataLayout(targetMachine->createDataLayout());
-                            mod.get()->setTargetTriple(format);
+                            auto* targetMachine = target->createTargetMachine(format, cpu, features, opt, RM);
+                            // BUG:The operation is not thread safe.
+                            // mod->setDataLayout(targetMachine->createDataLayout());
+                            // mod->setTargetTriple(format);
 
                             llvm::legacy::PassManager pass;
                             DynamicArray<std::byte> data{ ctx->getAllocator() };
-                            LLVMStream stream(data);
+                            LLVMStream stream(*ctx, data);
                             if(!(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
                                                                     llvm::CodeGenFileType::CGFT_ObjectFile)))
                                 ctx->getErrorHandler().raiseException("Failed to create object emit pass",
                                                                       PIPER_SOURCE_LOCATION());
-                            pass.run(*mod.get());
+                            pass.run(*mod);
                             stream.flush();
                             return LinkableProgram{ std::move(data), format };
                         },
@@ -160,11 +170,11 @@ namespace Piper {
 
     class LLVMIRManager final : public PITUManager {
     private:
-        SharedPtr<llvm::LLVMContext> mContext;
+        SharedPtr<Context> mContext;
 
     public:
         explicit LLVMIRManager(PiperContext& context)
-            : PITUManager(context), mContext(makeSharedPtr<llvm::LLVMContext>(context.getAllocator())) {}
+            : PITUManager(context), mContext(makeSharedPtr<Context>(context.getAllocator())) {}
         [[nodiscard]] Future<SharedPtr<PITU>> loadPITU(const String& path) const override {
             return context().getScheduler().spawn([ctx = &context(), path, llvmCtx = mContext] {
                 auto stage = ctx->getErrorHandler().enterStage("load PITU " + path, PIPER_SOURCE_LOCATION());
@@ -173,30 +183,38 @@ namespace Piper {
                 const auto span = map->get();
                 const auto beg = reinterpret_cast<uint8_t*>(span.data());
                 const auto end = beg + span.size();
-                stage.switchToStatic("parse LLVM bitcode", PIPER_SOURCE_LOCATION());
+                stage.next("parse LLVM bitcode", PIPER_SOURCE_LOCATION());
+
+                std::unique_lock<std::mutex> guard{ llvmCtx->mutex };
                 auto res = llvm::parseBitcodeFile(
-                    llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{ beg, end }), "llvm bitcode data" }, *llvmCtx);
+                    llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{ beg, end }), "llvm bitcode data" },
+                    llvmCtx->context);
+                guard.unlock();
+
                 if(res)
                     return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmCtx, std::move(res.get())));
+
                 const auto error = toString(res.takeError());
                 ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
             });
         }
         [[nodiscard]] Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
             return context().getScheduler().spawn(
-                [ctx = &context(), llvmCtx = mContext](const Future<DynamicArray<SharedPtr<PITU>>>& modules) {
-                    auto stage = ctx->getErrorHandler().enterStageStatic("link LLVM modules", PIPER_SOURCE_LOCATION());
+                [ctx = &context(), llvmCtx = mContext](const DynamicArray<SharedPtr<PITU>>& modules) {
+                    auto stage = ctx->getErrorHandler().enterStage("link LLVM modules", PIPER_SOURCE_LOCATION());
 
                     // TODO:module ID param
-                    auto module = std::make_unique<llvm::Module>("merged_module", *llvmCtx);
+                    std::unique_lock<std::mutex> guard{ llvmCtx->mutex };
+                    auto module = std::make_unique<llvm::Module>("merged_module", llvmCtx->context);
                     llvm::Linker linker(*module);
 
-                    for(auto& mod : *modules) {
+                    for(auto& mod : modules) {
                         const auto* ir = dynamic_cast<const LLVMIR*>(mod.get());
                         if(!ir)
                             ctx->getErrorHandler().raiseException("Unsupported PITU", PIPER_SOURCE_LOCATION());
                         linker.linkInModule(ir->cloneModule());
                     }
+                    guard.unlock();
 
                     verifyLLVMModule(*ctx, *module);
 

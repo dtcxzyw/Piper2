@@ -62,10 +62,8 @@ namespace Piper {
         RenderDriverProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             RenderDriverProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            res.accumulate =
-                tracer.buildProgram(pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()), "accumulate");
+            res.accumulate = tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "accumulate");
             return res;
         }
     };

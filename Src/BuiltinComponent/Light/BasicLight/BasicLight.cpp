@@ -39,10 +39,8 @@ namespace Piper {
         LightProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            res.light =
-                tracer.buildProgram(pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()), "lightPoint");
+            res.light = tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "lightPoint");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }

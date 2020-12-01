@@ -30,7 +30,8 @@ namespace Piper {
         Variant<UMap<String, SharedPtr<StorageUnit>>, DynamicArray<std::byte>> mData;
         auto& viewAsDir() {
             if(isFile())
-                throw;
+                context().getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant, "Bad filesystem node type.",
+                                                         PIPER_SOURCE_LOCATION());
             return get<UMap<String, SharedPtr<StorageUnit>>>(mData);
         }
 
@@ -43,7 +44,8 @@ namespace Piper {
         }
         auto& viewAsFile() {
             if(!isFile())
-                throw;
+                context().getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant, "Bad filesystem node type.",
+                                                         PIPER_SOURCE_LOCATION());
             return get<DynamicArray<std::byte>>(mData);
         }
         void remove(StorageUnit* ptr) {
@@ -53,12 +55,13 @@ namespace Piper {
                     dir.erase(iter);
                     return;
                 }
-            throw;
+            context().getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant,
+                                                     "Filesystem has been corrupted.", PIPER_SOURCE_LOCATION());
         }
         void insert(const String& key, const SharedPtr<StorageUnit>& unit) {
             auto& dir = viewAsDir();
             if(dir.count(key))
-                throw;
+                context().getErrorHandler().raiseException("Invalid path \"" + key + "\".", PIPER_SOURCE_LOCATION());
             dir.insert(makePair(key, unit));
         }
         StorageUnit* locate(const String& key) {
@@ -84,26 +87,10 @@ namespace Piper {
         Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return Future<DynamicArray<std::byte>>{ nullptr };
-            /*
-            if(mAccess != FileAccessMode::Read)
-                throw;
-            return context().getScheduler().value(
-                DynamicArray<std::byte>(mData.cbegin() + offset, mData.cbegin() + offset + size));
-                */
         }
         Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return Future<void>{ nullptr };
-            /*
-            if(mAccess != FileAccessMode::Write)
-                throw;
-            return context().getScheduler().spawn(
-                [offset, this](const Future<DynamicArray<std::byte>>& val) {
-                    eastl::copy(val->cbegin(), val->cend(), mData.begin());
-                    // TODO:extend/thread safety
-                },
-                data);
-                */
         }
     };
 
@@ -134,7 +121,7 @@ namespace Piper {
         }
         [[nodiscard]] SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
             if(this->size() <= offset + size)
-                throw;
+                context().getErrorHandler().raiseException("File mapping is out of bound.", PIPER_SOURCE_LOCATION());
             if(mData.size() <= offset + size)
                 mData.resize(offset + size);
             return makeSharedObject<MappedSpanImpl>(context(),
@@ -196,11 +183,11 @@ namespace Piper {
             auto* unit = locate(np, &parent);
             if(access == FileAccessMode::Read) {
                 if(!unit)
-                    throw;
+                    context().getErrorHandler().raiseException("Invalid file path.", PIPER_SOURCE_LOCATION());
                 return unit->viewAsFile();
             } else {
                 if(unit)
-                    throw;
+                    context().getErrorHandler().raiseException("This file has existed.", PIPER_SOURCE_LOCATION());
                 auto newFile = makeSharedObject<StorageUnit>(context(), FileTag{});
                 parent->insert(String{ name(np), context().getAllocator() }, newFile);
                 return newFile->viewAsFile();
@@ -223,7 +210,7 @@ namespace Piper {
             StorageUnit* parent = nullptr;
             auto* const unit = locate(np, &parent);
             if(!parent || !unit || !unit->isFile())
-                throw;
+                context().getErrorHandler().raiseException("Invalid file path.", PIPER_SOURCE_LOCATION());
             parent->remove(unit);
         }
         void createDir(const StringView& path) override {
@@ -231,7 +218,7 @@ namespace Piper {
             StorageUnit* parent = nullptr;
             auto* const unit = locate(np, &parent);
             if(!parent || parent->isFile() || unit)
-                throw;
+                context().getErrorHandler().raiseException("This directory/file has existed.", PIPER_SOURCE_LOCATION());
             parent->insert(String{ name(np), context().getAllocator() }, makeSharedObject<StorageUnit>(context(), DirTag{}));
         }
         void removeDir(const StringView& path) override {
@@ -239,7 +226,7 @@ namespace Piper {
             StorageUnit* parent = nullptr;
             auto* const unit = locate(np, &parent);
             if(!parent || !unit || unit->isFile())
-                throw;
+                context().getErrorHandler().raiseException("Invalid directory path.", PIPER_SOURCE_LOCATION());
             parent->remove(unit);
         }
 

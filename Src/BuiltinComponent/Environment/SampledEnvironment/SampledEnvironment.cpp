@@ -38,10 +38,8 @@ namespace Piper {
         EnvironmentProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             EnvironmentProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            res.missing =
-                tracer.buildProgram(pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()), "missing");
+            res.missing = tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "missing");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }

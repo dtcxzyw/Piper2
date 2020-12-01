@@ -27,9 +27,10 @@
 
 namespace Piper {
     enum class NodeType { FloatingPoint, String, SignedInteger, UnsignedInteger, Boolean, Array, Object, Null };
-    template <typename T>
-    struct DefaultTag;
-
+    namespace Detail {
+        template <typename T>
+        struct DefaultTag;
+    }
     class Config final : public Object {
     private:
         Variant<double, String, intmax_t, uintmax_t, bool, DynamicArray<SharedPtr<Config>>, UMap<String, SharedPtr<Config>>,
@@ -39,35 +40,37 @@ namespace Piper {
     public:
         Config(PiperContext& context) : Object(context), mValue(MonoState{}) {}
 
-        template <typename T>
+        template <typename T, typename RT = std::decay_t<T>>
         Config(PiperContext& context, T&& value,
-               DefaultTag<std::enable_if_t<!(std::is_floating_point_v<T> || (std::is_integral_v<T> && !std::is_same_v<T, bool>) ||
-                                             std::is_same_v<T, StringView> || std::is_same_v<std::remove_const_t<T>, char8_t>)>>*
-                   unused = nullptr)
+               Detail::DefaultTag<
+                   std::enable_if_t<!(std::is_floating_point_v<RT> || (std::is_integral_v<RT> && !std::is_same_v<RT, bool>) ||
+                                      std::is_same_v<RT, StringView> || std::is_same_v<RT, CString>)>>* unused = nullptr)
             : Object(context), mValue(std::forward<T>(value)) {}
 
         Config(PiperContext& context, const StringView& value) : Config(context, String{ value, context.getAllocator() }) {}
 
         Config(PiperContext& context, const CString value) : Config(context, String{ value, context.getAllocator() }) {}
 
-        template <typename T>
-        Config(PiperContext& context, T value, DefaultTag<std::enable_if_t<std::is_floating_point_v<T>>>* unused = nullptr)
+        template <typename T, typename RT = std::decay_t<T>>
+        Config(PiperContext& context, T value,
+               Detail::DefaultTag<std::enable_if_t<std::is_floating_point_v<RT>>>* unused = nullptr)
             : Object(context), mValue(static_cast<double>(value)) {}
 
-        template <typename T>
-        Config(PiperContext& context, T value,
-               DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool>>>* unused =
-                   nullptr)
+        template <typename T, typename RT = std::decay_t<T>>
+        Config(
+            PiperContext& context, T value,
+            Detail::DefaultTag<std::enable_if_t<std::is_integral_v<RT> && std::is_unsigned_v<RT> && !std::is_same_v<RT, bool>>>*
+                unused = nullptr)
             : Object(context), mValue(static_cast<uintmax_t>(value)) {}
 
-        template <typename T>
+        template <typename T, typename RT = std::decay_t<T>>
         Config(PiperContext& context, T value,
-               DefaultTag<std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>>>* unused = nullptr)
+               Detail::DefaultTag<std::enable_if_t<std::is_integral_v<RT> && std::is_signed_v<RT>>>* unused = nullptr)
             : Object(context), mValue(static_cast<intmax_t>(value)) {}
 
         // TODO:reduce copy
         template <typename T>
-        T get() const {
+        [[nodiscard]] T get() const {
             return Piper::get<T>(mValue);
         }
 
@@ -93,7 +96,7 @@ namespace Piper {
             return res;
         }
 
-        NodeType type() const noexcept {
+        [[nodiscard]] NodeType type() const noexcept {
             return static_cast<NodeType>(mValue.index());
         }
     };
@@ -102,7 +105,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(ConfigSerializer, Object);
         virtual ~ConfigSerializer() = default;
-        virtual SharedPtr<Config> deserialize(const String& path) const = 0;
+        [[nodiscard]] virtual SharedPtr<Config> deserialize(const String& path) const = 0;
         virtual void serialize(const SharedPtr<Config>& config, const String& path) const = 0;
     };
 }  // namespace Piper

@@ -28,7 +28,7 @@
 #include "STL/StringView.hpp"
 #include "STL/UniquePtr.hpp"
 
-#pragma warning(push,0)
+#pragma warning(push, 0)
 #define NOMINMAX
 #include <Windows.h>
 #include <fileapi.h>
@@ -169,7 +169,8 @@ namespace Piper {
             return Future<DynamicArray<std::byte>>{ future };
         }
         Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) override {
-            throw;
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            return Future<void>{ nullptr };
             /*
             return context().getScheduler().spawn(
                 [offset, context = &context(), handle = mHandle, this](const Future<DynamicArray<std::byte>>& span) {
@@ -243,31 +244,31 @@ namespace Piper {
             : MappedMemory(context), mFileHandle(std::move(handle)), mSize(maxSize ? maxSize : getFileSize(mFileHandle.get())),
               mAccess(access) {
             if(mSize != 0) {
-                auto mapHandle = CreateFileMappingW(mFileHandle.get(), nullptr,
-                                                    access == FileAccessMode::Read ? PAGE_READONLY : PAGE_READWRITE,
-                                                    static_cast<DWORD>(maxSize >> 32), static_cast<DWORD>(maxSize), nullptr);
+                const auto mapHandle = CreateFileMappingW(
+                    mFileHandle.get(), nullptr, access == FileAccessMode::Read ? PAGE_READONLY : PAGE_READWRITE,
+                    static_cast<DWORD>(maxSize >> 32), static_cast<DWORD>(maxSize), nullptr);
                 if(mapHandle == INVALID_HANDLE_VALUE)
                     raiseWin32Error(context, "CreateFileMappingW", PIPER_SOURCE_LOCATION());
                 mMapHandle.reset(mapHandle);
             }
         }
-        size_t size() const noexcept override {
+        [[nodiscard]] size_t size() const noexcept override {
             return mSize;
         }
-        size_t alignment() const noexcept override {
+        [[nodiscard]] size_t alignment() const noexcept override {
             return getMemoryAlignment();
         }
-        SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
+        [[nodiscard]] SharedPtr<MappedSpan> map(const size_t offset, const size_t size) const override {
             if(mMapHandle) {
-                size_t end = offset + size;
-                size_t rem = offset % getMemoryAlignment();
-                size_t roffset = offset - rem;
-                auto ptr = reinterpret_cast<std::byte*>(
+                const auto end = offset + size;
+                const auto rem = offset % getMemoryAlignment();
+                const auto roffset = offset - rem;
+                auto* ptr = static_cast<std::byte*>(
                     MapViewOfFile(mMapHandle.get(), mAccess == FileAccessMode::Read ? FILE_MAP_READ : FILE_MAP_WRITE,
                                   static_cast<DWORD>(roffset >> 32), static_cast<DWORD>(roffset), end - roffset));
                 if(ptr == nullptr)
-                    throw;
-                auto base = ptr + offset - roffset;
+                    raiseWin32Error(context(), "MapViewOfFile", PIPER_SOURCE_LOCATION());
+                auto* base = ptr + offset - roffset;
                 return makeSharedObject<MappedSpanImpl>(context(), ptr, Span<std::byte>(base, base + size));
             }
             return makeSharedObject<MappedSpanImpl>(context(), nullptr, Span<std::byte>{});
@@ -327,11 +328,12 @@ namespace Piper {
                     payload->remainSize -= count;
                     if((--payload->remainCount) == 0) {
                         if(payload->remainSize != 0)
-                            throw;
+                            context.getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant,
+                                                                   "Native file system I/O workers' internal error occurred.",
+                                                                   PIPER_SOURCE_LOCATION());
                         payload->data->first = true;
-                        // TODO: assert:future has been destroyed
                         if(payload->data.use_count() == 1)
-                            throw;
+                            context.getErrorHandler().raiseException("Unhandled I/O future", PIPER_SOURCE_LOCATION());
                         context.notify(payload->future);
                         payload->data.reset();
                         payload->file.reset();
@@ -343,7 +345,7 @@ namespace Piper {
                 mWorkers.emplace_back(std::thread(worker));
         }
 
-        virtual ~FileSystemImpl() noexcept {
+        ~FileSystemImpl() noexcept override {
             for(Index i = 0; i < mWorkers.size(); ++i)
                 if(!PostQueuedCompletionStatus(mIOCP.get(), 0, exitFlag, nullptr))
                     raiseWin32Error(context(), "PostQueuedCompletionStatus", PIPER_SOURCE_LOCATION());

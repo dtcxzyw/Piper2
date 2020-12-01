@@ -35,9 +35,7 @@ namespace Piper {
         TextureProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             TextureProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            auto linkable = pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat());
+            auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat());
             res.sample = tracer.buildProgram(linkable, "blackBodySample");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;

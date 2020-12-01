@@ -63,10 +63,8 @@ namespace Piper {
         SensorProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SensorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            res.rayGen =
-                tracer.buildProgram(pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()), "rayGen");
+            res.rayGen = tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "rayGen");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }

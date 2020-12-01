@@ -33,9 +33,7 @@ namespace Piper {
         SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            auto linkable = pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat());
+            auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat());
             res.sample = tracer.buildProgram(linkable, "blackBodySample");
             res.evaluate = tracer.buildProgram(linkable, "blackBodyEvaluate");
             return res;
@@ -53,9 +51,7 @@ namespace Piper {
         SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            // TODO:concurrency
-            pitu.wait();
-            auto linkable = pitu->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat());
+            auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat());
             res.sample = tracer.buildProgram(linkable, "sample");
             res.evaluate = tracer.buildProgram(linkable, "evaluate");
             res.payload = packSBTPayload(context().getAllocator(), mData);

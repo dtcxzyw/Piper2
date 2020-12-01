@@ -38,8 +38,10 @@ namespace Piper {
             return false;
         }
     };
+    struct PlaceHolder final {};
 
-    namespace detail {
+    namespace Detail {
+
         template <typename T>
         struct RemovePointer {
             static T* getPointer(T* val) {
@@ -67,8 +69,42 @@ namespace Piper {
                 return val->get();
             }
         };
-    }  // namespace detail
 
+        // Temporary Auxiliary Variable
+        template <typename T, typename S>
+        class FutureCallProxy final {
+        private:
+            const SharedPtr<FutureImpl>& mFuture;
+            T* mPtr;
+            S mCall;
+
+        public:
+            FutureCallProxy(const SharedPtr<FutureImpl>& future, T* ptr, S call) : mFuture(future), mPtr(ptr), mCall(call) {}
+
+            template <typename... Args>
+            auto operator()(Args&&... args);
+        };
+
+        template <typename T, typename S>
+        class FutureAccessProxy final {
+        private:
+            const SharedPtr<FutureImpl>& mFuture;
+            const T* mPtr;
+            S mAccess;
+
+        public:
+            FutureAccessProxy(const SharedPtr<FutureImpl>& future, const T* ptr, S access)
+                : mFuture(future), mPtr(ptr), mAccess(access) {}
+
+            auto operator()();
+        };
+
+        template <typename T, typename S>
+        using FutureProxyDispatch =
+            std::conditional_t<std::is_member_function_pointer_v<S>, FutureCallProxy<T, S>, FutureAccessProxy<T, S>>;
+    }  // namespace Detail
+
+    // TODO:inplace operation?
     template <typename T>
     class Future final {
     private:
@@ -76,7 +112,12 @@ namespace Piper {
         mutable bool mReady;
 
     public:
+        using PointerT = decltype(Detail::RemovePointer<T>::getPointer(std::declval<T*>()));
         explicit Future(SharedPtr<FutureImpl> impl) noexcept : mImpl(std::move(impl)), mReady(mImpl->ready()) {}
+
+        PiperContext& context() const {
+            return mImpl->context();
+        }
 
         const SharedPtr<FutureImpl>& raw() const {
             return mImpl;
@@ -94,27 +135,6 @@ namespace Piper {
                 return mImpl->wait();
         }
 
-        decltype(auto) operator*() const {
-            return *operator->();
-        }
-
-        template <typename U = T>
-        decltype(auto) operator*() {
-            return *operator->();
-        }
-
-        auto operator->() const {
-            if(!ready())
-                throw;
-            return detail::RemovePointer<T>::getPointer(static_cast<const T*>(mImpl->storage()));
-        }
-
-        auto operator->() {
-            if(!ready())
-                throw;
-            return detail::RemovePointer<T>::getPointer(static_cast<T*>(const_cast<void*>(mImpl->storage())));
-        }
-
         T& get() {
             return *static_cast<T*>(const_cast<void*>(mImpl->storage()));
         }
@@ -123,13 +143,19 @@ namespace Piper {
             return *static_cast<const T*>(mImpl->storage());
         }
 
-        ~Future() noexcept {
-            // TODO:formal check
-            if(mImpl && mImpl.unique() && !ready()) {
-                mImpl->context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
-            }
+        template <typename S>
+        auto operator->*(S call) {
+            return Detail::FutureProxyDispatch<T, S>(mImpl, static_cast<T*>(const_cast<void*>(mImpl->storage())), call);
+        }
+        template <typename S>
+        auto operator->*(S call) const {
+            return Detail::FutureProxyDispatch<const T, S>(mImpl, static_cast<const T*>(mImpl->storage()), call);
         }
     };
+
+#define PIPER_FUTURE_CALL(inst, call) ((inst)->*(&(std::remove_pointer_t<std::decay_t<typename decltype(inst)::PointerT>>::call)))
+#define PIPER_FUTURE_ACCESS(inst, data) \
+    ((inst)->*(&std::remove_pointer_t<std::decay_t<typename decltype(inst)::PointerT>>::data))()
 
     template <>
     class Future<void> final {
@@ -155,12 +181,6 @@ namespace Piper {
         void wait() const {
             if(!ready())
                 mImpl->wait();
-        }
-        ~Future() noexcept {
-            // TODO:formal check
-            if(mImpl && mImpl.unique() && !ready()) {
-                throw;
-            }
         }
     };
 
@@ -195,21 +215,21 @@ namespace Piper {
         Owner<ClosureStorage<Args...>*> alloc(STLAllocator allocator, Callable&& func) {
             auto ptr = static_cast<ClosureStorageImpl<Callable, Args...>*>(
                 allocator.allocate(sizeof(ClosureStorageImpl<Callable, Args...>)));
-            return new(ptr) ClosureStorageImpl<Callable, Args...>(std::move(func));
+            return new(ptr) ClosureStorageImpl<Callable, Args...>(std::forward<Callable>(func));
         }
 
     public:
         Closure() = delete;
         template <typename Callable>
         Closure(PiperContext& context, STLAllocator allocator, Callable&& func)
-            : mContext(context), mFunc(alloc<Callable>(allocator, std::move(func)),
+            : mContext(context), mFunc(alloc<Callable>(allocator, std::forward<Callable>(func)),
                                        DefaultDeleter<ClosureStorage<Args...>>{ allocator }) /*,mCount(0)*/ {}
         Closure(const Closure& rhs)
             : mContext(rhs.mContext),
               mFunc(std::move(const_cast<UniquePtr<ClosureStorage<Args...>>&>(rhs.mFunc))) /*, mCount(0)*/ {}
         void operator()(Args... args) const {
             if(!mFunc)
-                throw;
+                mContext.getErrorHandler().raiseException("Invalid target.", PIPER_SOURCE_LOCATION());
             mFunc->apply(args...);
             //++mCount;
         }
@@ -226,18 +246,7 @@ namespace Piper {
         */
     };
 
-    namespace detail {
-        template <class Callable, class Tuple, size_t... Indices>
-        constexpr decltype(auto) moveApplyImpl(Callable&& func, Tuple&& args, std::index_sequence<Indices...>) {
-            return std::invoke(std::forward<Callable>(func), std::move(std::get<Indices>(std::forward<Tuple>(args)))...);
-        }
-
-        template <class Callable, class Tuple>
-        constexpr decltype(auto) moveApply(Callable&& func, Tuple&& args) {
-            return moveApplyImpl(std::forward<Callable>(func), std::forward<Tuple>(args),
-                                 std::make_index_sequence<std::tuple_size_v<std::decay_t<Tuple>>>{});
-        }
-
+    namespace Detail {
         template <typename... Args>
         struct NoArgument final {
             static constexpr bool value = false;
@@ -248,37 +257,111 @@ namespace Piper {
             static constexpr bool value = true;
         };
 
-    }  // namespace detail
+        template <typename T>
+        struct RemoveFuture final {
+            using Type = T;
+        };
 
-    // TODO:support pipe
-    // TODO:support future<instance>'s member function spawn before construction
-    // TODO:support future of future(return future in spawn function)
+        template <typename T>
+        struct RemoveFuture<Future<T>> final {
+            using Type = std::enable_if_t<!std::is_void_v<T>, T>;
+        };
+        template <>
+        struct RemoveFuture<Future<void>> final {
+            using Type = PlaceHolder;
+        };
+
+        template <typename T>
+        struct IsFuture {
+            static constexpr bool value = false;
+        };
+
+        template <typename T>
+        struct IsFuture<Future<T>> {
+            static constexpr bool value = true;
+        };
+
+        template <typename T, typename = std::enable_if_t<!IsFuture<T>::value>>
+        decltype(auto) removeFuture(T&& arg) {
+            return (std::forward<T>(arg));
+        }
+
+        template <typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
+        decltype(auto) removeFuture(const Future<T>& arg) {
+            return (arg.get());
+        }
+        template <typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
+        decltype(auto) removeFuture(Future<T>&& arg) {
+            return std::move(arg.get());
+        }
+
+        constexpr auto removeFuture(const Future<void>&) {
+            return PlaceHolder{};
+        }
+
+        template <class Callable, class Tuple, size_t... Indices>
+        constexpr decltype(auto) moveApplyImpl(Callable&& func, Tuple&& args, std::index_sequence<Indices...>) {
+            return std::invoke(std::forward<Callable>(func),
+                               removeFuture(std::move(std::get<Indices>(std::forward<Tuple>(args))))...);
+        }
+
+        template <class Callable, class Tuple>
+        constexpr decltype(auto) moveApply(Callable&& func, Tuple&& args) {
+            return moveApplyImpl(std::forward<Callable>(func), std::forward<Tuple>(args),
+                                 std::make_index_sequence<std::tuple_size_v<std::decay_t<Tuple>>>{});
+        }
+
+        template <class Callable, class Tuple, size_t... Indices>
+        constexpr decltype(auto) copyApplyImpl(Callable&& func, Tuple&& args, std::index_sequence<Indices...>) {
+            return std::invoke(std::forward<Callable>(func), removeFuture(std::get<Indices>(std::forward<Tuple>(args)))...);
+        }
+
+        template <class Callable, class Tuple>
+        constexpr decltype(auto) copyApply(Callable&& func, Tuple&& args) {
+            return copyApplyImpl(std::forward<Callable>(func), std::forward<Tuple>(args),
+                                 std::make_index_sequence<std::tuple_size_v<std::decay_t<Tuple>>>{});
+        }
+
+        template <typename T>
+        SharedPtr<FutureImpl> raw(const Future<T>& arg) {
+            return std::move(arg.raw());
+        }
+        template <typename T, typename = std::enable_if_t<!IsFuture<std::decay_t<T>>::value>>
+        SharedPtr<FutureImpl> raw(T&&) {
+            return nullptr;
+        }
+
+        template <typename T>
+        using ReturnTypeCheck =
+            std::enable_if_t<!(std::is_pointer_v<T> || std::is_lvalue_reference_v<T> || std::is_rvalue_reference_v<T>), T>;
+    }  // namespace Detail
+
+    // TODO:support generator
     // TODO:asynchronous destruction
-    // TODO:allow spawn in worker thread?
     class Scheduler : public Object {
     public:
-        virtual void spawnImpl(Optional<Closure<>> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        virtual void spawnImpl(Optional<Closure<>> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                                const SharedPtr<FutureImpl>& res) = 0;
-        virtual void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        virtual void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                                      const SharedPtr<FutureImpl>& res) = 0;
         virtual SharedPtr<FutureImpl> newFutureImpl(size_t size, bool ready) = 0;
 
     private:
+        // ReturnType=void
         template <typename ReturnType, typename Callable, typename... Args>
         std::enable_if_t<std::is_void_v<ReturnType>, Future<void>> spawnDispatch(Callable&& callable, Args&&... args) {
-            // TODO:std::move dependencies
-            const auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
-            const auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
             auto result = newFutureImpl(0, false);
 
             // zero argument optimization
-            if constexpr(detail::NoArgument<Args...>::value) {
+            if constexpr(Detail::NoArgument<Args...>::value) {
                 spawnImpl(Closure<>{ context(), context().getAllocator(), std::forward<Callable>(callable) }, {}, result);
             } else {
+                SharedPtr<FutureImpl> dependencies[] = { nullptr, std::move(Detail::raw(std::forward<Args>(args)))... };
+                const auto depSpan = Span<SharedPtr<FutureImpl>>(std::begin(dependencies) + 1, std::end(dependencies));
                 spawnImpl(
                     Closure<>{ context(), context().getAllocator(),
                                [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)] {
-                                   detail::moveApply(std::move(call),
+                                   Detail::moveApply(std::move(call),
                                                      std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)));
                                } },
                     depSpan, result);
@@ -286,33 +369,68 @@ namespace Piper {
             return Future<ReturnType>(result);
         }
 
-        template <typename... T>
-        struct IsFuture {
-            static constexpr bool value = false;
-        };
-
-        template <typename... T>
-        struct IsFuture<Future<T>...> {
-            static constexpr bool value = true;
-        };
-
+        // ReturnType=T
         template <typename ReturnType, typename Callable, typename... Args>
-        std::enable_if_t<!std::is_void_v<ReturnType> && !IsFuture<ReturnType>::value, Future<ReturnType>>
+        std::enable_if_t<!std::is_void_v<ReturnType> && !Detail::IsFuture<ReturnType>::value, Future<ReturnType>>
         spawnDispatch(Callable&& callable, Args&&... args) {
-            // TODO:std::move dependencies
-            const auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
-            const auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
+            SharedPtr<FutureImpl> dependencies[] = { nullptr, std::move(Detail::raw(args))... };
+            const auto depSpan = Span<SharedPtr<FutureImpl>>(std::begin(dependencies) + 1, std::end(dependencies));
             auto result = newFutureImpl(sizeof(ReturnType), false);
 
             spawnImpl(Closure<>{ context(), context().getAllocator(),
                                  [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
                                   ptr = result->storage()] {
-                                     new(static_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(detail::moveApply(
+                                     new(static_cast<ReturnType*>(const_cast<void*>(ptr))) ReturnType(Detail::moveApply(
                                          std::move(call), std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple))));
                                  } },
                       depSpan, result);
 
             return Future<ReturnType>{ std::move(result) };
+        }
+
+        // ReturnType=Future<void>
+        template <typename ReturnType, typename Callable, typename... Args>
+        std::enable_if_t<std::is_same_v<ReturnType, Future<void>>, Future<void>> spawnDispatch(Callable&& callable,
+                                                                                               Args&&... args) {
+            auto result = newFutureImpl(0, false);
+
+            SharedPtr<FutureImpl> dependencies[] = { nullptr, std::move(Detail::raw(args))... };
+            const auto depSpan = Span<SharedPtr<FutureImpl>>(std::begin(dependencies) + 1, std::end(dependencies));
+            spawnImpl(Closure<>{ context(), context().getAllocator(),
+                                 [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...)] {
+                                     Detail::moveApply(std::move(call),
+                                                       std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)))
+                                         .wait();
+                                     // TODO:yield time slice
+                                 } },
+                      depSpan, result);
+            return Future<void>{ std::move(result) };
+        }
+        // ReturnType=Future<T>
+        template <typename ReturnType, typename RealReturnType = typename Detail::RemoveFuture<ReturnType>::Type,
+                  typename Callable, typename... Args>
+        std::enable_if_t<Detail::IsFuture<ReturnType>::value && !std::is_same_v<ReturnType, Future<void>>, Future<RealReturnType>>
+        spawnDispatch(Callable&& callable, Args&&... args) {
+            SharedPtr<FutureImpl> dependencies[] = { nullptr, std::move(Detail::raw(args))... };
+            const auto depSpan = Span<SharedPtr<FutureImpl>>(std::begin(dependencies) + 1, std::end(dependencies));
+
+            static_assert(!Detail::IsFuture<RealReturnType>::value, "Future of Future is not supported.");
+            auto result = newFutureImpl(sizeof(RealReturnType), false);
+
+            spawnImpl(Closure<>{ context(), context().getAllocator(),
+                                 [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
+                                  ptr = result->storage()] {
+                                     auto future = std::move(Detail::moveApply(
+                                         std::move(call), std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple))));
+                                     // TODO:yield time slice
+                                     future.wait();
+                                     // TODO:ownership?
+                                     new(static_cast<RealReturnType*>(const_cast<void*>(ptr)))
+                                         RealReturnType(std::move(future.get()));
+                                 } },
+                      depSpan, result);
+
+            return Future<RealReturnType>{ std::move(result) };
         }
 
     public:
@@ -332,41 +450,45 @@ namespace Piper {
             return Future<void>(nullptr);
         }
 
-        template <typename Callable, typename... Args, typename = std::enable_if_t<IsFuture<std::decay_t<Args>...>::value>>
+        template <typename Callable, typename... Args>
         auto spawn(Callable&& callable, Args&&... args) {
-            using ReturnType = std::invoke_result_t<std::decay_t<Callable>, std::decay_t<Args>...>;
+            using ReturnType = Detail::ReturnTypeCheck<
+                std::invoke_result_t<std::decay_t<Callable>, typename Detail::RemoveFuture<std::decay_t<Args>>::Type...>>;
             return spawnDispatch<ReturnType>(std::forward<Callable>(callable), std::forward<Args>(args)...);
         }
 
         template <typename T>
         auto wrap(DynamicArray<Future<T>> futures) -> std::enable_if_t<!std::is_void_v<T>, Future<DynamicArray<T>>> {
+            if(futures.empty())
+                return value<DynamicArray<T>>({});
             auto result = newFutureImpl(sizeof(DynamicArray<T>), false);
-            DynamicArray<const SharedPtr<FutureImpl>> dep{ context().getAllocator() };
+            DynamicArray<SharedPtr<FutureImpl>> dep{ context().getAllocator() };
             dep.reserve(futures.size());
             for(auto&& future : futures)
-                dep.push_back(future.raw());
+                dep.push_back(std::move(future.raw()));
             spawnImpl(Closure<>{ context(), context().getAllocator(),
-                                 [fs = std::move(futures), ptr = result->storage(), allocator = &context().getAllocator()] {
+                                 [fs = std::move(futures), ptr = result->storage(), ctx = &context()] {
                                      auto vec = static_cast<DynamicArray<T>*>(const_cast<void*>(ptr));
-                                     new(vec) DynamicArray<T>(*allocator);
+                                     new(vec) DynamicArray<T>(ctx->getAllocator());
                                      vec->reserve(fs.size());
                                      for(auto&& future : const_cast<DynamicArray<Future<T>>&>(fs))
                                          // TODO:ownership
                                          vec->emplace_back(std::move(future.get()));
                                  } },
-                      Span<const SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
+                      Span<SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
             return Future<DynamicArray<T>>{ std::move(result) };
         }
 
-        // TODO:reduce empty node
         template <typename T>
         auto wrap(const DynamicArray<Future<T>>& futures) -> std::enable_if_t<std::is_void_v<T>, Future<void>> {
+            if(futures.empty())
+                return ready();
             auto result = newFutureImpl(0, false);
-            DynamicArray<const SharedPtr<FutureImpl>> dep{ context().getAllocator() };
+            DynamicArray<SharedPtr<FutureImpl>> dep{ context().getAllocator() };
             dep.reserve(futures.size());
             for(auto&& future : futures)
                 dep.push_back(future.raw());
-            spawnImpl(Optional<Closure<>>(eastl::nullopt), Span<const SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
+            spawnImpl(Optional<Closure<>>(eastl::nullopt), Span<SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
             return Future<void>{ std::move(result) };
         }
 
@@ -375,24 +497,115 @@ namespace Piper {
         }
         virtual void notify(FutureImpl* event) {}
 
-        template <typename Callable, typename... Args, typename = std::enable_if_t<IsFuture<std::decay_t<Args>...>::value>>
+        // TODO:support return value
+        template <typename Callable, typename... Args,
+                  typename ReturnType = std::invoke_result_t<std::decay_t<Callable>, uint32_t,
+                                                             typename Detail::RemoveFuture<std::decay_t<Args>>::Type...>,
+                  typename = std::enable_if_t<std::is_void_v<ReturnType>>>
         Future<void> parallelFor(const uint32_t n, Callable&& callable, Args&&... args) {
-            const auto dependencies = std::initializer_list<SharedPtr<FutureImpl>>{ args.raw()... };
-            const auto depSpan = Span<const SharedPtr<FutureImpl>>(dependencies.begin(), dependencies.end());
+            if(n == 0)
+                return ready();
+            SharedPtr<FutureImpl> dependencies[] = { nullptr, std::move(Detail::raw(args))... };
+            const auto depSpan = Span<SharedPtr<FutureImpl>>(std::begin(dependencies) + 1, std::end(dependencies));
             auto result = newFutureImpl(0, false);
 
-            // TODO:copy?
             parallelForImpl(
                 n,
-                Closure<uint32_t>{
-                    context(), context().getAllocator(),
-                    [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
-                     ptr = result->storage()](uint32_t idx) { std::apply(call, std::tuple_cat(std::make_tuple(idx), tuple)); } },
+                Closure<uint32_t>{ context(), context().getAllocator(),
+                                   [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
+                                    ptr = result->storage()](uint32_t idx) {
+                                       Detail::copyApply(call, std::tuple_cat(std::make_tuple(idx), tuple));
+                                   } },
                 depSpan, result);
 
             return Future<void>{ std::move(result) };
         }
+
         // TODO: reduce(ordered/unordered? + associative laws)
     };
+
+    template <typename T>
+    class LValueReference final : public std::reference_wrapper<T> {
+    private:
+        SharedPtr<FutureImpl> mHolder;
+
+    public:
+        LValueReference(T& ref, SharedPtr<FutureImpl> owner) : std::reference_wrapper(ref), mHolder(std::move(owner)) {}
+    };
+
+    namespace Detail {
+        template <typename T, typename = ReturnTypeCheck<T>>
+        auto lvalueReference(T val, const SharedPtr<FutureImpl>&) {
+            return val;
+        }
+
+        template <typename T>
+        auto lvalueReference(T& val, SharedPtr<FutureImpl>&& holder) {
+            return LValueReference<T>{ val, std::move(holder) };
+        }
+
+        template <typename T, typename S>
+        template <typename... Args>
+        auto FutureCallProxy<T, S>::operator()(Args&&... args) {
+            // TODO:reduce copy
+            return mFuture->context().getScheduler().spawn(
+                [ref = mFuture, call = mCall, ptr = mPtr, tuple = std::make_tuple(std::forward<Args>(args)...)](PlaceHolder) {
+#define PIPER_MOVE_CALL /* NOLINT(cppcoreguidelines-macro-usage)*/               \
+    moveApply(call,                                                              \
+              std::tuple_cat(std::make_tuple(RemovePointer<T>::getPointer(ptr)), \
+                             const_cast<std::remove_const_t<decltype(tuple)>&>(tuple)))
+                    using ReturnType = std::invoke_result_t<S, decltype(RemovePointer<T>::getPointer(std::declval<T*>())),
+                                                            std::decay_t<Args>...>;
+                    if constexpr(std::is_void_v<ReturnType>) {
+                        PIPER_MOVE_CALL;
+                    } else
+                        return lvalueReference(PIPER_MOVE_CALL, std::move(const_cast<std::remove_const_t<decltype(ref)&>>(ref)));
+                },
+                Future<void>{ mFuture });
+        }
+
+        template <typename T, typename S>
+        auto FutureAccessProxy<T, S>::operator()() {
+            // TODO:reduce copy
+            return mFuture->context().getScheduler().spawn(
+                [ref = mFuture, access = mAccess, ptr = mPtr](PlaceHolder) { return RemovePointer<T>::getPointer(ptr)->*access; },
+                Future<void>{ mFuture });
+        }
+    }  // namespace Detail
+
+    template <typename T, typename U>
+    Future<SharedPtr<T>> dynamicSharedPtrCast(const Future<SharedPtr<U>>& ptr) {
+        return ptr.context().getScheduler().spawn([](SharedPtr<U> ptr) { return eastl::dynamic_shared_pointer_cast<T>(ptr); },
+                                                  ptr);
+    }
+
+    // TODO:operator fusion?
+#define PIPER_FUTURE_BINARY_OPERATOR(op) /* NOLINT(cppcoreguidelines-macro-usage)*/         \
+                                                                                            \
+    template <typename U, typename V>                                                       \
+    auto operator##op(Future<U>&& u, Future<V>&& v) {                                       \
+        return u.context().getScheduler().spawn([](U&& s, V&& t) { return s op t; }, u, v); \
+    }
+    PIPER_FUTURE_BINARY_OPERATOR(+)
+    PIPER_FUTURE_BINARY_OPERATOR(-)
+    PIPER_FUTURE_BINARY_OPERATOR(*)
+    PIPER_FUTURE_BINARY_OPERATOR(/)
+    PIPER_FUTURE_BINARY_OPERATOR(>>)
+    PIPER_FUTURE_BINARY_OPERATOR(<<)
+    PIPER_FUTURE_BINARY_OPERATOR(&)
+    PIPER_FUTURE_BINARY_OPERATOR(|)
+    PIPER_FUTURE_BINARY_OPERATOR(^)
+#undef PIPER_FUTURE_BINARY_OPERATOR
+
+#define PIPER_FUTURE_UNARY_OPERATOR(op) /* NOLINT(cppcoreguidelines-macro-usage)*/ \
+                                                                                   \
+    template <typename U, typename V>                                              \
+    auto operator##op(Future<U>&& u) {                                             \
+        return u.context().getScheduler().spawn([](U&& s) { return op s; }, u);    \
+    }
+
+    PIPER_FUTURE_UNARY_OPERATOR(!)
+    PIPER_FUTURE_UNARY_OPERATOR(-)
+#undef PIPER_FUTURE_UNARY_OPERATOR
 
 }  // namespace Piper

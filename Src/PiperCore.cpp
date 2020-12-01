@@ -29,7 +29,6 @@
 #include "STL/GSL.hpp"
 #include "STL/Pair.hpp"
 #include "STL/SharedPtr.hpp"
-#include "STL/Stack.hpp"
 #include "STL/String.hpp"
 #include "STL/UMap.hpp"
 #include "STL/USet.hpp"
@@ -45,6 +44,7 @@
 
 namespace fs = std::filesystem;
 
+// ReSharper disable once CppInconsistentNaming
 PIPER_API int EA::StdC::Vsnprintf(char* EA_RESTRICT pDestination, size_t n, const char* EA_RESTRICT pFormat, va_list arguments) {
     return vsnprintf(pDestination, n, pFormat, arguments);
 }
@@ -64,29 +64,29 @@ namespace Piper {
         mPool.push_back(std::move(ref));
     }
 
-    SharedPtr<Object> ResourceCacheManager::lookupImpl(ResourceID id) const {
-        auto iter = mCache.find(id);
+    SharedPtr<Object> ResourceCacheManager::lookupImpl(const ResourceID id) const {
+        const auto iter = mCache.find(id);
         // if(iter != mCache.cend() && !iter->second.expired())
         //    return iter->second.lock();
         if(iter != mCache.cend())
             return iter->second;
         return nullptr;
     }
-    void ResourceCacheManager::reserve(ResourceID id, const SharedPtr<Object>& cache) {
+    void ResourceCacheManager::reserve(const ResourceID id, const SharedPtr<Object>& cache) {
         mCache.insert_or_assign(id, SharedPtr<Object>{ cache });
     }
     ResourceCacheManager::ResourceCacheManager(PiperContext& context) : Object(context), mCache(context.getAllocator()) {}
 
-    MemoryArena::MemoryArena(Allocator& allocator, size_t blockSize)
+    MemoryArena::MemoryArena(Allocator& allocator, const size_t blockSize)
         : mAllocator(allocator), mBlocks(allocator), mCurrent(0), mCurEnd(0), mBlockSize(blockSize) {}
     Ptr MemoryArena::allocRaw(const size_t size, const size_t align) {
         if(size >= mBlockSize) {
-            auto ptr = mAllocator.alloc(size, align);
+            const auto ptr = mAllocator.alloc(size, align);
             mBlocks.push_back(ptr);
             return ptr;
         }
-        auto rem = mCurrent % align;
-        auto begin = (rem == 0 ? mCurrent : mCurrent + align - rem);
+        const auto rem = mCurrent % align;
+        const auto begin = (rem == 0 ? mCurrent : mCurrent + align - rem);
         if(begin + size > mCurEnd) {
             mCurrent = mAllocator.alloc(mBlockSize, align);
             mCurEnd = mCurrent + mBlockSize;
@@ -106,26 +106,24 @@ namespace Piper {
     StageGuard::~StageGuard() noexcept {
         mHandler.exitStage();
     }
-    void StageGuard::switchTo(const String& stage, const SourceLocation& loc) {
+    // ReSharper disable once CppMemberFunctionMayBeConst
+    void StageGuard::next(Variant<CString, String> stage, const SourceLocation& loc) {
         mHandler.exitStage();
-        mHandler.enterStageImpl(stage, loc);
-    }
-    // TODO:overload
-    void StageGuard::switchToStatic(const CString stage, const SourceLocation& loc) {
-        mHandler.exitStage();
-        // TODO:no allocation stroage
-        mHandler.enterStageImpl(String(stage, mHandler.context().getAllocator()), loc);
+        mHandler.enterStageImpl(std::move(stage), loc);
     }
     // TODO:flags
-    void* STLAllocator::allocate(size_t n, int flags) {
+    // ReSharper disable once CppMemberFunctionMayBeConst
+    [[nodiscard]] void* STLAllocator::allocate(const size_t n, int flags) {
         return reinterpret_cast<void*>(mAllocator->alloc(n));
     }
-    void* STLAllocator::allocate(size_t n, size_t alignment, size_t offset, int flags) {
+    // ReSharper disable once CppMemberFunctionMayBeConst
+    [[nodiscard]] void* STLAllocator::allocate(const size_t n, const size_t alignment, const size_t offset, int flags) {
         if(offset != 0)
-            throw;
+            mAllocator->context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
         return reinterpret_cast<void*>(mAllocator->alloc(n, alignment));
     }
-    void STLAllocator::deallocate(void* p, size_t) noexcept {
+    // ReSharper disable once CppMemberFunctionMayBeConst
+    [[nodiscard]] void STLAllocator::deallocate(void* p, size_t) noexcept {
         mAllocator->free(reinterpret_cast<Ptr>(p));
     }
 
@@ -134,9 +132,9 @@ namespace Piper {
         explicit DefaultAllocator(PiperContext& view) : Allocator(view) {}
         Ptr alloc(const size_t size, const size_t align) override {
             static_assert(sizeof(Ptr) == sizeof(void*));
-            auto res = reinterpret_cast<Ptr>(allocMemory(align, size));
+            const auto res = reinterpret_cast<Ptr>(allocMemory(align, size));
             if(res == 0)
-                throw;  // TODO:bad_alloc
+                context().getErrorHandler().raiseException("Bad alloc", PIPER_SOURCE_LOCATION());
             return res;
         }
         void free(const Ptr ptr) noexcept override {
@@ -149,9 +147,9 @@ namespace Piper {
         struct Hasher final {
             size_t operator()(const PhysicalQuantitySIDesc& desc) const {
                 // FNV1-a
-                uint64_t res = 14695981039346656037ULL;
-                auto ptr = reinterpret_cast<const uint8_t*>(&desc);
-                auto end = reinterpret_cast<const uint8_t*>(&desc) + sizeof(desc);
+                auto res = 14695981039346656037ULL;
+                const auto* ptr = reinterpret_cast<const uint8_t*>(&desc);
+                const auto* end = reinterpret_cast<const uint8_t*>(&desc) + sizeof(desc);
                 while(ptr != end) {
                     res = (res ^ (*ptr)) * 1099511628211ULL;
                     ++ptr;
@@ -218,10 +216,10 @@ namespace Piper {
         }
         void addTranslation(const PhysicalQuantitySIDesc& desc, const StringView& name) override {
             if(mD2S.count(desc))
-                throw;
+                return;
             String str{ name, context().getAllocator() };
             if(mS2D.count(str) != 0)
-                throw;
+                context().getErrorHandler().raiseException("Multiple definition of units.", PIPER_SOURCE_LOCATION());
             mD2S.insert(makePair(desc, str));
             mS2D.insert(makePair(str, desc));
         }
@@ -235,18 +233,17 @@ namespace Piper {
                 if(i != name.size() && name[i] != '*')
                     continue;
                 std::cmatch matches;
-                bool res = std::regex_match(name.cbegin() + lastPos, name.cbegin() + i, matches, mRegex);
-                if(!res)
-                    throw;
-                if(matches.size() < 2 || matches.size() > 3)
-                    throw;
-                const auto iter = mS2D.find(String(matches[1].first, matches[1].second, context().getAllocator()));
+                const auto res = std::regex_match(name.cbegin() + lastPos, name.cbegin() + i, matches, mRegex);
+                if(!res || matches.size() != 3)
+                    context().getErrorHandler().raiseException("Invalid unit.", PIPER_SOURCE_LOCATION());
+                String unit{ matches[1].first, matches[1].second, context().getAllocator() };
+                const auto iter = mS2D.find(unit);
                 if(iter == mS2D.cend())
-                    throw;
-                int32_t base = 1;
+                    context().getErrorHandler().raiseException("Undefined unit \"" + unit + "\".", PIPER_SOURCE_LOCATION());
+                auto base = 1;
                 if(matches.size() == 3 && matches[2].matched) {
-                    auto res = std::from_chars(matches[2].first + 1, matches[2].second, base);
-                    Ensures(res.ptr == matches[2].second);
+                    auto val = std::from_chars(matches[2].first + 1, matches[2].second, base);
+                    Ensures(val.ptr == matches[2].second);
                 }
 #define PIPER_REGISTER_UNIT(x) desc.x += (iter->second.x) * base
 
@@ -267,7 +264,7 @@ namespace Piper {
         }
     };
 
-    class DLLHandle final {
+    class DLLHandle final : public Object {
     private:
         struct HandleCloser {
             PiperContext& context;
@@ -278,96 +275,26 @@ namespace Piper {
         UniquePtr<void, HandleCloser> mHandle;
 
     public:
-        explicit DLLHandle(PiperContext& context, void* handle) : mHandle(handle, HandleCloser{ context }) {}
+        explicit DLLHandle(PiperContext& context, void* handle) : Object(context), mHandle(handle, HandleCloser{ context }) {}
         void* getFunctionAddress(const CString symbol) const {
             return getModuleSymbol(mHandle.get_deleter().context, mHandle.get(), symbol);
         }
     };
 
+    class PiperContextImpl;
+
     class ModuleLoaderImpl final : public ModuleLoader {
     private:
         UMap<String, SharedPtr<Module>> mModules;
         UMap<String, Pair<SharedPtr<Config>, String>> mModuleDesc;
-        Stack<DLLHandle> mHandles;
+        DynamicArray<SharedPtr<DLLHandle>> mHandles;
         // USet<String> mClasses; TODO:Cache
         std::recursive_mutex mMutex;  // TODO:recursive+shared?
+        PiperContextImpl& mContext;
 
     public:
-        explicit ModuleLoaderImpl(PiperContext& context)
-            : ModuleLoader(context), mModules(context.getAllocator()), mHandles(STLAllocator{ context.getAllocator() }),
-              mModuleDesc(context.getAllocator()) {}
-        // TODO:use ClassID
-        Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) override {
-            auto stage = context().getErrorHandler().enterStageStatic("parse package description", PIPER_SOURCE_LOCATION());
-            auto&& info = moduleDesc->viewAsObject();
-            auto iter = info.find(String("Name", context().getAllocator()));
-            if(iter == info.cend())
-                throw;
-            auto name = iter->second->get<String>();
-
-            {
-                std::unique_lock<std::recursive_mutex> guard{ mMutex };
-                if(mModules.count(name))
-                    return context().getScheduler().ready();
-            }
-            // TODO:double checked locking
-
-            iter = info.find(String("Path", context().getAllocator()));
-            if(iter == info.cend())
-                throw;
-            auto path = descPath + "/" + iter->second->get<String>();
-
-            iter = info.find("Dependencies");
-            DynamicArray<String> deps(context().getAllocator());
-            if(iter != info.cend()) {
-                for(auto&& dep : iter->second->viewAsArray())
-                    deps.push_back(dep->get<String>());
-            }
-            // TODO:filesystem
-
-            stage.switchTo("spawn load " + name, PIPER_SOURCE_LOCATION());
-
-            // TODO:concurrency with mutex
-            // return context().getScheduler().spawn([this, name, path, deps, descPath] {
-            // TODO:checksum:blake2sp
-            // TODO:module dependences/moduleDesc provider
-            for(auto&& dep : deps) {
-                auto stage2 =
-                    context().getErrorHandler().enterStage("load third-party dependence " + dep, PIPER_SOURCE_LOCATION());
-                const auto handle = static_cast<void*>(
-                    ::loadModule(context(), fs::u8path((descPath + "/" + dep + getModuleExtension()).c_str())));
-                {
-                    std::unique_lock<std::recursive_mutex> guard{ mMutex };
-                    mHandles.push(DLLHandle{ context(), handle });
-                }
-            }
-            auto stage3 = context().getErrorHandler().enterStage("load module " + path, PIPER_SOURCE_LOCATION());
-            const auto moduleFullPath = fs::u8path((path + getModuleExtension()).c_str());
-            const auto handle = static_cast<void*>(::loadModule(context(), moduleFullPath));
-            DLLHandle lib{ context(), handle };
-            stage.switchToStatic("check module protocol", PIPER_SOURCE_LOCATION());
-            static const StringView coreProtocol = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
-            using ProtocolFunc = const char* (*)();
-            const auto protocol = static_cast<ProtocolFunc>(lib.getFunctionAddress("piperGetProtocol"));
-            if(StringView{ protocol() } != coreProtocol)
-                throw;
-            stage.switchToStatic("init module", PIPER_SOURCE_LOCATION());
-            using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator, const char*);
-            const auto init = static_cast<InitFunc>(lib.getFunctionAddress("piperInitModule"));
-            auto& allocator = context().getAllocator();
-            auto mod =
-                SharedPtr<Module>{ init(context(), allocator, fs::absolute(moduleFullPath).parent_path().u8string().c_str()),
-                                   DefaultDeleter<Module>{ allocator }, STLAllocator{ allocator } };
-            if(!mod)
-                throw;
-            {
-                std::unique_lock<std::recursive_mutex> guard{ mMutex };
-                mModules.insert(makePair(name, mod));
-                mHandles.push(std::move(lib));
-            }
-            //});
-            return context().getScheduler().ready();
-        }
+        explicit ModuleLoaderImpl(PiperContextImpl& context);
+        Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) override;
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             // TODO:asynchronous module loading
@@ -377,21 +304,23 @@ namespace Piper {
                                                                 PIPER_SOURCE_LOCATION());
             const auto pos = classID.find_last_of('.');
             if(pos == String::npos)
-                throw;
+                context().getErrorHandler().raiseException("Invalid classID.", PIPER_SOURCE_LOCATION());
 
             std::unique_lock<std::recursive_mutex> guard{ mMutex };
-            const auto iter = mModules.find(String(classID.substr(0, pos), context().getAllocator()));
+            const String name{ classID.substr(0, pos), context().getAllocator() };
+            const auto iter = mModules.find(name);
             if(iter == mModules.cend())
-                throw;
+                context().getErrorHandler().raiseException("Module \"" + name + "\" has not been loaded.",
+                                                           PIPER_SOURCE_LOCATION());
             return iter->second->newInstance(classID.substr(pos + 1), config, module);
         }
         Future<void> loadModule(const String& moduleID) override {
             if(mModules.count(moduleID))
                 return context().getScheduler().ready();
-            // TODO:lock module desc
+            std::lock_guard<std::recursive_mutex> guard{ mMutex };
             const auto iter = mModuleDesc.find(moduleID);
             if(iter == mModuleDesc.cend())
-                throw;
+                context().getErrorHandler().raiseException("Undefined module \"" + moduleID + "\".", PIPER_SOURCE_LOCATION());
             return loadModule(iter->second.first, iter->second.second);
         }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config) override {
@@ -399,28 +328,20 @@ namespace Piper {
                                                                 PIPER_SOURCE_LOCATION());
             const auto pos = classID.find_last_of('.');
             if(pos == String::npos)
-                throw;
+                context().getErrorHandler().raiseException(
+                    "Invalid classID \"" + String{ classID, context().getAllocator() } + "\".", PIPER_SOURCE_LOCATION());
 
             const auto module = loadModule(String{ classID.substr(0, pos), context().getAllocator() });
             // TODO:reduce classID split time
             return newInstance(classID, config, module);
         }
         void addModuleDescription(const SharedPtr<Config>& moduleDesc, const String& descPath) override {
+            std::lock_guard<std::recursive_mutex> guard{ mMutex };
             auto&& obj = moduleDesc->viewAsObject();
-            auto iter = obj.find(String{ "Name", context().getAllocator() });
+            const auto iter = obj.find(String{ "Name", context().getAllocator() });
             if(iter == obj.cend())
-                throw;
+                context().getErrorHandler().raiseException("Invalid module description.", PIPER_SOURCE_LOCATION());
             mModuleDesc.insert(makePair(iter->second->get<String>(), makePair(moduleDesc, descPath)));
-        }
-
-        ~ModuleLoaderImpl() noexcept {
-            // TODO:fix destroy order in context
-            // auto stage = context().getErrorHandler().enterStage("destroy modules", PIPER_SOURCE_LOCATION());
-            // TODO:destroy order
-            mModuleDesc.clear();
-            mModules.clear();
-            while(!mHandles.empty())
-                mHandles.pop();
         }
     };
 
@@ -464,7 +385,7 @@ namespace Piper {
     private:
         void* mPtr;
 
-        void* alloc(PiperContext& context, const size_t size) {
+        [[nodiscard]] static void* alloc(PiperContext& context, const size_t size) {
             if(size)
                 return reinterpret_cast<void*>(context.getAllocator().alloc(size));
             return nullptr;
@@ -472,13 +393,13 @@ namespace Piper {
 
     public:
         FutureStorage(PiperContext& context, const size_t size) : FutureImpl(context), mPtr(alloc(context, size)) {}
-        bool ready() const noexcept override {
+        [[nodiscard]] bool ready() const noexcept override {
             return true;
         }
-        bool fastReady() const noexcept override {
+        [[nodiscard]] bool fastReady() const noexcept override {
             return true;
         }
-        const void* storage() const override {
+        [[nodiscard]] const void* storage() const override {
             return mPtr;
         }
         void wait() const override {}
@@ -488,7 +409,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(SchedulerImpl, Scheduler)
 
-        void spawnImpl(Optional<Closure<>> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        void spawnImpl(Optional<Closure<>> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                        const SharedPtr<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
                 if(dep)
@@ -496,7 +417,7 @@ namespace Piper {
             if(func.has_value())
                 func.value()();
         }
-        void parallelForImpl(uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                              const SharedPtr<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
                 if(dep)
@@ -511,7 +432,7 @@ namespace Piper {
 
     class ErrorHandlerImpl final : public ErrorHandler {
     private:
-        UMap<std::thread::id, Stack<Pair<String, SourceLocation>>, std::hash<std::thread::id>> mStages;
+        UMap<std::thread::id, DynamicArray<Pair<Variant<CString, String>, SourceLocation>>, std::hash<std::thread::id>> mStages;
         std::shared_mutex mMutex;
         void beforeAbort() {
             notImplemented(PIPER_SOURCE_LOCATION());
@@ -528,11 +449,8 @@ namespace Piper {
             auto iter = mStages.find(id);
             if(iter != mStages.cend())
                 return iter->second;
-            return mStages
-                .insert(makePair(
-                    id,
-                    decltype(mStages)::mapped_type{ decltype(mStages)::mapped_type::container_type{ context().getAllocator() } }))
-                .first->second;
+            using ValueType = decltype(mStages)::mapped_type;
+            return mStages.insert(makePair(id, ValueType{ context().getAllocator() })).first->second;
         }
 
     public:
@@ -544,9 +462,7 @@ namespace Piper {
             notImplemented(PIPER_SOURCE_LOCATION());
         }
 
-        // for runtime error
         void raiseException(const StringView& message, const SourceLocation& loc) override {
-            // TODO:avoid raising exception in destructor?
             context().getLogger().record(LogLevel::Fatal, message, loc);
             context().getLogger().flush();
             beforeAbort();
@@ -569,15 +485,20 @@ namespace Piper {
             std::abort();
         }
 
-        void enterStageImpl(const String& stage, const SourceLocation& loc) override {
-            locate().push(makePair(stage, loc));
+        [[nodiscard]] void enterStageImpl(Variant<CString, String> stage, const SourceLocation& loc) override {
             auto&& logger = context().getLogger();
-            if(logger.allow(LogLevel::Debug))
-                logger.record(LogLevel::Debug,
-                              "(Stage Layer " + toString(context().getAllocator(), locate().size()) + ") " + stage, loc);
+            if(logger.allow(LogLevel::Debug)) {
+                auto msg = "(Stage Layer " + toString(context().getAllocator(), locate().size()) + ") ";
+                if(stage.index())
+                    msg += eastl::get<String>(stage);
+                else
+                    msg += eastl::get<CString>(stage);
+                logger.record(LogLevel::Debug, msg, loc);
+            }
+            locate().emplace_back(std::move(stage), loc);
         }
         void exitStage() noexcept override {
-            locate().pop();
+            locate().pop_back();
         }
     };
 
@@ -599,16 +520,17 @@ namespace Piper {
         DefaultAllocator mDefaultAllocator;
         Allocator* mAllocator;
         SharedPtr<Logger> mLogger;
-        ModuleLoaderImpl mModuleLoader;
+        UniquePtr<ModuleLoaderImpl> mModuleLoader;
         SharedPtr<Scheduler> mScheduler;
         SharedPtr<FileSystem> mFileSystem;
         SharedPtr<Allocator> mUserAllocator;
         SharedPtr<PITUManager> mPITUManager;
-        UnitManagerImpl mUnitManager;
-        ErrorHandlerImpl mErrorHandler;
+        UniquePtr<UnitManagerImpl> mUnitManager;
+        UniquePtr<ErrorHandlerImpl> mErrorHandler;
         DynamicArray<Scheduler*> mNotifyScheduler;
+        std::mutex mMutex;
 
-        Stack<SharedPtr<Object>> mLifeTimeRecorder;
+        DynamicArray<SharedPtr<Object>> mLifeTimeRecorder;
 
     public:
         PiperContextImpl();
@@ -617,7 +539,7 @@ namespace Piper {
             return *mLogger;
         }
         ModuleLoader& getModuleLoader() noexcept override {
-            return mModuleLoader;
+            return *mModuleLoader;
         }
         Scheduler& getScheduler() noexcept override {
             return *mScheduler;
@@ -629,36 +551,41 @@ namespace Piper {
             return *mAllocator;
         }
         UnitManager& getUnitManager() noexcept override {
-            return mUnitManager;
+            return *mUnitManager;
         }
         ErrorHandler& getErrorHandler() noexcept override {
-            return mErrorHandler;
+            return *mErrorHandler;
         }
         PITUManager& getPITUManager() noexcept override {
             return *mPITUManager;
         }
 
         void setLogger(SharedPtr<Logger> logger) noexcept override {
-            mLifeTimeRecorder.push(logger);
+            std::lock_guard<std::mutex> guard{ mMutex };
+            mLifeTimeRecorder.emplace_back(logger);
             mLogger = std::move(logger);
         }
         void setScheduler(SharedPtr<Scheduler> scheduler) noexcept override {
-            mLifeTimeRecorder.push(scheduler);
+            std::lock_guard<std::mutex> guard{ mMutex };
+            mLifeTimeRecorder.emplace_back(scheduler);
             if(scheduler->supportNotify())
                 mNotifyScheduler.push_back(scheduler.get());
             mScheduler = std::move(scheduler);
         }
         void setFileSystem(SharedPtr<FileSystem> filesystem) noexcept override {
-            mLifeTimeRecorder.push(filesystem);
+            std::lock_guard<std::mutex> guard{ mMutex };
+            mLifeTimeRecorder.emplace_back(filesystem);
             mFileSystem = std::move(filesystem);
         }
         void setAllocator(SharedPtr<Allocator> allocator) noexcept override {
-            mLifeTimeRecorder.push(allocator);
+            std::lock_guard<std::mutex> guard{ mMutex };
+            mLifeTimeRecorder.emplace_back(allocator);
             mUserAllocator = std::move(allocator);
             mAllocator = mUserAllocator.get();
         }
         void setPITUManager(SharedPtr<PITUManager> manager) noexcept override {
-            mLifeTimeRecorder.push(manager);
+            std::lock_guard<std::mutex> guard{ mMutex };
+            mLifeTimeRecorder.emplace_back(manager);
             mPITUManager = std::move(manager);
         }
 
@@ -667,29 +594,123 @@ namespace Piper {
                 scheduler->notify(event);
         }
 
-        ~PiperContextImpl() noexcept {
-            auto stage = mErrorHandler.enterStageStatic("destroy Piper context", PIPER_SOURCE_LOCATION());
+        void registerDelegatedObject(SharedPtr<Object> object) {
+            std::lock_guard<std::mutex> guard{ mMutex };
+            mLifeTimeRecorder.emplace_back(std::move(object));
+        }
 
+        ~PiperContextImpl() noexcept override {
+            if(mLogger->allow(LogLevel::Info))
+                mLogger->record(LogLevel::Info, "destroy Piper context", PIPER_SOURCE_LOCATION());
+            mLogger->flush();
+
+            mLogger.reset();
             mFileSystem.reset();
             mScheduler.reset();
-            // BUG:some containers of ErrorHandler and ModuleLoader are using user allocator.
-            // mUserAllocator.reset();
-            mLogger->flush();
-            mLogger.reset();
+            mUnitManager.reset();
+            mUserAllocator.reset();
+            mErrorHandler.reset();
+            mPITUManager.reset();
+            mModuleLoader.reset();
 
             while(!mLifeTimeRecorder.empty())
-                mLifeTimeRecorder.pop();
+                mLifeTimeRecorder.pop_back();
         }
     };
 
     PiperContextImpl::PiperContextImpl()
-        : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator), mModuleLoader(*this), mUnitManager(*this),
-          mErrorHandler(*this), mNotifyScheduler(getAllocator()), mLifeTimeRecorder(STLAllocator{ getAllocator() }) {
+        : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator),
+          mModuleLoader(makeUniquePtr<ModuleLoaderImpl>(mDefaultAllocator, *this)),
+          mUnitManager(makeUniquePtr<UnitManagerImpl>(mDefaultAllocator, *this)),
+          mErrorHandler(makeUniquePtr<ErrorHandlerImpl>(mDefaultAllocator, *this)), mNotifyScheduler(getAllocator()),
+          mLifeTimeRecorder(STLAllocator{ getAllocator() }) {
         setLogger(makeSharedObject<LoggerImpl>(*this));
-        auto stage = mErrorHandler.enterStageStatic("create Piper context", PIPER_SOURCE_LOCATION());
+        auto stage = mErrorHandler->enterStage("create Piper context", PIPER_SOURCE_LOCATION());
         setScheduler(makeSharedObject<SchedulerImpl>(*this));
         nativeFileSystem(*this);
         mPITUManager = makeSharedObject<DummyPITUManager>(*this);
+    }
+
+    ModuleLoaderImpl::ModuleLoaderImpl(PiperContextImpl& context)
+        : ModuleLoader(context), mModules(context.getAllocator()), mModuleDesc(context.getAllocator()),
+          mHandles(STLAllocator{ context.getAllocator() }), mContext(context) {}
+
+    Future<void> ModuleLoaderImpl::loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) {
+        auto stage = context().getErrorHandler().enterStage("parse package description", PIPER_SOURCE_LOCATION());
+        auto&& info = moduleDesc->viewAsObject();
+        auto iter = info.find(String("Name", context().getAllocator()));
+        if(iter == info.cend())
+            context().getErrorHandler().raiseException("Module's name is needed.", PIPER_SOURCE_LOCATION());
+        auto name = iter->second->get<String>();
+
+        {
+            std::unique_lock<std::recursive_mutex> guard{ mMutex };
+            if(mModules.count(name))
+                return context().getScheduler().ready();
+        }
+        // TODO:double checked locking
+
+        iter = info.find(String("Path", context().getAllocator()));
+        if(iter == info.cend())
+            context().getErrorHandler().raiseException("Module's path is needed.", PIPER_SOURCE_LOCATION());
+        const auto path = descPath + "/" + iter->second->get<String>();
+
+        iter = info.find("Dependencies");
+        DynamicArray<String> deps(context().getAllocator());
+        if(iter != info.cend()) {
+            for(auto&& dep : iter->second->viewAsArray())
+                deps.push_back(dep->get<String>());
+        }
+        // TODO:filesystem
+
+        stage.next("spawn load " + name, PIPER_SOURCE_LOCATION());
+
+        // TODO:concurrency with mutex
+        // return context().getScheduler().spawn([this, name, path, deps, descPath] {
+        // TODO:checksum:blake2sp
+        // TODO:module dependencies
+        for(auto&& dep : deps) {
+            auto stage2 = context().getErrorHandler().enterStage("load third-party dependence " + dep, PIPER_SOURCE_LOCATION());
+            auto* handle =
+                static_cast<void*>(::loadModule(context(), fs::u8path((descPath + "/" + dep + getModuleExtension()).c_str())));
+            {
+                std::unique_lock<std::recursive_mutex> guard{ mMutex };
+                auto managedHandle = makeSharedObject<DLLHandle>(context(), handle);
+                mHandles.emplace_back(managedHandle);
+                mContext.registerDelegatedObject(std::move(managedHandle));
+            }
+        }
+        {
+            auto stage3 = context().getErrorHandler().enterStage("load module " + path, PIPER_SOURCE_LOCATION());
+            const auto moduleFullPath = fs::u8path((path + getModuleExtension()).c_str());
+            auto* handle = static_cast<void*>(::loadModule(context(), moduleFullPath));
+            auto lib = makeSharedObject<DLLHandle>(context(), handle);
+            stage.next("check module protocol", PIPER_SOURCE_LOCATION());
+            static const StringView coreProtocol = PIPER_ABI "@" PIPER_STL "@" PIPER_INTERFACE;
+            using ProtocolFunc = CString (*)();
+            const auto protocol = static_cast<ProtocolFunc>(lib->getFunctionAddress("piperGetProtocol"));
+            if(StringView{ protocol() } != coreProtocol)
+                context().getErrorHandler().raiseException("Module protocols mismatched.", PIPER_SOURCE_LOCATION());
+            stage.next("init module", PIPER_SOURCE_LOCATION());
+            using InitFunc = Module* (*)(PiperContext & context, Allocator & allocator, CString);
+            const auto init = static_cast<InitFunc>(lib->getFunctionAddress("piperInitModule"));
+            auto& allocator = context().getAllocator();
+            auto mod =
+                SharedPtr<Module>{ init(context(), allocator, fs::absolute(moduleFullPath).parent_path().u8string().c_str()),
+                                   DefaultDeleter<Module>{ allocator }, STLAllocator{ allocator } };
+            if(!mod)
+                context().getErrorHandler().raiseException("Failed to initialize module \"" + name + "\".",
+                                                           PIPER_SOURCE_LOCATION());
+            {
+                std::unique_lock<std::recursive_mutex> guard{ mMutex };
+                mModules.insert(makePair(name, mod));
+                mHandles.emplace_back(lib);
+                mContext.registerDelegatedObject(std::move(lib));
+                mContext.registerDelegatedObject(std::move(mod));
+            }
+            //});
+            return context().getScheduler().ready();
+        }
     }
 }  // namespace Piper
 

@@ -110,13 +110,13 @@ namespace Piper {
             const auto* beg = reinterpret_cast<char8_t*>(span.data());
             const auto* end = beg + span.size();
             const auto json = Json::parse(beg, end);
-            stage.switchToStatic("build from json", PIPER_SOURCE_LOCATION());
+            stage.next("build from json", PIPER_SOURCE_LOCATION());
             return buildFromJson(json);
         }
         void serialize(const SharedPtr<Config>& config, const String& path) const override {
-            auto stage = context().getErrorHandler().enterStageStatic("build json from configuration", PIPER_SOURCE_LOCATION());
+            auto stage = context().getErrorHandler().enterStage("build json from configuration", PIPER_SOURCE_LOCATION());
             const auto content = buildJson(config).dump();
-            stage.switchTo("output json to " + path, PIPER_SOURCE_LOCATION());
+            stage.next("output json to " + path, PIPER_SOURCE_LOCATION());
             const auto file =
                 context().getFileSystem().mapFile(path, FileAccessMode::Write, FileCacheHint::Sequential, content.size());
             const auto map = file->map(0, file->size());

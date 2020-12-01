@@ -36,12 +36,12 @@
 
 namespace Piper {
     enum class FitMode { Fill, OverScan };
-    FitMode str2FitMode(const String& mode) {
+    FitMode str2FitMode(PiperContext& context, const String& mode) {
         if(mode == "Fill")
             return FitMode::Fill;
         if(mode == "OverScan")
             return FitMode::OverScan;
-        throw;
+        context.getErrorHandler().raiseException("Invalid FitMode \"" + mode + "\".", PIPER_SOURCE_LOCATION());
     }
 
     class Render final : public Operator {
@@ -50,7 +50,7 @@ namespace Piper {
             Transform<Distance, FOR::Local, FOR::World> transform;
             const auto& arr = config->viewAsArray();
             if(arr.size() != 12)
-                throw;
+                config->context().getErrorHandler().raiseException("Invalid transform", PIPER_SOURCE_LOCATION());
             for(uint32_t i = 0; i < 3; ++i)
                 for(uint32_t j = 0; j < 4; ++j) {
                     transform.A2B[i][j].val = static_cast<float>(arr[i * 4 + j]->get<double>());
@@ -68,7 +68,7 @@ namespace Piper {
         }
 
         SharedPtr<Node> buildScene(Tracer& tracer, const SharedPtr<Config>& config) {
-            switch(config->type()) {
+            switch(config->type()) {  // NOLINT(clang-diagnostic-switch-enum)
                 case NodeType::Array: {
                     auto sub = config->viewAsArray();
                     DynamicArray<NodeInstanceDesc> subNodes(context().getAllocator());
@@ -93,12 +93,12 @@ namespace Piper {
                     return tracer.buildNode(desc);
                 }
                 default:
-                    throw;
+                    context().getErrorHandler().raiseException("Invalid scene node.", PIPER_SOURCE_LOCATION());
             }
         }
 
         UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
-                                             uint32_t width, uint32_t height, float& ratio) {
+                                             const uint32_t width, const uint32_t height, float& ratio) {
             // TODO:Asset
             const auto sensor = syncLoad<Sensor>(config->at("Sensor"));
             ratio = sensor->getAspectRatio();
@@ -132,23 +132,22 @@ namespace Piper {
             // TODO:set workspace
             auto sizeDesc = opt->at("ImageSize")->viewAsArray();
             if(sizeDesc.size() != 2)
-                throw;
+                context().getErrorHandler().raiseException("Invalid ImageSize.", PIPER_SOURCE_LOCATION());
+            // TODO:directly get DynamicArray from Config
             auto width = static_cast<uint32_t>(sizeDesc[0]->get<uintmax_t>());
             auto height = static_cast<uint32_t>(sizeDesc[1]->get<uintmax_t>());
             auto scenePath = opt->at("SceneDesc")->get<String>();
             auto parserID = opt->at("SceneParser")->get<String>();
-            auto fitMode = str2FitMode(opt->at("FitMode")->get<String>());
+            auto fitMode = str2FitMode(context(), opt->at("FitMode")->get<String>());
 
-            // TODO:concurrency
-            auto parserFuture = context().getModuleLoader().newInstance(parserID, nullptr);
-            parserFuture.wait();
-            auto parser = eastl::dynamic_shared_pointer_cast<ConfigSerializer>(parserFuture.get());
+            auto parser = context().getModuleLoader().newInstanceT<ConfigSerializer>(parserID, nullptr);
+            parser.wait();
 
-            auto scene = parser->deserialize(scenePath);
+            auto scene = parser.get()->deserialize(scenePath);
             auto tracer = syncLoad<Tracer>(opt->at("Tracer"));
             auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));
 
-            float deviceAspectRatio = -1.0f;
+            auto deviceAspectRatio = -1.0f;
             auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height, deviceAspectRatio);
 
             RenderRECT rect{};

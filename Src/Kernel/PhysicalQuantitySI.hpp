@@ -82,7 +82,7 @@ namespace Piper {
         return Inverse<T>{ static_cast<typename T::FT>(1.0) / x.val };
     }
 
-    namespace detail {
+    namespace Detail {
         template <typename... T>
         constexpr bool isEven(T... args) {
             return (... && static_cast<bool>(args % 2 == 0));
@@ -90,7 +90,7 @@ namespace Piper {
     }  // namespace detail
 
     template <typename T,
-              typename = std::enable_if_t<detail::isEven(T::vm, T::vkg, T::vs, T::vA, T::vK, T::vmol, T::vcd, T::vrad, T::vsr)>>
+              typename = std::enable_if_t<Detail::isEven(T::vm, T::vkg, T::vs, T::vA, T::vK, T::vmol, T::vcd, T::vrad, T::vsr)>>
     struct SqrtImpl final {
         using Type = PhysicalQuantitySI<typename T::FT, T::vm / 2, T::vkg / 2, T::vs / 2, T::vA / 2, T::vK / 2, T::vmol / 2,
                                         T::vcd / 2, T::vrad / 2, T::vsr / 2>;

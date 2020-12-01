@@ -47,7 +47,7 @@ namespace Piper {
                     if(val != map.cend())
                         mLevel = static_cast<LogLevel>(static_cast<uint32_t>(mLevel) | static_cast<uint32_t>(val->second));
                     else
-                        throw;
+                        context.getErrorHandler().raiseException("Invalid log level.", PIPER_SOURCE_LOCATION());
                 }
             } else
                 mLevel = static_cast<LogLevel>(31);
@@ -61,7 +61,7 @@ namespace Piper {
                                   const SourceLocation& sourceLocation) noexcept override {
             if(!allow(level))
                 return;
-            auto castLevel = [](const LogLevel lv) -> spdlog::level::level_enum {
+            auto castLevel = [ctx = &context()](const LogLevel lv) -> spdlog::level::level_enum {
                 switch(lv) {
                     case LogLevel::Info:
                         return spdlog::level::info;
@@ -74,7 +74,7 @@ namespace Piper {
                     case LogLevel::Debug:
                         return spdlog::level::debug;
                 }
-                throw;
+                ctx->getErrorHandler().raiseException("Invalid log level.", PIPER_SOURCE_LOCATION());
             };
             const auto loc = spdlog::source_loc{ sourceLocation.file, sourceLocation.line, sourceLocation.func };
             spdlog::log(loc, castLevel(level), std::string_view{ message.data(), message.size() });

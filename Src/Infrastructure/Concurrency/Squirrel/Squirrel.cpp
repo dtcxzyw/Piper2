@@ -79,9 +79,11 @@ namespace Piper {
             return true;
         }
         void finishOne(SharedContext& context) {
-            if(mRemain == 0)
-                throw;
-            if(--mRemain)
+            const uint32_t remain = --mRemain;
+            if(remain == std::numeric_limits<uint32_t>::max())
+                FutureImpl::context().getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant,
+                                                                     "Multiple execution.", PIPER_SOURCE_LOCATION());
+            if(remain)
                 return;
             std::lock_guard<std::mutex> guard{ mMutex };
             for(auto& successor : mSuccessor)
@@ -247,7 +249,7 @@ namespace Piper {
         DynamicArray<std::thread> mThreadPool;
         SharedContext mContext;
 
-        void emitTask(DelayedTask* delay, const Span<const SharedPtr<FutureImpl>>& dependencies) {
+        void emitTask(DelayedTask* delay, const Span<SharedPtr<FutureImpl>>& dependencies) {
             // fake depCount for avoiding incomplete spawn
             ++delay->depCount;
 
@@ -262,15 +264,16 @@ namespace Piper {
                         --delay->depCount;
                     else {
                         // add reference
-                        delay->depRef.push_back(dep);
+                        delay->depRef.push_back(std::move(dep));
                     }
                 } else {
                     auto appendDep = [&](std::mutex& lock, UMap<FutureImpl*, ExternalFuture>& cont) {
                         auto* key = dep.get();
                         std::lock_guard<std::mutex> guard{ lock };
+                        // TODO:double check?
                         auto iter = cont.find(key);
                         if(iter == cont.cend())
-                            iter = cont.emplace(key, ExternalFuture{ dep, context().getAllocator() }).first;
+                            iter = cont.emplace(key, ExternalFuture{ std::move(dep), context().getAllocator() }).first;
                         iter->second.successor.push_back(delay);
                     };
 
@@ -296,7 +299,7 @@ namespace Piper {
         SharedPtr<FutureImpl> newFutureImpl(const size_t size, const bool) override {
             return makeSharedObject<FutureStorage>(context(), size);
         }
-        void spawnImpl(Optional<Closure<>> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        void spawnImpl(Optional<Closure<>> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                        const SharedPtr<FutureImpl>& res) override {
             auto result = eastl::dynamic_shared_pointer_cast<FutureStorage>(res);
             result->setRemain(1);
@@ -306,7 +309,7 @@ namespace Piper {
             emitTask(delay.get(), dependencies);
             delay.release();
         }
-        void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<const SharedPtr<FutureImpl>>& dependencies,
+        void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                              const SharedPtr<FutureImpl>& res) override {
             auto result = eastl::dynamic_shared_pointer_cast<FutureStorage>(res);
             auto chunkSize = std::max(1U, n / static_cast<uint32_t>(mThreadPool.size() * 3));

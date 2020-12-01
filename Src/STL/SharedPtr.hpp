@@ -36,7 +36,7 @@ namespace Piper {
     // TODO:make_shared
     template <typename T, typename... Args>
     SharedPtr<T> makeSharedPtr(STLAllocator allocator, Args&&... args) {
-        auto ptr = reinterpret_cast<T*>(allocator.allocate(sizeof(T)));
+        auto ptr = static_cast<T*>(allocator.allocate(sizeof(T)));
         try {
             new(ptr) T(std::forward<Args>(args)...);
         } catch(...) {

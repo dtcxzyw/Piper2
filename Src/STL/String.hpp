@@ -25,7 +25,7 @@
 namespace Piper {
     using String = eastl::u8string;
 
-    namespace detail {
+    namespace Detail {
         template <typename T>
         inline String toStringImpl(const STLAllocator& allocator, const char* format, const T value) {
             String res{ allocator };
@@ -35,25 +35,25 @@ namespace Piper {
     }  // namespace detail
 
     inline String toString(const STLAllocator& allocator, int32_t value) {
-        return detail::toStringImpl(allocator, "%" PRId32, value);
+        return Detail::toStringImpl(allocator, "%" PRId32, value);
     }
     inline String toString(const STLAllocator& allocator, int64_t value) {
-        return detail::toStringImpl(allocator, "%" PRId64, value);
+        return Detail::toStringImpl(allocator, "%" PRId64, value);
     }
     inline String toString(const STLAllocator& allocator, uint32_t value) {
-        return detail::toStringImpl(allocator, "%" PRIu32, value);
+        return Detail::toStringImpl(allocator, "%" PRIu32, value);
     }
     inline String toString(const STLAllocator& allocator, uint64_t value) {
-        return detail::toStringImpl(allocator, "%" PRIu64, value);
+        return Detail::toStringImpl(allocator, "%" PRIu64, value);
     }
     inline String toString(const STLAllocator& allocator, float value) {
-        return detail::toStringImpl(allocator, "%f", value);
+        return Detail::toStringImpl(allocator, "%f", value);
     }
     inline String toString(const STLAllocator& allocator, double value) {
-        return detail::toStringImpl(allocator, "%lf", value);
+        return Detail::toStringImpl(allocator, "%lf", value);
     }
     inline String toString(const STLAllocator& allocator, long double value) {
-        return detail::toStringImpl(allocator, "%Lf", value);
+        return Detail::toStringImpl(allocator, "%Lf", value);
     }
 
     //TODO:parse
