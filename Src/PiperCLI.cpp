@@ -93,8 +93,9 @@ static Piper::SharedPtr<Piper::ConfigSerializer> getParser(Piper::PiperContext& 
 // environment variable is not supported
 int main(int argc, char* argv[]) {
     Piper::UniquePtr<Piper::PiperContextOwner, ContextDeleter> context(piperCreateContext());
-    // TODO:fix resource leak
+    auto&& handler = context->getErrorHandler();
     try {
+        auto stage = handler.enterStage("parse command", PIPER_SOURCE_LOCATION());
         auto opt = cxxopts::Options("PiperCLI", "Piper2 Command Line Interface");
         std::string config, option, command, modulePath, parserName, moduleDesc;
         opt.add_options()("I,infrastructure", "Infrastructure environment configuration",
@@ -117,20 +118,25 @@ int main(int argc, char* argv[]) {
         for(auto&& desc : modules->viewAsArray())
             context->getModuleLoader().addModuleDescription(desc, base);
 
+        stage.next("setup infrastructure", PIPER_SOURCE_LOCATION());
         setupInfrastructure(*context, parser->deserialize(Piper::String{ config.c_str(), context->getAllocator() }));
 
+        stage.next("initialize operator", PIPER_SOURCE_LOCATION());
         auto op = context->getModuleLoader().newInstanceT<Piper::Operator>(Piper::StringView{ command.c_str(), command.size() },
                                                                            nullptr);
 
+        stage.next("start operation", PIPER_SOURCE_LOCATION());
         auto future = PIPER_FUTURE_CALL(op, execute)(
             parser->deserialize(Piper::String{ option.c_str(), option.size(), context->getAllocator() }));
         future.wait();
+        if(context->getLogger().allow(Piper::LogLevel::Info))
+            context->getLogger().record(Piper::LogLevel::Info, "Success", PIPER_SOURCE_LOCATION());
     } catch(const std::exception& ex) {
-        context->getErrorHandler().raiseException(ex.what(), PIPER_SOURCE_LOCATION());
+        handler.raiseException(ex.what(), PIPER_SOURCE_LOCATION());
     } catch(...) {
-        context->getErrorHandler().raiseException("Unknown Error", PIPER_SOURCE_LOCATION());
+        handler.raiseException("Unknown Error", PIPER_SOURCE_LOCATION());
     }
-
+    context->getLogger().flush();
     context.reset();
     return EXIT_SUCCESS;
 }

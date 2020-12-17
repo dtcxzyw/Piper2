@@ -565,6 +565,7 @@ namespace Piper {
         }
         void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload, const SensorNDCAffineTransform& transform,
                  const uint32_t sample) {
+            auto stage = context().getErrorHandler().enterStage("prepare payload", PIPER_SOURCE_LOCATION());
             MemoryArena arena(context().getAllocator(), 4096);
             auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
             mArg.rect = rect;
@@ -572,8 +573,10 @@ namespace Piper {
             mArg.sample = sample;
             mArg.transform = transform;
             buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
-            const auto payload = mAccelerator.createPayload(InputResource{ buffer->ref() });
 
+            const auto payload = mAccelerator.createPayload(InputResource{ { buffer->ref() } });
+
+            stage.next("launch kernel", PIPER_SOURCE_LOCATION());
             const auto future =
                 mAccelerator.runKernel(rect.width * rect.height, context().getScheduler().value(mKernel), payload);
             future.wait();

@@ -91,7 +91,7 @@ namespace Piper {
             mCurrent = mAllocator.alloc(mBlockSize, align);
             mCurEnd = mCurrent + mBlockSize;
             mBlocks.push_back(mCurrent);
-            auto ptr = mCurrent;
+            const auto ptr = mCurrent;
             mCurrent += size;
             return ptr;
         }
@@ -128,17 +128,40 @@ namespace Piper {
     }
 
     class DefaultAllocator final : public Allocator {
+    private:
+        UMap<Ptr, String> mTrace;
+
     public:
-        explicit DefaultAllocator(PiperContext& view) : Allocator(view) {}
+        explicit DefaultAllocator(PiperContext& context) : Allocator(context), mTrace(*this) {}
         Ptr alloc(const size_t size, const size_t align) override {
             static_assert(sizeof(Ptr) == sizeof(void*));
             const auto res = reinterpret_cast<Ptr>(allocMemory(align, size));
             if(res == 0)
                 context().getErrorHandler().raiseException("Bad alloc", PIPER_SOURCE_LOCATION());
+            // TODO:leak detect layer
+            static thread_local auto state = false;
+            if(context().complete() && !state) {
+                state = true;
+                auto& handler = context().getErrorHandler();
+                mTrace.insert(makePair(res, toString(*this, size) + "  bytes\n" + handler.backTrace()));
+                state = false;
+            }
             return res;
         }
         void free(const Ptr ptr) noexcept override {
+            mTrace.erase(ptr);
             freeMemory(reinterpret_cast<void*>(ptr));
+        }
+        ~DefaultAllocator() override {
+            if(!mTrace.empty()) {
+                std::cerr << "Memory leak detected" << std::endl;
+                for(auto&& it : mTrace) {
+                    std::cerr << "-----------------------------------------" << std::endl;
+                    std::cerr << it.first << std::endl;
+                    std::cerr << it.second.c_str() << std::endl;
+                    std::cerr << "-----------------------------------------" << std::endl;
+                }
+            }
         }
     };
 
@@ -367,7 +390,8 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(LoggerImpl, Logger)
-        bool allow(const LogLevel level) const noexcept override {
+
+        [[nodiscard]] bool allow(const LogLevel level) const noexcept override {
             return true;
         }
         void record(const LogLevel level, const StringView& message, const SourceLocation& sourceLocation) noexcept override {
@@ -383,16 +407,25 @@ namespace Piper {
 
     class FutureStorage final : public FutureImpl {
     private:
+        // TODO:packed with deleter?
+        Allocator& mAllocator;
         void* mPtr;
+        Closure<void*> mDeleter;
 
-        [[nodiscard]] static void* alloc(PiperContext& context, const size_t size) {
+        [[nodiscard]] static void* alloc(Allocator& allocator, const size_t size) {
             if(size)
-                return reinterpret_cast<void*>(context.getAllocator().alloc(size));
+                return reinterpret_cast<void*>(allocator.alloc(size));
             return nullptr;
         }
 
     public:
-        FutureStorage(PiperContext& context, const size_t size) : FutureImpl(context), mPtr(alloc(context, size)) {}
+        FutureStorage(PiperContext& context, const size_t size, Closure<void*> deleter)
+            : FutureImpl(context), mAllocator(context.getAllocator()), mPtr(alloc(mAllocator, size)),
+              mDeleter(std::move(deleter)) {}
+        ~FutureStorage() {
+            mDeleter(mPtr);
+            mAllocator.free(reinterpret_cast<Ptr>(mPtr));
+        }
         [[nodiscard]] bool ready() const noexcept override {
             return true;
         }
@@ -425,27 +458,23 @@ namespace Piper {
             for(uint32_t i = 0; i < n; ++i)
                 func(i);
         }
-        SharedPtr<FutureImpl> newFutureImpl(const size_t size, const bool) override {
-            return makeSharedObject<FutureStorage>(context(), size);
+        SharedPtr<FutureImpl> newFutureImpl(const size_t size, Closure<void*> deleter, const bool) override {
+            return makeSharedObject<FutureStorage>(context(), size, std::move(deleter));
         }
     };
 
+    //TODO:derive stack frame from father
     class ErrorHandlerImpl final : public ErrorHandler {
     private:
         UMap<std::thread::id, DynamicArray<Pair<Variant<CString, String>, SourceLocation>>, std::hash<std::thread::id>> mStages;
-        std::shared_mutex mMutex;
+        // TODO:shared recursive mutex
+        std::recursive_mutex mMutex;
         void beforeAbort() {
             notImplemented(PIPER_SOURCE_LOCATION());
         }
         auto& locate() {
             auto id = std::this_thread::get_id();
-            {
-                std::shared_lock<std::shared_mutex> guard{ mMutex };
-                auto iter = mStages.find(id);
-                if(iter != mStages.cend())
-                    return iter->second;
-            }
-            std::unique_lock<std::shared_mutex> guard{ mMutex };
+            std::lock_guard<std::recursive_mutex> guard{ mMutex };
             auto iter = mStages.find(id);
             if(iter != mStages.cend())
                 return iter->second;
@@ -484,7 +513,19 @@ namespace Piper {
         [[noreturn]] void notImplemented(const SourceLocation& loc) override {
             std::abort();
         }
-
+        String backTrace() override {
+            auto& stack = locate();
+            String res{ context().getAllocator() };
+            for(auto&& frame : stack) {
+                auto&& stage = frame.first;
+                if(stage.index())
+                    res += eastl::get<String>(stage);
+                else
+                    res += eastl::get<CString>(stage);
+                res += " " + (frame.second.file + (":" + toString(context().getAllocator(), frame.second.line) + "\n"));
+            }
+            return res;
+        }
         [[nodiscard]] void enterStageImpl(Variant<CString, String> stage, const SourceLocation& loc) override {
             auto&& logger = context().getLogger();
             if(logger.allow(LogLevel::Debug)) {
@@ -517,6 +558,7 @@ namespace Piper {
 
     class PiperContextImpl final : public PiperContextOwner {
     private:
+        bool mComplete;
         DefaultAllocator mDefaultAllocator;
         Allocator* mAllocator;
         SharedPtr<Logger> mLogger;
@@ -603,6 +645,7 @@ namespace Piper {
             if(mLogger->allow(LogLevel::Info))
                 mLogger->record(LogLevel::Info, "destroy Piper context", PIPER_SOURCE_LOCATION());
             mLogger->flush();
+            mComplete = false;
 
             mLogger.reset();
             mFileSystem.reset();
@@ -612,14 +655,19 @@ namespace Piper {
             mErrorHandler.reset();
             mPITUManager.reset();
             mModuleLoader.reset();
+            mNotifyScheduler.clear();
+            mNotifyScheduler.shrink_to_fit();
 
             while(!mLifeTimeRecorder.empty())
                 mLifeTimeRecorder.pop_back();
         }
+        bool complete() noexcept override {
+            return mComplete;
+        }
     };
 
     PiperContextImpl::PiperContextImpl()
-        : mDefaultAllocator(*this), mAllocator(&mDefaultAllocator),
+        : mComplete(false), mDefaultAllocator(*this), mAllocator(&mDefaultAllocator),
           mModuleLoader(makeUniquePtr<ModuleLoaderImpl>(mDefaultAllocator, *this)),
           mUnitManager(makeUniquePtr<UnitManagerImpl>(mDefaultAllocator, *this)),
           mErrorHandler(makeUniquePtr<ErrorHandlerImpl>(mDefaultAllocator, *this)), mNotifyScheduler(getAllocator()),
@@ -629,6 +677,7 @@ namespace Piper {
         setScheduler(makeSharedObject<SchedulerImpl>(*this));
         nativeFileSystem(*this);
         mPITUManager = makeSharedObject<DummyPITUManager>(*this);
+        mComplete = true;
     }
 
     ModuleLoaderImpl::ModuleLoaderImpl(PiperContextImpl& context)

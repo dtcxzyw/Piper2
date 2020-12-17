@@ -37,7 +37,7 @@ namespace Piper {
             mPath = config->at("Path")->get<String>();
         }
         AccelerationStructure& getAcceleration(Tracer& tracer) const override {
-            auto res = tracer.getCacheManager().materialize(
+            const auto res = tracer.getCacheManager().materialize(
                 reinterpret_cast<ResourceID>(this),
                 Function<SharedPtr<AccelerationStructure>>{
                     [path = mPath, &tracer, ctx = &context()]() -> SharedPtr<AccelerationStructure> {
@@ -93,13 +93,12 @@ namespace Piper {
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "TriangleMesh") {
-                return context().getScheduler().spawn([ctx = &context(), config] {
-                    return eastl::static_shared_pointer_cast<Object>(makeSharedObject<TriangleMesh>(*ctx, config));
-                });
+                return context().getScheduler().value(
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<TriangleMesh>(context(), config)));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
-    };
+    };  // namespace Piper
 }  // namespace Piper
 
 PIPER_INIT_MODULE_IMPL(Piper::ModuleImpl)

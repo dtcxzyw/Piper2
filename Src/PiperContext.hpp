@@ -29,6 +29,8 @@ namespace Piper {
         virtual UnitManager& getUnitManager() noexcept = 0;
         virtual ErrorHandler& getErrorHandler() noexcept = 0;
         virtual PITUManager& getPITUManager() noexcept = 0;
+        //TODO:available for components?
+        virtual bool complete() noexcept = 0;
 
         // TODO:better Interface?
         virtual void notify(FutureImpl* event) = 0;

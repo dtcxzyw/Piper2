@@ -34,18 +34,27 @@ namespace Piper {
 
     class FutureStorage final : public FutureImpl {
     private:
+        Allocator& mAllocator;
         std::mutex mMutex;
         DynamicArray<DelayedTask*> mSuccessor;
         void* mPtr;
+        Closure<void*> mDeleter;
         std::atomic_uint32_t mRemain;
 
         void* alloc(const size_t size) const {
-            return size ? reinterpret_cast<void*>(context().getAllocator().alloc(size)) : nullptr;
+            return size ? reinterpret_cast<void*>(mAllocator.alloc(size)) : nullptr;
         }
 
     public:
-        FutureStorage(PiperContext& context, const size_t size)
-            : FutureImpl(context), mSuccessor(context.getAllocator()), mPtr(alloc(size)), mRemain(0) {}
+        FutureStorage(PiperContext& context, Closure<void*> deleter, const size_t size)
+            : FutureImpl(context), mAllocator(context.getAllocator()), mSuccessor(context.getAllocator()), mPtr(alloc(size)),
+              mDeleter(std::move(deleter)), mRemain(0) {}
+        ~FutureStorage() noexcept override {
+            if(mRemain)
+                context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
+            mDeleter(mPtr);
+            mAllocator.free(reinterpret_cast<Ptr>(mPtr));
+        }
 
         void setRemain(const uint32_t val) {
             mRemain = val;
@@ -90,10 +99,6 @@ namespace Piper {
                 decreaseDepCount(context, successor);
             mSuccessor.clear();
             mSuccessor.shrink_to_fit();
-        }
-        ~FutureStorage() noexcept override {
-            if(mRemain)
-                context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
         }
     };
 
@@ -296,8 +301,8 @@ namespace Piper {
             for(Index i = 0; i < workers; ++i)
                 mThreadPool.push_back(std::thread{ worker, std::reference_wrapper<SharedContext>(mContext) });
         }
-        SharedPtr<FutureImpl> newFutureImpl(const size_t size, const bool) override {
-            return makeSharedObject<FutureStorage>(context(), size);
+        SharedPtr<FutureImpl> newFutureImpl(const size_t size, Closure<void*> deleter, const bool) override {
+            return makeSharedObject<FutureStorage>(context(), std::move(deleter), size);
         }
         void spawnImpl(Optional<Closure<>> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                        const SharedPtr<FutureImpl>& res) override {
@@ -315,15 +320,15 @@ namespace Piper {
             auto chunkSize = std::max(1U, n / static_cast<uint32_t>(mThreadPool.size() * 3));
             auto blockCount = (n + chunkSize - 1) / chunkSize;
             result->setRemain(blockCount);
-            auto closure = makeSharedObject<Closure<uint32_t>>(context(), context().getAllocator(),
-                                                               [call = std::move(func), chunkSize, n](const uint32_t idx) {
-                                                                   auto beg = idx * chunkSize;
-                                                                   const auto end = std::min(beg + chunkSize, n);
-                                                                   while(beg < end) {
-                                                                       call(beg);
-                                                                       ++beg;
-                                                                   }
-                                                               });
+            auto closure =
+                makeSharedObject<Closure<uint32_t>>(context(), [call = std::move(func), chunkSize, n](const uint32_t idx) {
+                    auto beg = idx * chunkSize;
+                    const auto end = std::min(beg + chunkSize, n);
+                    while(beg < end) {
+                        call(beg);
+                        ++beg;
+                    }
+                });
             STLAllocator allocator = context().getAllocator();
             auto delay = makeUniquePtr<DelayedTask>(
                 allocator, allocator, Task{ decltype(Task::work){ makePair(std::move(closure), blockCount) }, result });

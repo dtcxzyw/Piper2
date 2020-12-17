@@ -206,14 +206,17 @@ namespace Piper {
     public:
         BufferImpl(PiperContext& context, const Ptr data, const size_t size, Allocator& allocator, SharedPtr<ResourceImpl> res)
             : Buffer(context), mData(data), mSize(size), mAllocator(allocator), mResource(std::move(res)) {}
+        ~BufferImpl() {
+            mAllocator.free(mData);
+        }
         size_t size() const noexcept override {
             return mSize;
         }
         void upload(Future<DataHolder> data) override {
             auto& scheduler = context().getScheduler();
-            const auto res = scheduler.newFutureImpl(0, false);
+            const auto res = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
             SharedPtr<FutureImpl> dep[] = { mResource->getFuture(), data.raw() };
-            scheduler.spawnImpl(Closure<>{ context(), context().getAllocator(),
+            scheduler.spawnImpl(Closure<>{ context(),
                                            [src = std::move(data), data = shared_from_this()] {
                                                memcpy(reinterpret_cast<void*>(data->mData), static_cast<void*>(src.get().get()),
                                                       data->mSize);
@@ -225,17 +228,17 @@ namespace Piper {
             auto& scheduler = context().getScheduler();
             return scheduler.spawn(
                 [thisBuffer = shared_from_this()](PlaceHolder) {
-                    const auto beg = reinterpret_cast<const std::byte*>(thisBuffer->mData);
-                    const auto end = beg + thisBuffer->mSize;
+                    const auto* beg = reinterpret_cast<const std::byte*>(thisBuffer->mData);
+                    const auto* end = beg + thisBuffer->mSize;
                     return DynamicArray<std::byte>{ beg, end, thisBuffer->context().getAllocator() };
                 },
                 Future<void>{ mResource->getFuture() });
         }
         void reset() override {
             auto& scheduler = context().getScheduler();
-            const auto res = scheduler.newFutureImpl(0, false);
+            const auto res = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
             SharedPtr<FutureImpl> dep[] = { mResource->getFuture() };
-            scheduler.spawnImpl(Closure<>{ context(), context().getAllocator(),
+            scheduler.spawnImpl(Closure<>{ context(),
                                            [thisData = shared_from_this()] {
                                                memset(reinterpret_cast<void*>(thisData->mData), 0x00, thisData->mSize);
                                            } },
@@ -515,10 +518,10 @@ namespace Piper {
             auto* bind = dynamic_cast<ResourceBindingImpl*>(binding.get());
             auto input = bind->getInput();
             auto& scheduler = context().getScheduler();
-            const auto result = scheduler.newFutureImpl(0, false);
-            scheduler.spawnImpl(Closure<>{ context(), context().getAllocator(),
-                                           [call = std::move(func)] { call(static_cast<Context>(0), currentThreadID()); } },
-                                Span<SharedPtr<FutureImpl>>{ input.data(), input.size() }, result);
+            const auto result = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
+            scheduler.spawnImpl(
+                Closure<>{ context(), [call = std::move(func)] { call(static_cast<Context>(0), currentThreadID()); } },
+                Span<SharedPtr<FutureImpl>>{ input.data(), input.size() }, result);
             bind->makeDirty(result);
         }
         Future<void> available(const SharedPtr<Resource>& resource) override {

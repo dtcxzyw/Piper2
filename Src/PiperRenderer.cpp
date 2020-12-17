@@ -129,6 +129,7 @@ namespace Piper {
         explicit Render(PiperContext& context) : Operator(context) {}
         // TODO:scene module desc
         void execute(const SharedPtr<Config>& opt) override {
+            auto stage = context().getErrorHandler().enterStage("parse option", PIPER_SOURCE_LOCATION());
             // TODO:set workspace
             auto sizeDesc = opt->at("ImageSize")->viewAsArray();
             if(sizeDesc.size() != 2)
@@ -144,6 +145,7 @@ namespace Piper {
             parser.wait();
 
             auto scene = parser.get()->deserialize(scenePath);
+            stage.next("initialize pipeline", PIPER_SOURCE_LOCATION());
             auto tracer = syncLoad<Tracer>(opt->at("Tracer"));
             auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));
 
@@ -183,9 +185,11 @@ namespace Piper {
                 }
             }
 
+            stage.next("start rendering", PIPER_SOURCE_LOCATION());
             DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
             renderDriver->renderFrame(res, width, height, rect, transform, *tracer, *pipeline);
 
+            stage.next("save to image", PIPER_SOURCE_LOCATION());
             auto output = opt->at("OutputFile")->get<String>();
             // TODO:move OpenEXR to ImageIO
             saveToFile(output, res, width, height);

@@ -46,17 +46,20 @@ namespace Piper {
 
     class FutureStorage final : public FutureImpl {
     private:
+        Allocator& mAllocator;
         void* mPtr;
+        Closure<void*> mDeleter;
         Optional<FutureContext> mFuture;
         mutable bool mFastReady;
 
         void* alloc(const size_t size) const {
-            return size ? reinterpret_cast<void*>(context().getAllocator().alloc(size)) : nullptr;
+            return size ? reinterpret_cast<void*>(mAllocator.alloc(size)) : nullptr;
         }
 
     public:
-        FutureStorage(PiperContext& context, const size_t size, const bool ready)
-            : FutureImpl(context), mPtr(alloc(size)), mFuture(eastl::nullopt), mFastReady(ready) {
+        FutureStorage(PiperContext& context, const size_t size, Closure<void*> deleter, const bool ready)
+            : FutureImpl(context), mAllocator(context.getAllocator()), mPtr(alloc(size)), mDeleter(std::move(deleter)),
+              mFuture(eastl::nullopt), mFastReady(ready) {
             if(!ready)
                 mFuture.emplace();
         }
@@ -84,6 +87,8 @@ namespace Piper {
         ~FutureStorage() noexcept override {
             if(!ready())
                 context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
+            mDeleter(mPtr);
+            mAllocator.free(reinterpret_cast<Ptr>(mPtr));
         }
     };
 
@@ -154,8 +159,8 @@ namespace Piper {
             }
             commit(ctx, node, dependencies);
         }
-        SharedPtr<FutureImpl> newFutureImpl(const size_t size, const bool ready) override {
-            return makeSharedObject<FutureStorage>(context(), size, ready);
+        SharedPtr<FutureImpl> newFutureImpl(const size_t size, Closure<void*> deleter, const bool ready) override {
+            return makeSharedObject<FutureStorage>(context(), size, std::move(deleter), ready);
         }
     };
     class ModuleImpl final : public Module {

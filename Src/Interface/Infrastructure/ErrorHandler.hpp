@@ -57,6 +57,7 @@ namespace Piper {
         virtual void assertFailed(const CheckLevel level, const CString expression, const SourceLocation& loc) = 0;
         virtual void processSignal(int signal) = 0;
         [[noreturn]] virtual void notImplemented(const SourceLocation& loc) = 0;
+        virtual String backTrace() = 0;
 
         // before abort
         // virtual void addFinalAction() = 0;

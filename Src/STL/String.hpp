@@ -32,8 +32,9 @@ namespace Piper {
             res.append_sprintf(format, value);
             return res;
         }
-    }  // namespace detail
+    }  // namespace Detail
 
+    // TODO:use fmt
     inline String toString(const STLAllocator& allocator, int32_t value) {
         return Detail::toStringImpl(allocator, "%" PRId32, value);
     }
@@ -56,5 +57,5 @@ namespace Piper {
         return Detail::toStringImpl(allocator, "%Lf", value);
     }
 
-    //TODO:parse
+    // TODO:parse
 }  // namespace Piper

@@ -35,8 +35,9 @@ namespace Piper {
             : RenderDriver(context), mKernelPath(path + "/Kernel.bc") {
             mSample = static_cast<uint32_t>(config->at("SPP")->get<uintmax_t>());
         }
-        void renderFrame(DynamicArray<Spectrum<Radiance>>& res, uint32_t width, uint32_t height, const RenderRECT& rect,
-                         const SensorNDCAffineTransform& transform, Tracer& tracer, Pipeline& pipeline) override {
+        void renderFrame(DynamicArray<Spectrum<Radiance>>& res, const uint32_t width, const uint32_t height,
+                         const RenderRECT& rect, const SensorNDCAffineTransform& transform, Tracer& tracer,
+                         Pipeline& pipeline) override {
             // TODO:use buffer (pass dependencies to tracer)
             // auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(Spectrum<Radiance>), 128);
             Data payload;
@@ -47,8 +48,10 @@ namespace Piper {
             payload.res = res.data();
 
             for(uint32_t i = 0; i < mSample; ++i) {
+                auto stage = context().getErrorHandler().enterStage("progress " + toString(context().getAllocator(), i + 1) +
+                                                                        "/" + toString(context().getAllocator(), mSample),
+                                                                    PIPER_SOURCE_LOCATION());
                 tracer.trace(pipeline, rect, packSBTPayload(context().getAllocator(), payload), transform, i);
-                printf("progress %d\n", i);
             }
 
             // auto bufferCPU = buffer->download();
