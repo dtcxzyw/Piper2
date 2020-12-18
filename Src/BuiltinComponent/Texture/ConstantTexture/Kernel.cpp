@@ -17,8 +17,8 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void PIPER_CC sample(RestrictedContext* context, const void* SBTData, float u, float v, float t,
-                                    Spectrum<Dimensionless<float>>& sample) {
+    extern "C" void PIPER_CC sample(RestrictedContext* context, const void* SBTData, float t,
+                                    const Vector2<Dimensionless<float>>& texCoord, Spectrum<Dimensionless<float>>& sample) {
         sample = static_cast<const Data*>(SBTData)->texel;
     }
     static_assert(std::is_same_v<TextureSampleFunc, decltype(&sample)>);

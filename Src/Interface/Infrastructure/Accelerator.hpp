@@ -28,6 +28,7 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(RunnableProgram, Object)
         virtual ~RunnableProgram() = default;
         // TODO:better interface
+        // TODO:interface check
         virtual void* lookup(const String& symbol) = 0;
     };
 

@@ -26,33 +26,41 @@ namespace Piper {
             TraceResult res;
             piperTrace(context, ray, 0.0f, 1e5f, res);
             if(res.kind == TraceKind::Missing) {
-                Spectrum<Radiance> res;
-                piperMissing(context, ray, res);
-                sample += pf * res;
+                Spectrum<Radiance> rad;
+                piperMissing(context, ray, rad);
+                sample += pf * rad;
                 return;
             }
-            auto& surface = res.surface;
+            const auto& surface = res.surface;
 
             auto localDir = surface.transform(ray.direction);
-            auto wi = surface.intersect.local2Shading(-localDir);
+            auto wo = surface.intersect.local2Shading(-localDir);
+
+            SurfaceStorage storage;
+            const auto Ng = surface.intersect.local2Shading(surface.intersect.Ng);
+            piperSurfaceInit(context, surface.instance, ray.t, surface.intersect.texCoord, Ng, storage);
 
             auto hit = ray.origin + ray.direction * Distance{ surface.t };
             LightSample light;
             piperLightSample(context, hit, ray.t, light);
-            if(light.valid) {
+            // TODO:MIS
+            if(light.pdf.val > 0.0f) {
                 // TODO:occlude test
                 auto delta = light.src - hit;
-                auto wo = surface.intersect.local2Shading(surface.transform(Normal<float, FOR::World>{ delta }));
+                auto wi = surface.intersect.local2Shading(surface.transform(Normal<float, FOR::World>{ delta }));
                 Spectrum<Dimensionless<float>> f;
-                piperSurfaceEvaluate(context, surface.instance, wi, wo, ray.t, f);
-                sample += pf * f * light.rad;
+                piperSurfaceEvaluate(context, surface.instance, storage, wo, wi, Ng, BxDFPart::All, f);
+                sample += pf * f * light.rad / light.pdf;
             }
-
             SurfaceSample ss;
-            piperSurfaceSample(context, surface.instance, wi, ray.t, ss);
-            pf = pf * ss.f;
-            ray.direction = surface.transform(surface.intersect.shading2Local(ss.wo));
-            ray.origin = hit;  // TODO:bias?
+            piperSurfaceSample(context, surface.instance, storage, wo, Ng, BxDFPart::All, ss);
+            if(ss.pdf.val <= 0.0f)
+                return;
+            pf = pf * ss.f / ss.pdf;
+            ray.direction = surface.transform(surface.intersect.shading2Local(ss.wi));
+            ray.origin = hit +
+                surface.transform(surface.intersect.Ng) *
+                    Distance{ ss.part & BxDFPart::Reflection ? 0.001f : -0.001f };  // TODO:better bias
         }
     }
     static_assert(std::is_same_v<IntegratorFunc, decltype(&trace)>);

@@ -21,8 +21,8 @@ namespace Piper {
                                         LightSample& sample) {
         const auto* data = static_cast<const PointLightData*>(SBTData);
         sample.rad = data->intensity / lengthSquared(data->pos - hit);
-        sample.valid = true;
         sample.src = data->pos;
+        sample.pdf = Dimensionless<float>{ 1.0f };
     }
     static_assert(std::is_same_v<LightFunc, decltype(&lightPoint)>);
 }  // namespace Piper

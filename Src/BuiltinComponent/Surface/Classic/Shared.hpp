@@ -46,4 +46,11 @@ namespace Piper {
         Dimensionless<float> IOR;
         Dimensionless<float> flatness;
     };
+    // TODO:BumpedMaterial
+    struct MatteData final {
+        // TODO:texture support
+        Spectrum<Dimensionless<float>> diffuse;
+
+        // Dimensionless<float> roughness;
+    };
 }  // namespace Piper

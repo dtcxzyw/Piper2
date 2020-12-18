@@ -66,8 +66,11 @@ namespace Piper {
     struct InstanceUserData final : public Object {
         PIPER_INTERFACE_CONSTRUCT(InstanceUserData, Object)
         HitKind kind;
-        SurfaceEvaluateFunc evaluate;
+        SurfaceInitFunc init;
         SurfaceSampleFunc sample;
+        SurfaceEvaluateFunc evaluate;
+        SurfacePdfFunc pdf;
+
         void* SFPayload;
         // TODO:medium
         GeometryFunc calcSurface;
@@ -80,7 +83,7 @@ namespace Piper {
     };
     // static void intersect() {}
 
-    void piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result) {
+    void piperEmbreeTrace(FullContext* context, const RayInfo& ray, const float minT, const float maxT, TraceResult& result) {
         auto ctx = reinterpret_cast<KernelArgument*>(context);
         IntersectContext intersectCtx;
         rtcInitIntersectContext(&intersectCtx.ctx);
@@ -110,7 +113,6 @@ namespace Piper {
             // TODO:surface intersect filter?
             result.kind = TraceKind::Surface;
             result.surface.t = hit.ray.tfar;
-
             auto scene = ctx->scene;
             RTCGeometry geo = nullptr;
 
@@ -122,6 +124,7 @@ namespace Piper {
             assert(geo);
 
             rtcGetGeometryTransform(geo, 0.0f, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, result.surface.transform.A2B);
+
             calcInverse(result.surface.transform.A2B, result.surface.transform.B2A);
             const auto* data = static_cast<const InstanceUserData*>(rtcGetGeometryUserData(geo));
 
@@ -132,6 +135,8 @@ namespace Piper {
                     Dimensionless<float>{ hit.hit.Ng_z } } });
                 hitInfo.builtin.index = hit.hit.primID;
                 hitInfo.builtin.barycentric = { hit.hit.u, hit.hit.v };
+                hitInfo.builtin.face =
+                    (dot(result.surface.transform(ray.direction), hitInfo.builtin.Ng).val < 0.0f ? Face::Front : Face::Back);
             } else {
                 // TODO:custom
             }
@@ -146,23 +151,48 @@ namespace Piper {
         }
     }
 
-    void piperMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance) {
+    void piperEmbreeMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance) {
         const auto* SBT = reinterpret_cast<KernelArgument*>(context);
         SBT->missing(decay(context), SBT->MSPayload, ray, radiance);
     }
-    void piperSurfaceSample(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi, float t,
-                            SurfaceSample& sample) {
+    void piperEmbreeSurfaceInit(FullContext* context, const uint64_t instance, const float t, const Vector2<float>& texCoord,
+                                const Normal<float, FOR::Shading>& Ng, SurfaceStorage& storage) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
-        func->sample(decay(context), func->SFPayload, wi, t, sample);
+        func->init(decay(context), func->SFPayload, t, texCoord, Ng, &storage);
     }
-    void piperSurfaceEvaluate(FullContext* context, uint64_t instance, const Normal<float, FOR::Shading>& wi,
-                              const Normal<float, FOR::Shading>& wo, float t, Spectrum<Dimensionless<float>>& f) {
+    void piperEmbreeSurfaceSample(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
+                                  const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng, BxDFPart require,
+                                  SurfaceSample& sample) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
-        func->evaluate(decay(context), func->SFPayload, wi, wo, t, f);
+        func->sample(decay(context), func->SFPayload, &storage, wo, Ng, require, sample);
     }
-    void piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, float t, LightSample& sample) {
+    void piperEmbreeSurfaceEvaluate(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
+                                    const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
+                                    const Normal<float, FOR::Shading>& Ng, BxDFPart require, Spectrum<Dimensionless<float>>& f) {
+        const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
+        func->evaluate(decay(context), func->SFPayload, &storage, wo, wi, Ng, require, f);
+    }
+    void piperEmbreeSurfacePdf(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
+                               const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
+                               const Normal<float, FOR::Shading>& Ng, BxDFPart require, Dimensionless<float>& pdf) {
+        const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
+        func->pdf(decay(context), func->SFPayload, &storage, wo, wi, Ng, require, pdf);
+    }
+    void piperEmbreeLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, const float t,
+                                LightSample& sample) {
         const auto* SBT = reinterpret_cast<const KernelArgument*>(context);
         SBT->light(decay(context), SBT->LIPayload, hit, t, sample);
+    }
+
+    // TODO:more option
+    void PIPER_CC piperEmbreePrintMessage(RestrictedContext* context, const char* msg) {
+        printf("%s\n", msg);
+    }
+    void PIPER_CC piperEmbreePrintFloat(RestrictedContext* context, const char* desc, float val) {
+        printf("%s: %f\n", desc, val);
+    }
+    void PIPER_CC piperEmbreePrintUint(RestrictedContext* context, const char* desc, uint32_t val) {
+        printf("%s: %u\n", desc, val);
     }
 
     struct MainArgument final {
@@ -178,7 +208,9 @@ namespace Piper {
         float* samples;
     };
 
-    static void piperEmbreeMain(uint32_t idx, const MainArgument* arg) {
+    // make compiler happy
+    extern void piperMain(const uint32_t idx, const MainArgument* arg);
+    static void piperEmbreeMain(const uint32_t idx, const MainArgument* arg) {
         const auto* SBT = arg->SBT;
         const auto x = SBT->rect.left + idx % SBT->rect.width;
         const auto y = SBT->rect.top + idx / SBT->rect.width;
@@ -195,7 +227,7 @@ namespace Piper {
         SBT->accumulate(reinterpret_cast<RestrictedContext*>(&context), SBT->ACPayload, point, sample);
     }
 
-    float piperSample(RestrictedContext* context) {
+    float piperEmbreeSample(RestrictedContext* context) {
         auto* ctx = reinterpret_cast<PerSampleContext*>(context);
         if(ctx->sampleIdx < ctx->argument.maxDimension)
             return ctx->samples[ctx->sampleIdx++];
@@ -211,18 +243,25 @@ namespace Piper {
             res.insert(res.cend(), reinterpret_cast<const std::byte*>(symbol.data()),
                        reinterpret_cast<const std::byte*>(symbol.data() + symbol.size() + 1));
             auto func = reinterpret_cast<uint64_t>(address);
-            const auto beg = reinterpret_cast<const std::byte*>(&func);
-            const auto end = beg + sizeof(func);
+            const auto* beg = reinterpret_cast<const std::byte*>(&func);
+            const auto* end = beg + sizeof(func);
             res.insert(res.cend(), beg, end);
         };
-#define PIPER_APPEND(FUNC) append(#FUNC, FUNC)
-        PIPER_APPEND(piperTrace);
-        PIPER_APPEND(piperEmbreeMain);
-        PIPER_APPEND(piperLightSample);
-        PIPER_APPEND(piperMissing);
-        PIPER_APPEND(piperSample);
-        PIPER_APPEND(piperSurfaceEvaluate);
-        PIPER_APPEND(piperSurfaceSample);
+#define PIPER_APPEND(FUNC)                                                               \
+    static_assert(std::is_same_v<decltype(&piper##FUNC), decltype(&piperEmbree##FUNC)>); \
+    append("piper" #FUNC, piperEmbree##FUNC)
+        PIPER_APPEND(Trace);
+        PIPER_APPEND(Main);
+        PIPER_APPEND(LightSample);
+        PIPER_APPEND(Missing);
+        PIPER_APPEND(Sample);
+        PIPER_APPEND(SurfaceEvaluate);
+        PIPER_APPEND(SurfaceSample);
+        PIPER_APPEND(SurfaceInit);
+        PIPER_APPEND(SurfacePdf);
+        PIPER_APPEND(PrintMessage);
+        PIPER_APPEND(PrintFloat);
+        PIPER_APPEND(PrintUint);
 #undef PIPER_APPEND
         return { res, "Native" };
     }
@@ -251,7 +290,7 @@ namespace Piper {
     // TODO:per-vertex TBN,TexCoord
     static void calcTriangleMeshSurface(RestrictedContext*, const void*, const HitInfo& hit, float t,
                                         SurfaceIntersectionInfo& info) {
-        info.N = hit.builtin.Ng;
+        info.N = info.Ng = (hit.builtin.face == Face::Front ? hit.builtin.Ng : -hit.builtin.Ng);
         const Normal<float, FOR::Local> u1{ { { 1.0f }, { 0.0f }, { 0.0f } }, Unchecked{} };
         const Normal<float, FOR::Local> u2{ { { 0.0f }, { 1.0f }, { 0.0f } }, Unchecked{} };
         if(fabsf(dot(info.N, u1).val) < fabsf(dot(info.N, u2).val))
@@ -261,6 +300,7 @@ namespace Piper {
         info.B = cross(info.N, info.T);
         info.texCoord = { 0.0f, 0.0f };
     }
+    static_assert(std::is_same_v<decltype(&calcTriangleMeshSurface), GeometryFunc>);
 
     class EmbreeAcceleration final : public AccelerationStructure {
     private:
@@ -350,8 +390,7 @@ namespace Piper {
             // rtcSetSceneFlags(mScene.get(), RTC_SCENE_FLAG_CONTEXT_FILTER_FUNCTION);
             for(auto&& inst : instances) {
                 auto node = eastl::dynamic_shared_pointer_cast<EmbreeNode>(inst.node);
-                const auto scene = node->getScene();
-                attachSubScene(device, mScene.get(), scene, inst.transform, scene);
+                attachSubScene(device, mScene.get(), node->getScene(), inst.transform, node->getScene());
                 mChildren.emplace_back(std::move(node));
             }
             rtcCommitScene(mScene.get());
@@ -395,8 +434,10 @@ namespace Piper {
             mUserData->GEPayload = data.GEPayload;
             mUserData->SFPayload = data.SFPayload;
             mUserData->calcSurface = data.calcSurface;
+            mUserData->init = data.init;
             mUserData->evaluate = data.evaluate;
             mUserData->sample = data.sample;
+            mUserData->pdf = data.pdf;
             mUserData->kind = data.kind;
             holder.retain(mUserData);
         }
@@ -422,7 +463,7 @@ namespace Piper {
         void* upload(const SBTPayload& payload) {
             if(payload.empty())
                 return nullptr;
-            const auto ptr = reinterpret_cast<void*>(mArena.allocRaw(payload.size()));
+            auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(payload.size()));
             memcpy(ptr, payload.data(), payload.size());
             return ptr;
         }
@@ -443,10 +484,15 @@ namespace Piper {
 
             struct SurfaceInfo final {
                 void* payload;
+                // TODO:prefix
+                String initFunc;
                 String sampleFunc;
                 String evaluateFunc;
+                String pdfFunc;
+                SurfaceInitFunc init;
                 SurfaceSampleFunc sample;
                 SurfaceEvaluateFunc evaluate;
+                SurfacePdfFunc pdf;
             };
             UMap<Surface*, SurfaceInfo> surfaceProg(context.getAllocator());
             struct GeometryInfo final {
@@ -457,17 +503,24 @@ namespace Piper {
             };
             UMap<Geometry*, GeometryInfo> geometryProg(context.getAllocator());
 
+            // TODO:shared RTProgram
             for(auto&& [_, prog] : nodeProg) {
                 if(!surfaceProg.count(prog.surface.get())) {
                     auto sp = prog.surface->materialize(tracer, mHolder);
                     auto& info = surfaceProg[prog.surface.get()];
                     info.payload = upload(sp.payload);
+                    auto& init = dynamic_cast<EmbreeRTProgram&>(*sp.init);
                     auto& sample = dynamic_cast<EmbreeRTProgram&>(*sp.sample);
                     auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*sp.evaluate);
+                    auto& pdf = dynamic_cast<EmbreeRTProgram&>(*sp.pdf);
+                    modules.push_back(init.program);
                     modules.push_back(sample.program);
                     modules.push_back(evaluate.program);
+                    modules.push_back(pdf.program);
+                    info.initFunc = init.symbol;
                     info.sampleFunc = sample.symbol;
                     info.evaluateFunc = evaluate.symbol;
+                    info.pdfFunc = pdf.symbol;
                 }
                 if(!geometryProg.count(prog.geometry.get())) {
                     auto gp = prog.geometry->materialize(tracer, mHolder);
@@ -528,7 +581,7 @@ namespace Piper {
             auto& accelerator = tracer.getAccelerator();
             auto kernel =
                 accelerator.compileKernel(Span<Future<LinkableProgram>>{ modules.data(), modules.data() + modules.size() },
-                                          String{ "piperEmbreeMain", context.getAllocator() });
+                                          String{ "piperMain", context.getAllocator() });
             kernel.wait();
             mKernel = kernel.get();
 
@@ -537,8 +590,10 @@ namespace Piper {
                     prog.calcSurface = static_cast<GeometryFunc>(mKernel->lookup(prog.calcSurfaceFunc));
             }
             for(auto& [_, prog] : surfaceProg) {
+                prog.init = static_cast<SurfaceInitFunc>(mKernel->lookup(prog.initFunc));
                 prog.sample = static_cast<SurfaceSampleFunc>(mKernel->lookup(prog.sampleFunc));
                 prog.evaluate = static_cast<SurfaceEvaluateFunc>(mKernel->lookup(prog.evaluateFunc));
+                prog.pdf = static_cast<SurfacePdfFunc>(mKernel->lookup(prog.pdfFunc));
             }
             for(auto& [node, prog] : nodeProg) {
                 InstanceUserData data(context);
@@ -548,8 +603,10 @@ namespace Piper {
                 data.GEPayload = geo.payload;
 
                 auto& surf = surfaceProg[prog.surface.get()];
+                data.init = surf.init;
                 data.sample = surf.sample;
                 data.evaluate = surf.evaluate;
+                data.pdf = surf.pdf;
                 data.SFPayload = surf.payload;
                 node->postMaterialize(data, mHolder);
             }

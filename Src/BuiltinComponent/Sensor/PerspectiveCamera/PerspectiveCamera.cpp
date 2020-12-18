@@ -34,7 +34,7 @@ namespace Piper {
             : Sensor(context), mKernelPath(path + "/Kernel.bc") {
             // TODO:aperture mask texture
             const auto base = parsePoint<Distance, FOR::World>(config->at("Position"));
-            const auto lookat = parsePoint<Distance, FOR::World>(config->at("LookAt"));
+            const auto lookAt = parsePoint<Distance, FOR::World>(config->at("LookAt"));
             const auto size = parseVector2<float>(config->at("SensorSize")) * 1e-3f;
             const auto upRef = parseVector<Distance, FOR::World>(config->at("Up"));
             // TODO:FOV
@@ -42,12 +42,12 @@ namespace Piper {
             const auto focalLength = Distance{ static_cast<float>(config->at("FocalLength")->get<double>()) * 1e-3f };
             const auto apertureRadius =
                 focalLength / Dimensionless<float>{ 2.0f * static_cast<float>(config->at("FStop")->get<double>()) };
-            const auto forward = Normal<float, FOR::World>{ lookat - base };
+            const auto forward = Normal<float, FOR::World>{ lookAt - base };
             const auto right = cross(forward, Normal<float, FOR::World>(upRef));
             const auto up = cross(right, forward);
             mData.anchor = base + up * Distance{ size.x * 0.5f } - right * Distance{ size.y * 0.5f };
             // TODO:AF/MF mode support
-            mData.focalDistance = dot(lookat - base, forward);
+            mData.focalDistance = dot(lookAt - base, forward);
             const auto filmDistance = inverse(inverse(focalLength) - inverse(mData.focalDistance));
             mData.lensCenter = base + forward * filmDistance;
             mData.offX = right * Distance{ size.x };

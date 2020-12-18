@@ -29,17 +29,20 @@ namespace Piper {
         String mKernelPath;
 
     public:
-        BlackBody(PiperContext& context, const String& path) : Surface(context), mKernelPath(path + "/Kernel.bc") {}
+        BlackBody(PiperContext& context, const String& path) : Surface(context), mKernelPath(path) {}
         SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat());
+            res.init = tracer.buildProgram(linkable, "blackBodyInit");
             res.sample = tracer.buildProgram(linkable, "blackBodySample");
             res.evaluate = tracer.buildProgram(linkable, "blackBodyEvaluate");
+            res.pdf = tracer.buildProgram(linkable, "blackBodyPdf");
             return res;
         }
     };
 
+    /*
     class DisneyPrincipledBRDF final : public Surface {
     private:
         String mKernelPath;
@@ -58,20 +61,49 @@ namespace Piper {
             return res;
         }
     };
+    */
+
+    class Matte final : public Surface {
+    private:
+        String mKernelPath;
+        MatteData mData;
+
+    public:
+        Matte(PiperContext& context, const SharedPtr<Config>& config, const String& path)
+            : Surface(context), mKernelPath(path), mData{ parseSpectrum<Dimensionless<float>>(config->at("Diffuse")) } {}
+        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+            SurfaceProgram res;
+            auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat());
+            res.init = tracer.buildProgram(linkable, "matteInit");
+            res.sample = tracer.buildProgram(linkable, "matteSample");
+            res.evaluate = tracer.buildProgram(linkable, "matteEvaluate");
+            res.pdf = tracer.buildProgram(linkable, "mattePdf");
+            res.payload = packSBTPayload(context().getAllocator(), mData);
+            return res;
+        }
+    };
+
     class ModuleImpl final : public Module {
     private:
-        String mPath;
+        String mKernelPath;
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mPath(path, context.getAllocator()) {}
+        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mKernelPath(path, context.getAllocator()) {
+            mKernelPath += "/Kernel.bc";
+        }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "BlackBody") {
                 return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<BlackBody>(context(), mPath)));
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<BlackBody>(context(), mKernelPath)));
             }
-           context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
+            if(classID == "Matte") {
+                return context().getScheduler().value(
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<Matte>(context(), config, mKernelPath)));
+            }
+            context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
     };
 }  // namespace Piper

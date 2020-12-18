@@ -117,7 +117,10 @@ namespace Piper {
             DynamicArray<Imf::Rgba> rgba(res.size(), context().getAllocator());
 
             eastl::transform(res.cbegin(), res.cend(), rgba.begin(), [](const Spectrum<Radiance> rad) {
-                return Imf::Rgba{ rad.r.val, rad.g.val, rad.b.val };
+                if(isfinite(rad.r.val) && isfinite(rad.g.val) && isfinite(rad.b.val) &&
+                   fminf(rad.r.val, fminf(rad.g.val, rad.b.val)) >= 0.0f)
+                    return Imf::Rgba{ rad.r.val, rad.g.val, rad.b.val };
+                return Imf::Rgba{ 1.0f, 0.0f, 0.0f };
             });
             // TODO:filesystem
             Imf::RgbaOutputFile out(dest.c_str(), width, height, Imf::WRITE_RGB);

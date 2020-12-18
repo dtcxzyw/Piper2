@@ -20,8 +20,10 @@
 namespace Piper {
     struct SurfaceProgram final {
         SBTPayload payload;
+        SharedPtr<RTProgram> init;
         SharedPtr<RTProgram> sample;
         SharedPtr<RTProgram> evaluate;
+        SharedPtr<RTProgram> pdf;
     };
 
     class Surface : public Object {

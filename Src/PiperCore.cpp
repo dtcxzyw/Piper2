@@ -127,32 +127,45 @@ namespace Piper {
         mAllocator->free(reinterpret_cast<Ptr>(p));
     }
 
-    class DefaultAllocator final : public Allocator {
+    // TODO:Builtin Module
+    class MemoryTracer final : public Allocator {
     private:
         UMap<Ptr, String> mTrace;
+        UMap<std::thread::id, bool, std::hash<std::thread::id>> mFlag;
+        std::recursive_mutex mMutex;
+        SharedPtr<Allocator> mImpl;
 
     public:
-        explicit DefaultAllocator(PiperContext& context) : Allocator(context), mTrace(*this) {}
+        MemoryTracer(PiperContext& context, const SharedPtr<Config>& config) : Allocator(context) {
+            // TODO:concurrency
+            auto allocator = context.getModuleLoader().newInstanceT<Allocator>(config->at("ClassID")->get<String>(), config);
+            allocator.wait();
+            mImpl = std::move(allocator.get());
+            mTrace.set_allocator(STLAllocator{ *mImpl });
+            mFlag.set_allocator(STLAllocator{ *mImpl });
+        }
         Ptr alloc(const size_t size, const size_t align) override {
-            static_assert(sizeof(Ptr) == sizeof(void*));
-            const auto res = reinterpret_cast<Ptr>(allocMemory(align, size));
-            if(res == 0)
-                context().getErrorHandler().raiseException("Bad alloc", PIPER_SOURCE_LOCATION());
-            // TODO:leak detect layer
-            static thread_local auto state = false;
-            if(context().complete() && !state) {
-                state = true;
-                auto& handler = context().getErrorHandler();
-                mTrace.insert(makePair(res, toString(*this, size) + "  bytes\n" + handler.backTrace()));
-                state = false;
+            auto res = mImpl->alloc(size, align);
+            {
+                std::lock_guard<std::recursive_mutex> guard{ mMutex };
+                auto& flag = mFlag[std::this_thread::get_id()];
+                if(!flag) {
+                    flag = true;
+                    auto&& handler = context().getErrorHandler();
+                    mTrace.insert(makePair(res, toString(*mImpl, size) + "  bytes\n" + handler.backTrace()));
+                    flag = false;
+                }
             }
             return res;
         }
         void free(const Ptr ptr) noexcept override {
-            mTrace.erase(ptr);
-            freeMemory(reinterpret_cast<void*>(ptr));
+            {
+                std::lock_guard<std::recursive_mutex> guard{ mMutex };
+                mTrace.erase(ptr);
+            }
+            mImpl->free(ptr);
         }
-        ~DefaultAllocator() override {
+        ~MemoryTracer() override {
             if(!mTrace.empty()) {
                 std::cerr << "Memory leak detected" << std::endl;
                 for(auto&& it : mTrace) {
@@ -162,6 +175,21 @@ namespace Piper {
                     std::cerr << "-----------------------------------------" << std::endl;
                 }
             }
+        }
+    };
+
+    class DefaultAllocator final : public Allocator {
+    public:
+        explicit DefaultAllocator(PiperContext& context) : Allocator(context) {}
+        Ptr alloc(const size_t size, const size_t align) override {
+            static_assert(sizeof(Ptr) == sizeof(void*));
+            const auto res = reinterpret_cast<Ptr>(allocMemory(align, size));
+            if(res == 0)
+                context().getErrorHandler().raiseException("Bad alloc", PIPER_SOURCE_LOCATION());
+            return res;
+        }
+        void free(const Ptr ptr) noexcept override {
+            freeMemory(reinterpret_cast<void*>(ptr));
         }
     };
 
@@ -463,7 +491,7 @@ namespace Piper {
         }
     };
 
-    //TODO:derive stack frame from father
+    // TODO:derive stack frame from father
     class ErrorHandlerImpl final : public ErrorHandler {
     private:
         UMap<std::thread::id, DynamicArray<Pair<Variant<CString, String>, SourceLocation>>, std::hash<std::thread::id>> mStages;
@@ -654,9 +682,9 @@ namespace Piper {
             mUserAllocator.reset();
             mErrorHandler.reset();
             mPITUManager.reset();
-            mModuleLoader.reset();
             mNotifyScheduler.clear();
             mNotifyScheduler.shrink_to_fit();
+            mModuleLoader.reset();
 
             while(!mLifeTimeRecorder.empty())
                 mLifeTimeRecorder.pop_back();

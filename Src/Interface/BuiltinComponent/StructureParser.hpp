@@ -17,6 +17,7 @@
 #pragma once
 #include "../../Kernel/Protocol.hpp"
 #include "../Infrastructure/Config.hpp"
+#include "../Infrastructure/Logger.hpp"
 
 namespace Piper {
     template <typename Float>

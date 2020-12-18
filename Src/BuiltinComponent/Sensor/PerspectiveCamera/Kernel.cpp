@@ -27,7 +27,7 @@ namespace Piper {
         const auto filmHit = data->anchor +
             data->offX * Dimensionless<float>{ 1.0f - (transform.ox + transform.sx * point.x / static_cast<float>(w)) } +
             data->offY * Dimensionless<float>{ 1.0f - (transform.oy + transform.sy * point.y / static_cast<float>(h)) };
-        const auto lensOffset = sampleUniformDisk(Vector2<Dimensionless<float>>{ { piperSample(context) }, { piperSample(context) } });
+        const auto lensOffset = sampleUniformDisk(piperSample(context), piperSample(context));
         const auto lensHit = data->lensCenter + data->apertureX * lensOffset.x + data->apertureY * lensOffset.y;
         const auto dir = data->lensCenter - filmHit;
         const auto planeOfFocusHit = data->lensCenter + dir * (data->focalDistance / dot(dir, data->forward));

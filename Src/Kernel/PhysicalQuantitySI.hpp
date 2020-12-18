@@ -87,7 +87,7 @@ namespace Piper {
         constexpr bool isEven(T... args) {
             return (... && static_cast<bool>(args % 2 == 0));
         }
-    }  // namespace detail
+    }  // namespace Detail
 
     template <typename T,
               typename = std::enable_if_t<Detail::isEven(T::vm, T::vkg, T::vs, T::vA, T::vK, T::vmol, T::vcd, T::vrad, T::vsr)>>
@@ -218,10 +218,25 @@ namespace Piper {
         constexpr Ratio<LuminousFlux<Float>, Power<Float>> Kcd = static_cast<Float>(683);
 
         template <typename Float>
-        constexpr Radian<Float> pi = Radian<Float>{ static_cast<Float>(3.1415926535897932384626433832795) };
+        constexpr Float pi = static_cast<Float>(3.14159265358979323846);
+
+        template<typename Float>
+        constexpr Float twoPi = static_cast<Float>(6.2831853071796);
 
         template <typename Float>
-        constexpr SolidAngle<Float> areaOfSphere = SolidAngle<Float>{ static_cast<Float>(12.566370614359172953850573533118) };
+        constexpr Float areaOfSphere = static_cast<Float>(12.566370614359172953850573533118);
+
+        template <typename Float>
+        constexpr Float halfPi = static_cast<Float>(1.57079632679489661923);
+
+        template <typename Float>
+        constexpr Float quarterPi = static_cast<Float>(0.785398163397448309616);
+
+        template <typename Float>
+        constexpr Float invPi = static_cast<Float>(0.318309886183790671538);
+
+        template <typename Float>
+        constexpr Float twoInvPi = static_cast<Float>(0.636619772367581343076);
 
     }  // namespace Constants
 
