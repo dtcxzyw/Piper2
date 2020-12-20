@@ -43,7 +43,9 @@ namespace Piper {
     }
     */
     extern "C" void PIPER_CC blackBodyInit(RestrictedContext*, const void*, float, const Vector2<float>&,
-                                           const Normal<float, FOR::Shading>&, void*) {}
+                                           const Normal<float, FOR::Shading>&, void*, bool& noSpecular) {
+        noSpecular = false;
+    }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&blackBodyInit)>);
     extern "C" void PIPER_CC blackBodySample(RestrictedContext*, const void*, const void*, const Vec&,
                                              const Normal<float, FOR::Shading>&, BxDFPart, SurfaceSample&) {}
@@ -130,7 +132,7 @@ namespace Piper {
             sample.part = static_cast<BxDFPart>(0);
             return;
         }
-        const auto select = std::min(static_cast<uint32_t>(std::floorf(u1 * static_cast<float>(count))), count - 1);
+        const auto select = std::min(static_cast<uint32_t>(std::floor(u1 * static_cast<float>(count))), count - 1);
         u1 = u1 * static_cast<float>(count) - static_cast<float>(select);
         sampleN(select, u1, u2, wo, require, sample, bxdfs...);
         if(static_cast<uint32_t>(sample.part) == 0)
@@ -149,11 +151,12 @@ namespace Piper {
     };
 
     extern "C" void PIPER_CC matteInit(RestrictedContext*, const void* SBTData, float, const Vector2<float>&,
-                                       const Normal<float, FOR::Shading>&, void* storage) {
+                                       const Normal<float, FOR::Shading>&, void* storage, bool& noSpecular) {
         const auto* data = static_cast<const MatteData*>(SBTData);
         auto* bsdf = static_cast<MatteBSDF*>(storage);
         static_assert(sizeof(MatteBSDF) <= sizeof(SurfaceStorage));
         bsdf->lambertian = LambertianReflection{ data->diffuse };
+        noSpecular = true;
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&matteInit)>);
 

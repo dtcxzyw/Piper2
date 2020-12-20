@@ -23,10 +23,10 @@ namespace Piper {
 
     template <typename T>
     Vector2<Dimensionless<T>> sampleUniformDisk(T u1, T u2) {
-        auto ang = u1 * Constants::twoPi<T>;
-        auto rad = std::sqrt(u2);
+        auto ang = Radian<T>{ u1 * Constants::twoPi<T> };
+        auto rad = sqrt(Dimensionless<T>{ u2 });
         // TODO:use sincos?
-        return { { rad * std::cos(ang) }, { rad * std::sin(ang) } };
+        return { { rad * cos(ang) }, { rad * sin(ang) } };
     }
 
     template <typename T>
@@ -36,16 +36,16 @@ namespace Piper {
         auto au1 = std::fabs(u1), au2 = std::fabs(u2);
         if(std::fmin(au1, au2) < static_cast<T>(1e-4))
             return Vector2<Dimensionless<T>>{ static_cast<T>(0), static_cast<T>(0) };
-        auto rad = (au1 > au2 ? u1 : u2);
-        auto theta =
+        const auto rad = (au1 > au2 ? u1 : u2);
+        const auto theta =
             (au1 > au2 ? Constants::quarterPi<T> * (u2 / u1) : Constants::halfPi<T> - Constants::quarterPi<T> * (u1 / u2));
         return Vector2<Dimensionless<T>>{ std::cos(theta), std::sin(theta) } * Dimensionless<T>{ rad };
     }
 
     template <typename T>
     Normal<T, FOR::Shading> sampleCosineHemisphere(T u1, T u2) {
-        auto coord = sampleConcentricDisk(u1, u2);
-        auto z = std::sqrt(std::fmax(static_cast<T>(0), static_cast<T>(1) - lengthSquared(coord).val));
+        const auto coord = sampleConcentricDisk(u1, u2);
+        const auto z = sqrt(Dimensionless<float>{ static_cast<T>(1) } - lengthSquared(coord));
         return Normal<T, FOR::Shading>{ Vector<Dimensionless<T>, FOR::Shading>{ coord.x, coord.y, Dimensionless<T>{ z } },
                                         Unchecked{} };
     }

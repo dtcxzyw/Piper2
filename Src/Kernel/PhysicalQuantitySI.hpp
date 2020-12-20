@@ -101,7 +101,7 @@ namespace Piper {
 
     template <typename T, typename = Sqrt<T>>
     auto sqrt(T val) noexcept {
-        return Sqrt<T>{ std::sqrt(val.val) };
+        return Sqrt<T>{ std::sqrt(std::fmax(val.val, static_cast<typename T::FT>(0.0))) };
     }
 
     template <typename T1, typename T2, typename = Product<T1, T2>>
@@ -162,6 +162,11 @@ namespace Piper {
     template <typename T>
     auto sin(Radian<T> x) {
         return Dimensionless<T>{ std::sin(x.val) };
+    }
+
+    template <typename T>
+    constexpr auto acos(Dimensionless<T> a) noexcept {
+        return Radian<T>{ std::acos(std::fmax(static_cast<T>(-1.0), std::fmin(static_cast<T>(1.0), a.val))) };
     }
 
     template <typename Float>
@@ -243,6 +248,14 @@ namespace Piper {
         template <typename Float>
         constexpr Float twoInvPi = static_cast<Float>(0.636619772367581343076);
 
+        template <typename Float>
+        constexpr Float sqrPi = static_cast<Float>(9.869604401089358);
+
     }  // namespace Constants
 
+    template <typename T>
+    constexpr auto atan2(Dimensionless<T> y, Dimensionless<T> x) noexcept {
+        const auto theta = std::atan2(y.val, x.val);
+        return Radian<T>{ theta < static_cast<T>(0.0) ? theta + Constants::twoPi<T> : theta };
+    }
 }  // namespace Piper

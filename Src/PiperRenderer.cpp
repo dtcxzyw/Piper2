@@ -15,7 +15,6 @@
 */
 
 #define PIPER_EXPORT
-#include "Interface/BuiltinComponent/Environment.hpp"
 #include "Interface/BuiltinComponent/Geometry.hpp"
 #include "Interface/BuiltinComponent/Integrator.hpp"
 #include "Interface/BuiltinComponent/Light.hpp"
@@ -143,17 +142,21 @@ namespace Piper {
 
         UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
                                              const uint32_t width, const uint32_t height, float& ratio) {
-            // TODO:Asset
+            // TODO:asset
             const auto sensor = syncLoad<Sensor>(config->at("Sensor"));
             ratio = sensor->getAspectRatio();
-            const auto light = syncLoad<Light>(config->at("Light"));
-            const auto environment = syncLoad<Environment>(config->at("Environment"));
+            const auto lightSampler = syncLoad<LightSampler>(config->at("LightSampler"));
+            DynamicArray<SharedPtr<Light>> lights(context().getAllocator());
+            lights.push_back(syncLoad<Light>(config->at("Environment")));
+            for(auto&& light : config->at("Lights")->viewAsArray())
+                lights.push_back(syncLoad<Light>(light));
+            lightSampler->preprocess({ lights.cbegin(), lights.cend() });
             const auto integrator = syncLoad<Integrator>(config->at("Integrator"));
             const auto node = buildScene(tracer, config->at("Scene"));
             const auto& attr = config->viewAsObject();
             const auto samplerDesc = attr.find(String{ "Sampler", context().getAllocator() });
             const auto sampler = samplerDesc != attr.cend() ? syncLoad<Sampler>(samplerDesc->second) : SharedPtr<Sampler>{};
-            return tracer.buildPipeline(node, *sensor, *environment, *integrator, renderDriver, *light, sampler.get(), width,
+            return tracer.buildPipeline(node, *sensor, *integrator, renderDriver, *lightSampler, lights, sampler.get(), width,
                                         height);
         }
         void saveToFile(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, const uint32_t width,

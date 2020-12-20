@@ -18,6 +18,9 @@
 #include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
+    struct SampledEnvironmentData final {
+        Spectrum<Radiance> texture;
+    };
     struct PointLightData final {
         Point<Distance, FOR::World> pos;
         Spectrum<Intensity> intensity;

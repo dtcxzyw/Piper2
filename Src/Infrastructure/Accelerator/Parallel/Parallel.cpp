@@ -454,9 +454,11 @@ namespace Piper {
             reinterpret_cast<llvm::JITTargetAddress>(name), flag                \
         }                                                                       \
     }
-                            PIPER_MATH_KERNEL_FUNC(cosf),  PIPER_MATH_KERNEL_FUNC(sinf),   PIPER_MATH_KERNEL_FUNC(fabsf),
-                            PIPER_MATH_KERNEL_FUNC(fmaxf), PIPER_MATH_KERNEL_FUNC(fminf),  PIPER_MATH_KERNEL_FUNC(sqrtf),
-                            PIPER_MATH_KERNEL_FUNC(cbrtf), PIPER_MATH_KERNEL_FUNC(hypotf),
+                            PIPER_MATH_KERNEL_FUNC(cosf),   PIPER_MATH_KERNEL_FUNC(sinf),   PIPER_MATH_KERNEL_FUNC(fabsf),
+                            PIPER_MATH_KERNEL_FUNC(fmaxf),  PIPER_MATH_KERNEL_FUNC(fminf),  PIPER_MATH_KERNEL_FUNC(sqrtf),
+                            PIPER_MATH_KERNEL_FUNC(cbrtf),  PIPER_MATH_KERNEL_FUNC(hypotf), PIPER_MATH_KERNEL_FUNC(acosf),
+                            PIPER_MATH_KERNEL_FUNC(atan2f), PIPER_MATH_KERNEL_FUNC(asinf),  PIPER_MATH_KERNEL_FUNC(floorf),
+                            PIPER_MATH_KERNEL_FUNC(ceilf),
 #undef PIPER_MATH_KERNEL_FUNC
                         };
                         for(const auto& symbol : nativeSymbol)

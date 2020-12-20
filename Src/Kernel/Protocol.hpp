@@ -120,8 +120,6 @@ namespace Piper {
 
     using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                                 const SensorNDCAffineTransform& transform, RayInfo& ray, Vector2<float>& point);
-    using EnvironmentFunc = void (*)(RestrictedContext* context, const void* SBTData, const RayInfo& ray,
-                                     Spectrum<Radiance>& radiance);
 
     enum class BxDFPart : uint32_t { Reflection = 1, Refraction = 2, Diffuse = 4, Specular = 8, Glossy = 16, All = 31 };
     constexpr bool match(BxDFPart provide, BxDFPart require) {
@@ -144,9 +142,10 @@ namespace Piper {
         std::byte data[64];
     };
 
-    //TODO:simpler interface
+    // TODO:simplify interface
     using SurfaceInitFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float t,
-                                            const Vector2<float>& texCoord, const Normal<float, FOR::Shading>& Ng, void* storage);
+                                            const Vector2<float>& texCoord, const Normal<float, FOR::Shading>& Ng, void* storage,
+                                            bool& noSpecular);
     using SurfaceSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const void* storage,
                                               const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng,
                                               BxDFPart require, SurfaceSample& sample);
@@ -163,13 +162,30 @@ namespace Piper {
     using RenderDriverFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& point,
                                              const Spectrum<Radiance>& sample);
     using IntegratorFunc = void(PIPER_CC*)(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample);
+    struct LightStorage final {
+        std::byte data[32];
+    };
     struct LightSample final {
         Normal<float, FOR::World> dir;  // light.origin-hit
         Spectrum<Radiance> rad;
         Dimensionless<float> pdf;
     };
-    using LightFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const Point<Distance, FOR::World>& hit,
-                                      float t, LightSample& sample);
+    struct LightSelectResult final {
+        uint64_t light;
+        Dimensionless<float> pdf;
+        bool delta;
+    };
+    // TODO:spatial select?
+    using LightSelectFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, LightSelectResult& select);
+    using LightInitFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float t, void* storage);
+    using LightSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const void* storage,
+                                            const Point<Distance, FOR::World>& hit, LightSample& sample);
+    using LightEvaluateFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const void* storage,
+                                              const Point<Distance, FOR::World>& lightSourceHit,
+                                              const Normal<float, FOR::World>& dir, Spectrum<Radiance>& rad);
+    using LightPdfFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const void* storage,
+                                         const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
+                                         Dimensionless<float>& pdf);
 
     using SampleFunc = void(PIPER_CC*)(const void* SBTData, uint32_t x, uint32_t y, uint32_t s, float* samples);
     using TextureSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float t,
@@ -190,11 +206,10 @@ namespace Piper {
         TraceKind kind;
     };
 
+    // TODO:replace uint64_t with unsigned<ptrdiff_t>
     extern "C" {
-    void PIPER_CC piperMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance);
-
     void PIPER_CC piperSurfaceInit(FullContext* context, uint64_t instance, float t, const Vector2<float>& texCoord,
-                                   const Normal<float, FOR::Shading>& Ng, SurfaceStorage& storage);
+                                   const Normal<float, FOR::Shading>& Ng, SurfaceStorage& storage, bool& noSpecular);
     void PIPER_CC piperSurfaceSample(FullContext* context, uint64_t instance, const SurfaceStorage& storage,
                                      const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng,
                                      BxDFPart require, SurfaceSample& sample);
@@ -206,11 +221,16 @@ namespace Piper {
                                   const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                                   const Normal<float, FOR::Shading>& Ng, BxDFPart require, Dimensionless<float>& pdf);
 
-    void PIPER_CC piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, float t, LightSample& sample);
-    void PIPER_CC piperLightEvaluate(FullContext* context, const Point<Distance, FOR::World>& lightSourceHit,
-                                     const Normal<float, FOR::World>& dir, Spectrum<Radiance>& rad);
-    void PIPER_CC piperLightPdf(FullContext* context, const Point<Distance, FOR::World>& hit,
-                                const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf);
+    void PIPER_CC piperLightSelect(FullContext* context, LightSelectResult& select);
+    void PIPER_CC piperLightInit(FullContext* context, uint64_t light, float t, LightStorage& storage);
+    void PIPER_CC piperLightSample(FullContext* context, uint64_t light, const LightStorage& storage,
+                                   const Point<Distance, FOR::World>& hit, LightSample& sample);
+    void PIPER_CC piperLightEvaluate(FullContext* context, uint64_t light, const LightStorage& storage,
+                                     const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
+                                     Spectrum<Radiance>& rad);
+    void PIPER_CC piperLightPdf(FullContext* context, uint64_t light, const LightStorage& storage,
+                                const Point<Distance, FOR::World>& hit, const Normal<float, FOR::World>& dir,
+                                Dimensionless<float>& pdf);
 
     void PIPER_CC piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result);
     void PIPER_CC piperOcclude(FullContext* context, const RayInfo& ray, float minT, float maxT, bool& result);

@@ -350,6 +350,7 @@ namespace Piper {
 
     // TODO:support generator
     // TODO:asynchronous destruction
+    // TODO:better argument passing
     class Scheduler : public Object {
     public:
         virtual void spawnImpl(Optional<Closure<>> func, const Span<SharedPtr<FutureImpl>>& dependencies,
@@ -542,6 +543,15 @@ namespace Piper {
         }
 
         // TODO: reduce(ordered/unordered? + associative laws)
+
+        template <typename T, typename... Args>
+        Future<SharedPtr<Object>> constructObject(Args... args) {
+            return spawn(
+                [ctx = &context()](auto&&... inputs) {
+                    return eastl::static_shared_pointer_cast<Object>(makeSharedObject<T>(*ctx, std::move(inputs)...));
+                },
+                std::move(args)...);
+        }
     };
 
     template <typename T>

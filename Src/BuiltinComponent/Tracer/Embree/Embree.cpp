@@ -15,7 +15,6 @@
 */
 
 #define PIPER_EXPORT
-#include "../../../Interface/BuiltinComponent/Environment.hpp"
 #include "../../../Interface/BuiltinComponent/Geometry.hpp"
 #include "../../../Interface/BuiltinComponent/Integrator.hpp"
 #include "../../../Interface/BuiltinComponent/Light.hpp"
@@ -42,21 +41,28 @@
 namespace Piper {
     // TODO:move to Kernel
 
+    struct LightFuncGroup final {
+        LightInitFunc init;
+        LightSampleFunc sample;
+        LightEvaluateFunc evaluate;
+        LightPdfFunc pdf;
+        const void* LIPayload;
+    };
+
     struct KernelArgument final {
         RenderRECT rect;
         RTCScene scene;
         SensorFunc rayGen;
-        void* RGPayload;
-        EnvironmentFunc missing;
-        void* MSPayload;
+        const void* RGPayload;
         RenderDriverFunc accumulate;
-        void* ACPayload;
+        const void* ACPayload;
         IntegratorFunc trace;
-        void* TRPayload;
-        LightFunc light;
-        void* LIPayload;
+        const void* TRPayload;
+        LightFuncGroup* lights;
+        LightSelectFunc lightSample;
+        const void* LSPayload;
         SampleFunc generate;
-        void* SAPayload;
+        const void* SAPayload;
         float* samples;
         uint32_t sample;
         uint32_t maxDimension;
@@ -71,10 +77,10 @@ namespace Piper {
         SurfaceEvaluateFunc evaluate;
         SurfacePdfFunc pdf;
 
-        void* SFPayload;
+        const void* SFPayload;
         // TODO:medium
         GeometryFunc calcSurface;
-        void* GEPayload;
+        const void* GEPayload;
     };
 
     struct IntersectContext final {
@@ -181,14 +187,10 @@ namespace Piper {
         result = (rayInfo.tfar < 0.0f);
     }
 
-    void piperEmbreeMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance) {
-        const auto* SBT = reinterpret_cast<KernelArgument*>(context);
-        SBT->missing(decay(context), SBT->MSPayload, ray, radiance);
-    }
     void piperEmbreeSurfaceInit(FullContext* context, const uint64_t instance, const float t, const Vector2<float>& texCoord,
-                                const Normal<float, FOR::Shading>& Ng, SurfaceStorage& storage) {
+                                const Normal<float, FOR::Shading>& Ng, SurfaceStorage& storage, bool& noSpecular) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
-        func->init(decay(context), func->SFPayload, t, texCoord, Ng, &storage);
+        func->init(decay(context), func->SFPayload, t, texCoord, Ng, &storage, noSpecular);
     }
     void piperEmbreeSurfaceSample(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
                                   const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng, BxDFPart require,
@@ -208,20 +210,45 @@ namespace Piper {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
         func->pdf(decay(context), func->SFPayload, &storage, wo, wi, Ng, require, pdf);
     }
-    void piperEmbreeLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, const float t,
-                                LightSample& sample) {
+    void piperEmbreeLightSelect(FullContext* context, LightSelectResult& select) {
         const auto* SBT = reinterpret_cast<const KernelArgument*>(context);
-        SBT->light(decay(context), SBT->LIPayload, hit, t, sample);
+        SBT->lightSample(decay(context), SBT->LSPayload, select);
+        select.light = reinterpret_cast<uint64_t>(SBT->lights + select.light);
+    }
+    void piperEmbreeLightInit(FullContext* context, const uint64_t light, const float t, LightStorage& storage) {
+        const auto* SBT = reinterpret_cast<const KernelArgument*>(context);
+        const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : SBT->lights;
+        func->init(decay(context), func->LIPayload, t, &storage);
+    }
+    void piperEmbreeLightSample(FullContext* context, const uint64_t light, const LightStorage& storage,
+                                const Point<Distance, FOR::World>& hit, LightSample& sample) {
+        const auto* SBT = reinterpret_cast<const KernelArgument*>(context);
+        const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : SBT->lights;
+        func->sample(decay(context), func->LIPayload, &storage, hit, sample);
+    }
+    void piperEmbreeLightEvaluate(FullContext* context, const uint64_t light, const LightStorage& storage,
+                                  const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
+                                  Spectrum<Radiance>& rad) {
+        const auto* SBT = reinterpret_cast<const KernelArgument*>(context);
+        const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : SBT->lights;
+        func->evaluate(decay(context), func->LIPayload, &storage, lightSourceHit, dir, rad);
+    }
+    void piperEmbreeLightPdf(FullContext* context, uint64_t light, const LightStorage& storage,
+                             const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
+                             Dimensionless<float>& pdf) {
+        const auto* SBT = reinterpret_cast<const KernelArgument*>(context);
+        const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : SBT->lights;
+        func->pdf(decay(context), func->LIPayload, &storage, lightSourceHit, dir, pdf);
     }
 
     // TODO:more option
     void PIPER_CC piperEmbreePrintMessage(RestrictedContext* context, const char* msg) {
         printf("%s\n", msg);
     }
-    void PIPER_CC piperEmbreePrintFloat(RestrictedContext* context, const char* desc, float val) {
+    void PIPER_CC piperEmbreePrintFloat(RestrictedContext* context, const char* desc, const float val) {
         printf("%s: %f\n", desc, val);
     }
-    void PIPER_CC piperEmbreePrintUint(RestrictedContext* context, const char* desc, uint32_t val) {
+    void PIPER_CC piperEmbreePrintUint(RestrictedContext* context, const char* desc, const uint32_t val) {
         printf("%s: %u\n", desc, val);
     }
 
@@ -283,8 +310,11 @@ namespace Piper {
         PIPER_APPEND(Trace);
         PIPER_APPEND(Occlude);
         PIPER_APPEND(Main);
+        PIPER_APPEND(LightSelect);
+        PIPER_APPEND(LightInit);
         PIPER_APPEND(LightSample);
-        PIPER_APPEND(Missing);
+        PIPER_APPEND(LightEvaluate);
+        PIPER_APPEND(LightPdf);
         PIPER_APPEND(Sample);
         PIPER_APPEND(SurfaceEvaluate);
         PIPER_APPEND(SurfaceSample);
@@ -501,8 +531,8 @@ namespace Piper {
         }
 
     public:
-        EmbreePipeline(PiperContext& context, Tracer& tracer, const SharedPtr<EmbreeNode>& scene, Sensor& sensor,
-                       Environment& environment, Integrator& integrator, RenderDriver& renderDriver, Light& light,
+        EmbreePipeline(PiperContext& context, Tracer& tracer, SharedPtr<EmbreeNode> scene, Sensor& sensor, Integrator& integrator,
+                       RenderDriver& renderDriver, const LightSampler& lightSampler, const Span<SharedPtr<Light>>& lights,
                        Sampler* sampler, uint32_t width, uint32_t height)
             : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
               mScene(scene) {
@@ -578,15 +608,26 @@ namespace Piper {
             modules.push_back(ACRTP.program);
             mArg.ACPayload = nullptr;
 
-            auto LIP = light.materialize(tracer, mHolder);
-            auto& LIRTP = dynamic_cast<EmbreeRTProgram&>(*LIP.light);
-            modules.push_back(LIRTP.program);
-            mArg.LIPayload = upload(LIP.payload);
+            auto LSP = lightSampler.materialize(tracer, mHolder);
+            auto& LSRTP = dynamic_cast<EmbreeRTProgram&>(*LSP.select);
+            modules.push_back(LSRTP.program);
+            mArg.LSPayload = upload(LSP.payload);
 
-            auto MSP = environment.materialize(tracer, mHolder);
-            auto& MSRTP = dynamic_cast<EmbreeRTProgram&>(*MSP.missing);
-            modules.push_back(MSRTP.program);
-            mArg.MSPayload = upload(MSP.payload);
+            mArg.lights = mArena.alloc<LightFuncGroup>(lights.size());
+
+            for(size_t idx = 0; idx < lights.size(); ++idx) {
+                auto&& light = lights[idx];
+                auto LIP = light->materialize(tracer, mHolder);
+                auto& init = dynamic_cast<EmbreeRTProgram&>(*LIP.init);
+                auto& sample = dynamic_cast<EmbreeRTProgram&>(*LIP.sample);
+                auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*LIP.evaluate);
+                auto& pdf = dynamic_cast<EmbreeRTProgram&>(*LIP.pdf);
+                modules.push_back(init.program);
+                modules.push_back(sample.program);
+                modules.push_back(evaluate.program);
+                modules.push_back(pdf.program);
+                mArg.lights[idx].LIPayload = upload(LIP.payload);
+            }
 
             auto RGP = sensor.materialize(tracer, mHolder);
             auto& RGRTP = dynamic_cast<EmbreeRTProgram&>(*RGP.rayGen);
@@ -643,8 +684,21 @@ namespace Piper {
             }
 
             mArg.accumulate = static_cast<RenderDriverFunc>(mKernel->lookup(ACRTP.symbol));
-            mArg.light = static_cast<LightFunc>(mKernel->lookup(LIRTP.symbol));
-            mArg.missing = static_cast<EnvironmentFunc>(mKernel->lookup(MSRTP.symbol));
+
+            for(size_t idx = 0; idx < lights.size(); ++idx) {
+                auto&& light = lights[idx];
+                auto LIP = light->materialize(tracer, mHolder);
+                auto& init = dynamic_cast<EmbreeRTProgram&>(*LIP.init);
+                auto& sample = dynamic_cast<EmbreeRTProgram&>(*LIP.sample);
+                auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*LIP.evaluate);
+                auto& pdf = dynamic_cast<EmbreeRTProgram&>(*LIP.pdf);
+                mArg.lights[idx].init = static_cast<LightInitFunc>(mKernel->lookup(init.symbol));
+                mArg.lights[idx].sample = static_cast<LightSampleFunc>(mKernel->lookup(sample.symbol));
+                mArg.lights[idx].evaluate = static_cast<LightEvaluateFunc>(mKernel->lookup(evaluate.symbol));
+                mArg.lights[idx].pdf = static_cast<LightPdfFunc>(mKernel->lookup(pdf.symbol));
+            }
+
+            mArg.lightSample = static_cast<LightSelectFunc>(mKernel->lookup(LSRTP.symbol));
             mArg.rayGen = static_cast<SensorFunc>(mKernel->lookup(RGRTP.symbol));
             mArg.trace = static_cast<IntegratorFunc>(mKernel->lookup(TRRTP.symbol));
 
@@ -734,13 +788,13 @@ namespace Piper {
             // TODO:move
             return makeSharedObject<EmbreeLeafNode>(context(), *this, mDevice.get(), eastl::get<GSMInstanceDesc>(desc));
         }
-
-        UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Environment& environment,
-                                             Integrator& integrator, RenderDriver& renderDriver, Light& light, Sampler* sampler,
-                                             uint32_t width, uint32_t height) override {
+        UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Integrator& integrator,
+                                             RenderDriver& renderDriver, const LightSampler& lightSampler,
+                                             const Span<SharedPtr<Light>>& lights, Sampler* sampler, uint32_t width,
+                                             uint32_t height) override {
             return makeUniqueObject<Pipeline, EmbreePipeline>(
-                context(), *this, eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), sensor, environment, integrator,
-                renderDriver, light, sampler, width, height);
+                context(), *this, eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), sensor, integrator, renderDriver,
+                lightSampler, lights, sampler, width, height);
         }
         Accelerator& getAccelerator() override {
             return *mAccelerator;

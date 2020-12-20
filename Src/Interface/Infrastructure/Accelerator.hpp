@@ -58,9 +58,7 @@ namespace Piper {
         virtual void addOutput(const SharedPtr<Resource>& resource) = 0;
     };
 
-    // TODO:type check in edge
-    // TODO:stateless
-    // TODO:rename:Payload
+    // TODO:type check
     class Payload : public Object {
     private:
         friend class Accelerator;

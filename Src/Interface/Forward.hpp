@@ -22,13 +22,13 @@ namespace Piper {
     class Accelerator;
     class Allocator;
     class Config;
-    class Environment;
     class ErrorHandler;
     class FileSystem;
     class FutureImpl;
     class Geometry;
     class Integrator;
     class Light;
+    class LightSampler;
     struct LinkableProgram;
     class Logger;
     class Medium;
