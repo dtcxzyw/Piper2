@@ -33,9 +33,8 @@ namespace Piper {
         String mPath;
 
     public:
-        TriangleMesh(PiperContext& context, const SharedPtr<Config>& config) : Geometry(context) {
-            mPath = config->at("Path")->get<String>();
-        }
+        TriangleMesh(PiperContext& context, const SharedPtr<Config>& config)
+            : Geometry(context), mPath(config->at("Path")->get<String>()) {}
         AccelerationStructure& getAcceleration(Tracer& tracer) const override {
             const auto res = tracer.getCacheManager().materialize(
                 reinterpret_cast<ResourceID>(this),

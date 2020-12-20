@@ -91,18 +91,20 @@ namespace Piper {
         intersectCtx.ctx.flags = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
 
         RTCRayHit hit{};
-        hit.ray.org_x = ray.origin.x.val;
-        hit.ray.org_y = ray.origin.y.val;
-        hit.ray.org_z = ray.origin.z.val;
-        hit.ray.tnear = minT;
-
-        hit.ray.dir_x = ray.direction.x.val;
-        hit.ray.dir_y = ray.direction.y.val;
-        hit.ray.dir_z = ray.direction.z.val;
-        hit.ray.time = 0.0f;  // TODO:motion blur
-
-        hit.ray.tfar = maxT;
-        hit.ray.mask = 1;  // TODO:mask
+        hit.ray = {
+            ray.origin.x.val,
+            ray.origin.y.val,
+            ray.origin.z.val,
+            minT,
+            ray.direction.x.val,
+            ray.direction.y.val,
+            ray.direction.z.val,
+            ray.t,
+            maxT,
+            1,  // TODO:mask
+            0,
+            0  // must set the ray flags to 0
+        };
 
         hit.hit.geomID = hit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 
@@ -112,7 +114,7 @@ namespace Piper {
         if(hit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
             // TODO:surface intersect filter?
             result.kind = TraceKind::Surface;
-            result.surface.t = hit.ray.tfar;
+            result.surface.t = Distance{ hit.ray.tfar };
             auto scene = ctx->scene;
             RTCGeometry geo = nullptr;
 
@@ -149,6 +151,34 @@ namespace Piper {
         } else {
             result.kind = TraceKind::Missing;
         }
+    }
+
+    void piperEmbreeOcclude(FullContext* context, const RayInfo& ray, const float minT, const float maxT, bool& result) {
+        const auto* ctx = reinterpret_cast<KernelArgument*>(context);
+        IntersectContext intersectCtx;
+        rtcInitIntersectContext(&intersectCtx.ctx);
+        // TODO:context flags
+        intersectCtx.ctx.flags = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
+
+        RTCRay rayInfo{
+            ray.origin.x.val,
+            ray.origin.y.val,
+            ray.origin.z.val,
+            minT,
+            ray.direction.x.val,
+            ray.direction.y.val,
+            ray.direction.z.val,
+            ray.t,
+            maxT,
+            1,  // TODO:mask
+            0,
+            0  // must set the ray flags to 0
+        };
+
+        // TODO:Coroutine+SIMD?
+        rtcOccluded1(ctx->scene, &intersectCtx.ctx, &rayInfo);
+
+        result = (rayInfo.tfar < 0.0f);
     }
 
     void piperEmbreeMissing(FullContext* context, const RayInfo& ray, Spectrum<Radiance>& radiance) {
@@ -251,6 +281,7 @@ namespace Piper {
     static_assert(std::is_same_v<decltype(&piper##FUNC), decltype(&piperEmbree##FUNC)>); \
     append("piper" #FUNC, piperEmbree##FUNC)
         PIPER_APPEND(Trace);
+        PIPER_APPEND(Occlude);
         PIPER_APPEND(Main);
         PIPER_APPEND(LightSample);
         PIPER_APPEND(Missing);
@@ -263,7 +294,8 @@ namespace Piper {
         PIPER_APPEND(PrintFloat);
         PIPER_APPEND(PrintUint);
 #undef PIPER_APPEND
-        return { res, "Native" };
+        return LinkableProgram{ context.getScheduler().value(res), String{ "Native", context.getAllocator() },
+                                reinterpret_cast<uint64_t>(piperEmbreeMain) };
     }
 
     struct DeviceDeleter {
@@ -315,12 +347,12 @@ namespace Piper {
                     mBuiltin = calcTriangleMeshSurface;
 
                     mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE));
-                    auto triDesc = desc.triangleIndexed;
-                    const auto vert = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3,
-                                                              triDesc.stride, triDesc.vertCount);
+                    auto&& triDesc = desc.triangleIndexed;
+                    auto* const vert = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3,
+                                                               triDesc.stride, triDesc.vertCount);
                     memcpy(vert, reinterpret_cast<void*>(triDesc.vertices), triDesc.stride * triDesc.vertCount);
-                    const auto index = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3,
-                                                               sizeof(uint32_t) * 3, triDesc.triCount);
+                    auto* const index = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3,
+                                                                sizeof(uint32_t) * 3, triDesc.triCount);
                     memcpy(index, reinterpret_cast<void*>(triDesc.index), sizeof(uint32_t) * 3 * triDesc.triCount);
                     // rtcSetGeometryTimeStepCount(mGeometry.get(), 1);
                     rtcSetGeometryMask(mGeometry.get(), 1);
@@ -384,13 +416,13 @@ namespace Piper {
         DynamicArray<SharedPtr<EmbreeNode>> mChildren;
 
     public:
-        EmbreeBranchNode(PiperContext& context, Tracer& tracer, RTCDevice device, const DynamicArray<NodeInstanceDesc>& instances)
-            : EmbreeNode(context), mArena(context.getAllocator(), 512) {
+        EmbreeBranchNode(PiperContext& context, Tracer& tracer, RTCDevice device, const GroupDesc& instances)
+            : EmbreeNode(context), mArena(context.getAllocator(), 512), mChildren(context.getAllocator()) {
             mScene.reset(rtcNewScene(device));
             // rtcSetSceneFlags(mScene.get(), RTC_SCENE_FLAG_CONTEXT_FILTER_FUNCTION);
-            for(auto&& inst : instances) {
-                auto node = eastl::dynamic_shared_pointer_cast<EmbreeNode>(inst.node);
-                attachSubScene(device, mScene.get(), node->getScene(), inst.transform, node->getScene());
+            for(auto&& inst : instances.nodes) {
+                auto node = eastl::dynamic_shared_pointer_cast<EmbreeNode>(inst);
+                attachSubScene(device, mScene.get(), node->getScene(), instances.transform, node->getScene());
                 mChildren.emplace_back(std::move(node));
             }
             rtcCommitScene(mScene.get());
@@ -444,9 +476,9 @@ namespace Piper {
     };
 
     struct EmbreeRTProgram final : public RTProgram {
-        Future<LinkableProgram> program;
+        LinkableProgram program;
         String symbol;
-        EmbreeRTProgram(PiperContext& context, Future<LinkableProgram> program, String symbol)
+        EmbreeRTProgram(PiperContext& context, LinkableProgram program, String symbol)
             : RTProgram(context), program(std::move(program)), symbol(std::move(symbol)) {}
     };
 
@@ -469,14 +501,14 @@ namespace Piper {
         }
 
     public:
-        EmbreePipeline(PiperContext& context, Tracer& tracer, SharedPtr<EmbreeNode> scene, Sensor& sensor,
+        EmbreePipeline(PiperContext& context, Tracer& tracer, const SharedPtr<EmbreeNode>& scene, Sensor& sensor,
                        Environment& environment, Integrator& integrator, RenderDriver& renderDriver, Light& light,
                        Sampler* sampler, uint32_t width, uint32_t height)
             : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
               mScene(scene) {
-            DynamicArray<Future<LinkableProgram>> modules(context.getAllocator());
+            DynamicArray<LinkableProgram> modules(context.getAllocator());
             auto& scheduler = context.getScheduler();
-            modules.push_back(scheduler.value(prepareKernelNative(context)));
+            modules.push_back(prepareKernelNative(context));
 
             mArg.scene = scene->getScene();
             UMap<EmbreeLeafNode*, InstanceProgram> nodeProg{ context.getAllocator() };
@@ -579,9 +611,8 @@ namespace Piper {
                 mArg.maxDimension = 0;
 
             auto& accelerator = tracer.getAccelerator();
-            auto kernel =
-                accelerator.compileKernel(Span<Future<LinkableProgram>>{ modules.data(), modules.data() + modules.size() },
-                                          String{ "piperMain", context.getAllocator() });
+            auto kernel = accelerator.compileKernel(Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
+                                                    String{ "piperMain", context.getAllocator() });
             kernel.wait();
             mKernel = kernel.get();
 
@@ -691,7 +722,7 @@ namespace Piper {
                 [](void* userPtr, const RTCError ec, CString str) { static_cast<Embree*>(userPtr)->reportError(ec, str); }, this);
             // rtcSetDeviceMemoryMonitorFunction();
         }
-        SharedPtr<RTProgram> buildProgram(Future<LinkableProgram> linkable, String symbol) override {
+        SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) override {
             return makeSharedObject<EmbreeRTProgram>(context(), linkable, symbol);
         }
         SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) override {
@@ -699,8 +730,7 @@ namespace Piper {
         }
         SharedPtr<Node> buildNode(const NodeDesc& desc) override {
             if(desc.index() == 0)
-                return makeSharedObject<EmbreeBranchNode>(context(), *this, mDevice.get(),
-                                                          eastl::get<DynamicArray<NodeInstanceDesc>>(desc));
+                return makeSharedObject<EmbreeBranchNode>(context(), *this, mDevice.get(), eastl::get<GroupDesc>(desc));
             // TODO:move
             return makeSharedObject<EmbreeLeafNode>(context(), *this, mDevice.get(), eastl::get<GSMInstanceDesc>(desc));
         }

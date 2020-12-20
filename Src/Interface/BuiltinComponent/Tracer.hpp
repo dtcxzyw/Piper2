@@ -68,12 +68,12 @@ namespace Piper {
         SharedPtr<Medium> medium;
         Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
     };
-    struct NodeInstanceDesc final {
-        SharedPtr<Node> node;
+    struct GroupDesc final {
+        DynamicArray<SharedPtr<Node>> nodes;
         Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
     };
 
-    using NodeDesc = Variant<DynamicArray<NodeInstanceDesc>, GSMInstanceDesc>;
+    using NodeDesc = Variant<GroupDesc, GSMInstanceDesc>;
 
     using SBTPayload = DynamicArray<std::byte>;
     template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
@@ -96,7 +96,7 @@ namespace Piper {
         virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
         virtual SharedPtr<Node> buildNode(const NodeDesc& desc) = 0;
         // TODO:callee
-        virtual SharedPtr<RTProgram> buildProgram(Future<LinkableProgram> linkable, String symbol) = 0;
+        virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
         virtual UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Environment& environment,
                                                      Integrator& integrator, RenderDriver& renderDriver, Light& light,
                                                      Sampler* sampler, uint32_t width, uint32_t height) = 0;

@@ -578,10 +578,12 @@ namespace Piper {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return Future<SharedPtr<PITU>>{ nullptr };  // make compiler happy
         }
+        /*
         Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return Future<SharedPtr<PITU>>{ nullptr };  // make compiler happy
         }
+        */
     };
 
     class PiperContextImpl final : public PiperContextOwner {

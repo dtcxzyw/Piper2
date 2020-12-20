@@ -40,9 +40,13 @@ namespace Piper {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.light = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "lightPoint");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                "lightPoint");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
+        }
+        bool isDelta() const override {
+            return true;
         }
     };
     class ModuleImpl final : public Module {

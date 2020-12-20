@@ -64,7 +64,8 @@ namespace Piper {
             SensorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.rayGen = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "rayGen");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                "rayGen");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }

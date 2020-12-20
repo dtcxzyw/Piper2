@@ -92,10 +92,11 @@ namespace Piper {
         mutable SharedPtr<Context> mContext;
         mutable std::unique_ptr<llvm::Module> mModule;
         mutable std::mutex mMutex;
+        uint64_t mUID;
 
     public:
-        LLVMIR(PiperContext& context, SharedPtr<Context> llvmCtx, std::unique_ptr<llvm::Module> module)
-            : PITU(context), mContext(std::move(llvmCtx)), mModule(std::move(module)) {}
+        LLVMIR(PiperContext& context, SharedPtr<Context> llvmCtx, std::unique_ptr<llvm::Module> module, uint64_t UID)
+            : PITU(context), mContext(std::move(llvmCtx)), mModule(std::move(module)), mUID(UID) {}
         // TODO:reduce clone
         std::unique_ptr<llvm::Module> cloneModule() const {
             std::lock_guard<std::mutex> guard{ mContext->mutex };
@@ -112,51 +113,55 @@ namespace Piper {
             out.flush();
             return String{ res.data(), res.size(), context().getAllocator() };
         }
-        Future<LinkableProgram> generateLinkable(const Span<const CString>& acceptableFormat) const override {
+        LinkableProgram generateLinkable(const Span<const CString>& acceptableFormat) const override {
             auto& scheduler = context().getScheduler();
             for(auto&& format : acceptableFormat) {
                 // TODO:LLVM IR Version
                 if(StringView{ format } == "LLVM IR") {
                     // TODO:lazy parse linkable and directly return data
-                    return scheduler.spawn(
-                        [ctx = &context()](const std::unique_ptr<llvm::Module> mod) {
-                            DynamicArray<std::byte> data{ ctx->getAllocator() };
-                            LLVMStream stream(*ctx, data);
-                            llvm::WriteBitcodeToFile(*mod, stream);
-                            stream.flush();
-                            return LinkableProgram{ std::move(data), "LLVM IR" };
-                        },
-                        scheduler.value(cloneModule()));
+                    return LinkableProgram{ scheduler.spawn(
+                                                [ctx = &context()](const std::unique_ptr<llvm::Module> mod) {
+                                                    DynamicArray<std::byte> data{ ctx->getAllocator() };
+                                                    LLVMStream stream(*ctx, data);
+                                                    llvm::WriteBitcodeToFile(*mod, stream);
+                                                    stream.flush();
+                                                    return std::move(data);
+                                                },
+                                                scheduler.value(cloneModule())),
+                                            String{ "LLVM IR", context().getAllocator() }, mUID };
                 }
                 std::string error;
                 const auto* target = llvm::TargetRegistry::lookupTarget(format, error);
                 if(target) {
-                    return scheduler.spawn(
-                        [target, format, ctx = &context()](std::unique_ptr<llvm::Module> mod) {
-                            auto stage = ctx->getErrorHandler().enterStage("generate linkable", PIPER_SOURCE_LOCATION());
-                            // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
-                            const auto* cpu = "generic";
-                            const auto* features = "";
+                    return LinkableProgram{ scheduler.spawn(
+                                                [target, format, ctx = &context()](std::unique_ptr<llvm::Module> mod) {
+                                                    auto stage = ctx->getErrorHandler().enterStage("generate linkable",
+                                                                                                   PIPER_SOURCE_LOCATION());
+                                                    // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
+                                                    const auto* cpu = "generic";
+                                                    const auto* features = "";
 
-                            llvm::TargetOptions opt;
-                            auto RM = llvm::Optional<llvm::Reloc::Model>();
-                            auto* targetMachine = target->createTargetMachine(format, cpu, features, opt, RM);
-                            // BUG:The operation is not thread safe.
-                            // mod->setDataLayout(targetMachine->createDataLayout());
-                            // mod->setTargetTriple(format);
+                                                    llvm::TargetOptions opt;
+                                                    auto RM = llvm::Optional<llvm::Reloc::Model>();
+                                                    auto* targetMachine =
+                                                        target->createTargetMachine(format, cpu, features, opt, RM);
+                                                    // BUG:The operation is not thread safe.
+                                                    // mod->setDataLayout(targetMachine->createDataLayout());
+                                                    // mod->setTargetTriple(format);
 
-                            llvm::legacy::PassManager pass;
-                            DynamicArray<std::byte> data{ ctx->getAllocator() };
-                            LLVMStream stream(*ctx, data);
-                            if(!(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
-                                                                    llvm::CodeGenFileType::CGFT_ObjectFile)))
-                                ctx->getErrorHandler().raiseException("Failed to create object emit pass",
-                                                                      PIPER_SOURCE_LOCATION());
-                            pass.run(*mod);
-                            stream.flush();
-                            return LinkableProgram{ std::move(data), format };
-                        },
-                        scheduler.value(cloneModule()));
+                                                    llvm::legacy::PassManager pass;
+                                                    DynamicArray<std::byte> data{ ctx->getAllocator() };
+                                                    LLVMStream stream(*ctx, data);
+                                                    if(!(targetMachine->addPassesToEmitFile(
+                                                           pass, stream, nullptr, llvm::CodeGenFileType::CGFT_ObjectFile)))
+                                                        ctx->getErrorHandler().raiseException("Failed to create object emit pass",
+                                                                                              PIPER_SOURCE_LOCATION());
+                                                    pass.run(*mod);
+                                                    stream.flush();
+                                                    return std::move(data);
+                                                },
+                                                scheduler.value(cloneModule())),
+                                            String{ format, context().getAllocator() }, mUID };
                 }
             }
             std::string out;
@@ -192,12 +197,14 @@ namespace Piper {
                 guard.unlock();
 
                 if(res)
-                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmCtx, std::move(res.get())));
+                    return eastl::static_shared_pointer_cast<PITU>(
+                        makeSharedObject<LLVMIR>(*ctx, llvmCtx, std::move(res.get()), eastl::hash<String>{}(path)));
 
                 const auto error = toString(res.takeError());
                 ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
             });
         }
+        /*
         [[nodiscard]] Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
             return context().getScheduler().spawn(
                 [ctx = &context(), llvmCtx = mContext](const DynamicArray<SharedPtr<PITU>>& modules) {
@@ -218,10 +225,12 @@ namespace Piper {
 
                     verifyLLVMModule(*ctx, *module);
 
-                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmCtx, std::move(module)));
+                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmCtx,
+        std::move(module)));
                 },
                 pitus);
         }
+        */
     };
     class ModuleImpl final : public Module {
     public:

@@ -79,8 +79,15 @@ namespace Piper {
     template <typename Float>
     struct Spectrum final {
         Float r, g, b;
+        Float luminosity() const noexcept {
+            // TODO:more accurate weight
+            return Float{ 0.298f * r.val + 0.612f * g.val * 0.117f * b.val };
+        }
         Spectrum operator+(Spectrum rhs) const noexcept {
             return { r + rhs.r, g + rhs.g, b + rhs.b };
+        }
+        bool valid() const noexcept {
+            return r.val > 0.0f || g.val > 0.0f || b.val > 0.0f;
         }
         template <typename U>
         auto operator*(U scalar) const noexcept {
@@ -137,6 +144,7 @@ namespace Piper {
         std::byte data[64];
     };
 
+    //TODO:simpler interface
     using SurfaceInitFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float t,
                                             const Vector2<float>& texCoord, const Normal<float, FOR::Shading>& Ng, void* storage);
     using SurfaceSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const void* storage,
@@ -156,7 +164,7 @@ namespace Piper {
                                              const Spectrum<Radiance>& sample);
     using IntegratorFunc = void(PIPER_CC*)(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample);
     struct LightSample final {
-        Point<Distance, FOR::World> src;
+        Normal<float, FOR::World> dir;  // light.origin-hit
         Spectrum<Radiance> rad;
         Dimensionless<float> pdf;
     };
@@ -173,7 +181,7 @@ namespace Piper {
         SurfaceIntersectionInfo intersect;
         Transform<Distance, FOR::World, FOR::Local> transform;
         uint64_t instance;
-        float t;
+        Distance t;
     };
     struct TraceResult final {
         union {
@@ -199,8 +207,13 @@ namespace Piper {
                                   const Normal<float, FOR::Shading>& Ng, BxDFPart require, Dimensionless<float>& pdf);
 
     void PIPER_CC piperLightSample(FullContext* context, const Point<Distance, FOR::World>& hit, float t, LightSample& sample);
+    void PIPER_CC piperLightEvaluate(FullContext* context, const Point<Distance, FOR::World>& lightSourceHit,
+                                     const Normal<float, FOR::World>& dir, Spectrum<Radiance>& rad);
+    void PIPER_CC piperLightPdf(FullContext* context, const Point<Distance, FOR::World>& hit,
+                                const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf);
 
     void PIPER_CC piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result);
+    void PIPER_CC piperOcclude(FullContext* context, const RayInfo& ray, float minT, float maxT, bool& result);
     // TODO:terminate/ignore intersection
     // TODO:need FullContext
     float PIPER_CC piperSample(RestrictedContext* context);

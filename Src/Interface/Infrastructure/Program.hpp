@@ -22,8 +22,9 @@
 
 namespace Piper {
     struct LinkableProgram final {
-        DynamicArray<std::byte> exchange;
-        CString format;
+        Future<DynamicArray<std::byte>> exchange;
+        String format;
+        uint64_t UID;
     };
 
     // PlatformIndependentTranslationUnit
@@ -31,7 +32,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(PITU, Object)
         virtual ~PITU() = default;
-        [[nodiscard]] virtual Future<LinkableProgram> generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
+        [[nodiscard]] virtual LinkableProgram generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
         [[nodiscard]] virtual String humanReadable() const = 0;
     };
 
@@ -42,6 +43,6 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(PITUManager, Object)
         virtual ~PITUManager() = default;
         [[nodiscard]] virtual Future<SharedPtr<PITU>> loadPITU(const String& path) const = 0;
-        [[nodiscard]] virtual Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const = 0;
+        //[[nodiscard]] virtual Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const = 0;
     };
 }  // namespace Piper

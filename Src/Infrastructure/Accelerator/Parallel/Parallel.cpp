@@ -294,8 +294,7 @@ namespace Piper {
         [[nodiscard]] SharedPtr<Resource> createResource(const ResourceHandle handle) const override {
             return eastl::static_shared_pointer_cast<Resource>(makeSharedObject<ResourceImpl>(context(), handle));
         }
-        Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<LinkableProgram>>& linkable,
-                                                         const String& entry) override {
+        Future<SharedPtr<RunnableProgram>> compileKernel(const Span<LinkableProgram>& linkable, const String& entry) override {
             DynamicArray<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
             USet<size_t> hashPool{ context().getAllocator() };
             UMap<String, void*> nativeSymbol{ context().getAllocator() };
@@ -304,31 +303,28 @@ namespace Piper {
             // TODO:parallel load?
             for(auto&& unit : linkable) {
                 // TODO:concurrency
-                unit.wait();
+                unit.exchange.wait();
 
-                const auto beg = reinterpret_cast<CString>(unit.get().exchange.data());
-                // TODO:use StringView
-                const auto data = std::string_view{ beg, unit.get().exchange.size() };
-                if(!hashPool.insert(std::hash<std::string_view>{}(data)).second)
+                if(!hashPool.insert(unit.UID).second)
                     continue;
 
-                if(unit.get().format == std::string_view{ "LLVM IR" }) {
+                if(unit.format == "LLVM IR") {
                     // TODO:concurrency
                     // modules.emplace_back(std::move(scheduler.spawn(
                     //    [ctx = &context(), llvmctx = llctx.get()](const Future<LinkableProgram>& linkable) {
                     auto stage = context().getErrorHandler().enterStage("parse LLVM Bitcode", PIPER_SOURCE_LOCATION());
                     auto res = llvm::parseBitcodeFile(
                         llvm::MemoryBufferRef{
-                            toStringRef(llvm::ArrayRef<uint8_t>{ reinterpret_cast<const uint8_t*>(unit.get().exchange.data()),
-                                                                 unit.get().exchange.size() }),
+                            toStringRef(llvm::ArrayRef<uint8_t>{ reinterpret_cast<const uint8_t*>(unit.exchange.get().data()),
+                                                                 unit.exchange.get().size() }),
                             "bitcode data" },
                         *llCtx);
                     modules.push_back(scheduler.value(getLLVMResult(context(), PIPER_SOURCE_LOCATION(), std::move(res))));
-                } else if(unit.get().format == std::string_view{ "Native" }) {
-                    parseNative(context(), unit.get().exchange, nativeSymbol);
+                } else if(unit.format == "Native") {
+                    parseNative(context(), unit.exchange.get(), nativeSymbol);
                 } else
                     context().getErrorHandler().raiseException("Unsupported linkable format " +
-                                                                   String{ unit.get().format, context().getAllocator() },
+                                                                   String{ unit.format, context().getAllocator() },
                                                                PIPER_SOURCE_LOCATION());
             }
             // TODO:reduce Module cloning by std::move

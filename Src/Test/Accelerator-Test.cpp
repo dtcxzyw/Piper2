@@ -53,7 +53,10 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
 
     auto conv = context.getPITUManager().loadPITU("conv.bc");
     auto linkable = PIPER_FUTURE_CALL(conv, generateLinkable)(accelerator->getSupportedLinkableFormat());
-    auto kernel = accelerator->compileKernel(Piper::Span<Piper::Future<Piper::LinkableProgram>>{ &linkable, 1 }, "conv");
+
+    // TODO:concurrency
+    linkable.wait();
+    auto kernel = accelerator->compileKernel(Piper::Span<Piper::LinkableProgram>{ &linkable.get(), 1 }, "conv");
     auto payload = accelerator->createPayload(Piper::InputResource{ devX->ref() }, Piper::InputResource{ devY->ref() },
                                               Piper::OutputResource{ devZ->ref() }, width, height, kernelSize);
 

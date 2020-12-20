@@ -37,7 +37,8 @@ namespace Piper {
             SamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.sample = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "generate");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                "generate");
             // res.payload = ;
             // res.maxDimension = ;
             return res;

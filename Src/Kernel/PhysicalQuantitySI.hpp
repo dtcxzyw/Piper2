@@ -121,6 +121,11 @@ namespace Piper {
     using Dimensionless = PhysicalQuantitySI<Float, 0, 0, 0, 0, 0, 0, 0, 0, 0>;
 
     template <typename T>
+    constexpr auto abs(Dimensionless<T> val) {
+        return Dimensionless<T>{ std::fabs(val.val) };
+    }
+
+    template <typename T>
     constexpr auto eraseUnit(T val) noexcept {
         return Dimensionless<typename T::FT>{ val.val };
     }
@@ -220,7 +225,7 @@ namespace Piper {
         template <typename Float>
         constexpr Float pi = static_cast<Float>(3.14159265358979323846);
 
-        template<typename Float>
+        template <typename Float>
         constexpr Float twoPi = static_cast<Float>(6.2831853071796);
 
         template <typename Float>

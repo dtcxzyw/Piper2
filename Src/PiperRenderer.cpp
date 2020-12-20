@@ -22,6 +22,7 @@
 #include "Interface/BuiltinComponent/RenderDriver.hpp"
 #include "Interface/BuiltinComponent/Sampler.hpp"
 #include "Interface/BuiltinComponent/Sensor.hpp"
+#include "Interface/BuiltinComponent/StructureParser.hpp"
 #include "Interface/BuiltinComponent/Surface.hpp"
 #include "Interface/BuiltinComponent/Tracer.hpp"
 #include "Interface/Infrastructure/ErrorHandler.hpp"
@@ -47,14 +48,57 @@ namespace Piper {
     class Render final : public Operator {
     private:
         static auto parseTransform(const SharedPtr<Config>& config) {
-            Transform<Distance, FOR::Local, FOR::World> transform;
-            const auto& arr = config->viewAsArray();
-            if(arr.size() != 12)
-                config->context().getErrorHandler().raiseException("Invalid transform", PIPER_SOURCE_LOCATION());
-            for(uint32_t i = 0; i < 3; ++i)
-                for(uint32_t j = 0; j < 4; ++j) {
-                    transform.A2B[i][j].val = static_cast<float>(arr[i * 4 + j]->get<double>());
+            Transform<Distance, FOR::Local, FOR::World> transform{};
+            auto& context = config->context();
+            auto reportError = [&context] {
+                context.getErrorHandler().raiseException("Invalid transform", PIPER_SOURCE_LOCATION());
+            };
+            if(config->type() == NodeType::Array) {
+                const auto& arr = config->viewAsArray();
+                if(arr.size() != 3)
+                    reportError();
+                for(uint32_t i = 0; i < 3; ++i) {
+                    if(arr[i]->type() != NodeType::Array)
+                        reportError();
+                    const auto& row = arr[i]->viewAsArray();
+                    if(row.size() != 4)
+                        reportError();
+                    for(uint32_t j = 0; j < 4; ++j) {
+                        transform.A2B[i][j].val = static_cast<float>(row[j]->get<double>());
+                    }
                 }
+            } else if(config->type() == NodeType::Object) {
+                // SRT
+                const auto& attrs = config->viewAsObject();
+                const auto translation = attrs.find(String{ "Translation", context.getAllocator() });
+                if(translation != attrs.cend()) {
+                    const auto offset = parseVector<Dimensionless<float>, FOR::World>(translation->second);
+                    transform.A2B[0][3] = offset.x;
+                    transform.A2B[1][3] = offset.y;
+                    transform.A2B[2][3] = offset.z;
+                }
+                const auto scale = attrs.find(String{ "Scale", context.getAllocator() });
+                if(scale != attrs.cend()) {
+                    const auto mode = scale->second->type();
+                    if(mode == NodeType::FloatingPoint) {
+                        transform.A2B[0][0] = transform.A2B[1][1] = transform.A2B[2][2] =
+                            Dimensionless<float>{ static_cast<float>(scale->second->get<double>()) };
+                    } else if(mode == NodeType::Array) {
+                        const auto factor = parseVector<Dimensionless<float>, FOR::World>(scale->second);
+                        transform.A2B[0][0] = factor.x;
+                        transform.A2B[1][1] = factor.y;
+                        transform.A2B[2][2] = factor.z;
+                    } else
+                        reportError();
+                } else {
+                    transform.A2B[0][0] = transform.A2B[1][1] = transform.A2B[2][2] = Dimensionless<float>{ 1.0f };
+                }
+                const auto rotation = attrs.find(String{ "Rotation", context.getAllocator() });
+                if(rotation != attrs.cend()) {
+                    context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+                }
+            } else
+                reportError();
             calcInverse(transform.A2B, transform.B2A);
             return transform;
         }
@@ -68,33 +112,33 @@ namespace Piper {
         }
 
         SharedPtr<Node> buildScene(Tracer& tracer, const SharedPtr<Config>& config) {
-            switch(config->type()) {  // NOLINT(clang-diagnostic-switch-enum)
-                case NodeType::Array: {
-                    auto sub = config->viewAsArray();
-                    DynamicArray<NodeInstanceDesc> subNodes(context().getAllocator());
-                    for(auto&& inst : sub) {
-                        NodeInstanceDesc desc;
-                        desc.node = buildScene(tracer, inst->at("Node"));
-                        auto&& attr = inst->viewAsObject();
-                        auto iter = attr.find(String{ "Transform", context().getAllocator() });
-                        if(iter != attr.cend())
-                            desc.transform = parseTransform(iter->second);
-                    }
-                    return tracer.buildNode(subNodes);
-                }
-                case NodeType::Object: {
-                    GSMInstanceDesc desc;
-                    desc.surface = syncLoad<Surface>(config->at("Surface"));
-                    desc.geometry = syncLoad<Geometry>(config->at("Geometry"));
-                    auto&& attr = config->viewAsObject();
-                    const auto iter = attr.find(String{ "Transform", context().getAllocator() });
-                    if(iter != attr.cend())
-                        desc.transform = parseTransform(iter->second);
-                    return tracer.buildNode(desc);
-                }
-                default:
-                    context().getErrorHandler().raiseException("Invalid scene node.", PIPER_SOURCE_LOCATION());
+
+            const auto type = config->at("Type")->get<String>();
+            if(type == "Instance") {
+                GSMInstanceDesc desc;
+                desc.surface = syncLoad<Surface>(config->at("Surface"));
+                desc.geometry = syncLoad<Geometry>(config->at("Geometry"));
+                const auto& attr = config->viewAsObject();
+                const auto iter = attr.find(String{ "Transform", context().getAllocator() });
+                if(iter != attr.cend())
+                    desc.transform = parseTransform(iter->second);
+                return tracer.buildNode(std::move(desc));
             }
+            if(type == "Group") {
+                const auto& sub = config->at("Children")->viewAsArray();
+                GroupDesc desc;
+                desc.nodes.set_allocator(context().getAllocator());
+                for(auto&& inst : sub)
+                    desc.nodes.emplace_back(buildScene(tracer, inst));
+
+                auto&& attr = config->viewAsObject();
+                const auto iter = attr.find(String{ "Transform", context().getAllocator() });
+                if(iter != attr.cend())
+                    desc.transform = parseTransform(iter->second);
+                return tracer.buildNode(std::move(desc));
+            }
+
+            context().getErrorHandler().raiseException("Invalid scene node.", PIPER_SOURCE_LOCATION());
         }
 
         UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
@@ -197,7 +241,7 @@ namespace Piper {
             // TODO:move OpenEXR to ImageIO
             saveToFile(output, res, width, height);
         }
-    };
+    };  // namespace Piper
     class ModuleImpl final : public Module {
     private:
         String mPath;

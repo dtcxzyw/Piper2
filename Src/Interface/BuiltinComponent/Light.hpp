@@ -27,5 +27,6 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Light, Object)
         virtual ~Light() = default;
         virtual LightProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
+        virtual bool isDelta() const = 0;
     };
 }  // namespace Piper

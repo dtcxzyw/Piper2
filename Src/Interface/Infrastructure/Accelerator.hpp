@@ -184,8 +184,7 @@ namespace Piper {
 
         // TODO:Resource name for debug
         [[nodiscard]] virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
-        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<Future<LinkableProgram>>& linkable,
-                                                                 const String& entry) = 0;
+        virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<LinkableProgram>& linkable, const String& entry) = 0;
         virtual Future<void> runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
                                        const SharedPtr<Payload>& args) = 0;
         virtual void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) = 0;

@@ -20,8 +20,10 @@ namespace Piper {
     extern "C" void PIPER_CC lightPoint(RestrictedContext*, const void* SBTData, const Point<Distance, FOR::World>& hit, float t,
                                         LightSample& sample) {
         const auto* data = static_cast<const PointLightData*>(SBTData);
-        sample.rad = data->intensity / lengthSquared(data->pos - hit);
-        sample.src = data->pos;
+        const auto delta = data->pos - hit;
+        const auto dis2 = lengthSquared(delta);
+        sample.rad = data->intensity / dis2;
+        sample.dir = Normal<float, FOR::World>{ delta / sqrt(dis2), Unchecked{} };
         sample.pdf = Dimensionless<float>{ 1.0f };
     }
     static_assert(std::is_same_v<LightFunc, decltype(&lightPoint)>);

@@ -15,6 +15,8 @@
 */
 
 #define PIPER_EXPORT
+#include <utility>
+
 #include "../../../Interface/BuiltinComponent/StructureParser.hpp"
 #include "../../../Interface/BuiltinComponent/Surface.hpp"
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
@@ -29,11 +31,12 @@ namespace Piper {
         String mKernelPath;
 
     public:
-        BlackBody(PiperContext& context, const String& path) : Surface(context), mKernelPath(path) {}
+        BlackBody(PiperContext& context, String path) : Surface(context), mKernelPath(std::move(path)) {}
         SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat());
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
             res.init = tracer.buildProgram(linkable, "blackBodyInit");
             res.sample = tracer.buildProgram(linkable, "blackBodySample");
             res.evaluate = tracer.buildProgram(linkable, "blackBodyEvaluate");
@@ -69,12 +72,14 @@ namespace Piper {
         MatteData mData;
 
     public:
-        Matte(PiperContext& context, const SharedPtr<Config>& config, const String& path)
-            : Surface(context), mKernelPath(path), mData{ parseSpectrum<Dimensionless<float>>(config->at("Diffuse")) } {}
+        Matte(PiperContext& context, const SharedPtr<Config>& config, String path)
+            : Surface(context),
+              mKernelPath(std::move(path)), mData{ parseSpectrum<Dimensionless<float>>(config->at("Diffuse")) } {}
         SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat());
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
             res.init = tracer.buildProgram(linkable, "matteInit");
             res.sample = tracer.buildProgram(linkable, "matteSample");
             res.evaluate = tracer.buildProgram(linkable, "matteEvaluate");

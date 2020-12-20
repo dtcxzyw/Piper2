@@ -38,7 +38,8 @@ namespace Piper {
             IntegratorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.trace = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "trace");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                "trace");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }

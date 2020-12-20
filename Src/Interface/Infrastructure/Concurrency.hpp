@@ -143,6 +143,16 @@ namespace Piper {
             return *static_cast<const T*>(mImpl->storage());
         }
 
+        T& getSync() {
+            wait();
+            return *static_cast<T*>(const_cast<void*>(mImpl->storage()));
+        }
+
+        const T& getSync() const {
+            wait();
+            return *static_cast<const T*>(mImpl->storage());
+        }
+
         template <typename S>
         auto operator->*(S call) {
             return Detail::FutureProxyDispatch<T, S>(mImpl, static_cast<T*>(const_cast<void*>(mImpl->storage())), call);

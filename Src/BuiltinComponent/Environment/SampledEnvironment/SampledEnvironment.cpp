@@ -39,7 +39,8 @@ namespace Piper {
             EnvironmentProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.missing = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()), "missing");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                "missing");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }
