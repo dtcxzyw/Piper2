@@ -188,9 +188,10 @@ namespace Piper {
                                          Dimensionless<float>& pdf);
 
     using SampleFunc = void(PIPER_CC*)(const void* SBTData, uint32_t x, uint32_t y, uint32_t s, float* samples);
+
+    enum class TextureWrap : uint32_t { Repeat, Mirror };
     using TextureSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float t,
-                                              const Vector2<Dimensionless<float>>& texCoord,
-                                              Spectrum<Dimensionless<float>>& sample);
+                                              const Vector2<Dimensionless<float>>& texCoord, Dimensionless<float>* sample);
 
     enum class TraceKind : unsigned char { Surface, Missing };
     struct TraceSurface final {

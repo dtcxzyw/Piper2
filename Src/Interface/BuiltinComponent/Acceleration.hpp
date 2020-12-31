@@ -15,10 +15,7 @@
 */
 
 #pragma once
-#include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct Data final {
-        Spectrum<Dimensionless<float>> texel;
-    };
-}  // namespace Piper
+    //TODO:Acceleration for both software and hardware implementation
+}

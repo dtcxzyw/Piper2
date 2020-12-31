@@ -26,6 +26,8 @@ namespace Piper {
     class FileSystem;
     class FutureImpl;
     class Geometry;
+    class Image;
+    class ImageIO;
     class Integrator;
     class Light;
     class LightSampler;
@@ -42,6 +44,8 @@ namespace Piper {
     class Scheduler;
     class Sensor;
     class Surface;
+    class Texture;
+    class TextureSampler;
     class Tracer;
     class UnitManager;
 

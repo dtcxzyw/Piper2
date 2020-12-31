@@ -23,6 +23,8 @@
 #include "../Object.hpp"
 
 namespace Piper {
+    enum class TextureWrap : uint32_t;
+
     class AccelerationStructure : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(AccelerationStructure, Object)
@@ -106,5 +108,6 @@ namespace Piper {
         virtual ResourceCacheManager& getCacheManager() = 0;
         virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
                            const SensorNDCAffineTransform& transform, uint32_t sample) = 0;
+        [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, TextureWrap wrap) const = 0;
     };
 }  // namespace Piper

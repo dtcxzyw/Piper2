@@ -15,19 +15,15 @@
 */
 
 #pragma once
-#include "Tracer.hpp"
+#include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct SensorProgram final {
-        SBTPayload payload;
-        SharedPtr<RTProgram> rayGen;
-    };
-
-    class Sensor : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Sensor, Object)
-        virtual ~Sensor() = default;
-        virtual SensorProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
-        [[nodiscard]] virtual float getAspectRatio() const noexcept = 0;
+    struct Data final {
+        TextureWrap wrap;
+        uint32_t width;
+        uint32_t height;
+        uint32_t stride;
+        uint32_t channel;
+        const unsigned char* texel;
     };
 }  // namespace Piper

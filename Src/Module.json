@@ -66,5 +66,9 @@
   {
     "Name": "Piper.Renderer",
     "Path": "PiperRenderer"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.SampledTexture",
+    "Path": "BuiltinComponent/Texture/SampledTexture/SampledTexture"
   }
 ]

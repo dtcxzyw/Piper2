@@ -24,10 +24,14 @@ namespace Piper {
         SharedPtr<RTProgram> sample;
     };
 
+    // TODO:load on demand
+    // TODO:2D distribution support
     class Texture : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Texture, Object)
         virtual ~Texture() = default;
+        [[nodiscard]] virtual uint32_t channel() const noexcept = 0;
         virtual TextureProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
     };
+
 }  // namespace Piper

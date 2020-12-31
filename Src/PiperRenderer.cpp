@@ -28,7 +28,7 @@
 #include "Interface/Infrastructure/Module.hpp"
 #include "Interface/Infrastructure/Operator.hpp"
 #include "Kernel/Protocol.hpp"
-#pragma warning(push)
+#pragma warning(push, 0)
 #define _CRT_SECURE_NO_WARNINGS
 #include <OpenEXR/ImfRgbaFile.h>
 #undef _CRT_SECURE_NO_WARNINGS

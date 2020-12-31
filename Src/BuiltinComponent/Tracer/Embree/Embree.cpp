@@ -22,6 +22,7 @@
 #include "../../../Interface/BuiltinComponent/Sampler.hpp"
 #include "../../../Interface/BuiltinComponent/Sensor.hpp"
 #include "../../../Interface/BuiltinComponent/Surface.hpp"
+#include "../../../Interface/BuiltinComponent/TextureSampler.hpp"
 #include "../../../Interface/BuiltinComponent/Tracer.hpp"
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
@@ -749,6 +750,7 @@ namespace Piper {
         SharedPtr<Accelerator> mAccelerator;
         ResourceCacheManager mCache;
         DeviceHandle mDevice;
+        SharedPtr<TextureSampler> mSampler;
 
     public:
         ResourceCacheManager& getCacheManager() override {
@@ -759,7 +761,7 @@ namespace Piper {
                 "Embree Error:" + toString(context().getAllocator(), static_cast<uint32_t>(ec)) + str, PIPER_SOURCE_LOCATION());
         }
         Embree(PiperContext& context, const SharedPtr<Config>& config) : Tracer(context), mCache(context) {
-            auto accelConfig = config->at("Accelerator");
+            auto& accelConfig = config->at("Accelerator");
             auto accel = context.getModuleLoader().newInstance(accelConfig->at("ClassID")->get<String>(), config);
             accel.wait();
             mAccelerator = eastl::dynamic_shared_pointer_cast<Accelerator>(accel.get());
@@ -775,6 +777,10 @@ namespace Piper {
                 mDevice.get(),
                 [](void* userPtr, const RTCError ec, CString str) { static_cast<Embree*>(userPtr)->reportError(ec, str); }, this);
             // rtcSetDeviceMemoryMonitorFunction();
+            auto& samplerConfig = config->at("TextureSampler");
+            mSampler = context.getModuleLoader()
+                           .newInstanceT<TextureSampler>(samplerConfig->at("ClassID")->get<String>(), samplerConfig)
+                           .getSync();
         }
         SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) override {
             return makeSharedObject<EmbreeRTProgram>(context(), linkable, symbol);
@@ -802,6 +808,9 @@ namespace Piper {
         void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
                    const SensorNDCAffineTransform& transform, uint32_t sample) override {
             dynamic_cast<EmbreePipeline&>(pipeline).run(rect, renderDriverPayload, transform, sample);
+        }
+        SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, TextureWrap wrap) const override {
+            return mSampler->generateTexture(image, wrap);
         }
     };
     class ModuleImpl final : public Module {
