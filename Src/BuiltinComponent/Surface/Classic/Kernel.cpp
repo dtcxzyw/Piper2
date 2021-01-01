@@ -52,7 +52,7 @@ namespace Piper {
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&blackBodySample)>);
     extern "C" void PIPER_CC blackBodyEvaluate(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
                                                const Normal<float, FOR::Shading>&, BxDFPart, BxDFValue& f) {
-        f = { { 0.0f }, { 0.0f }, { 0.0f } };
+        f = Spectrum<Dimensionless<float>>{ { 0.0f }, { 0.0f }, { 0.0f } };
     }
     static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&blackBodyEvaluate)>);
     extern "C" void PIPER_CC blackBodyPdf(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
@@ -150,12 +150,14 @@ namespace Piper {
         LambertianReflection lambertian;
     };
 
-    extern "C" void PIPER_CC matteInit(RestrictedContext*, const void* SBTData, float, const Vector2<float>&,
+    extern "C" void PIPER_CC matteInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
                                        const Normal<float, FOR::Shading>&, void* storage, bool& noSpecular) {
         const auto* data = static_cast<const MatteData*>(SBTData);
         auto* bsdf = static_cast<MatteBSDF*>(storage);
         static_assert(sizeof(MatteBSDF) <= sizeof(SurfaceStorage));
-        bsdf->lambertian = LambertianReflection{ data->diffuse };
+        Dimensionless<float> diffuse[4];
+        piperCall<TextureSampleFunc>(context, data->diffuseTexture, t, texCoord, diffuse);
+        bsdf->lambertian = LambertianReflection{ Spectrum<Dimensionless<float>>{ diffuse } };
         noSpecular = true;
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&matteInit)>);
@@ -167,7 +169,7 @@ namespace Piper {
     }
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&matteSample)>);
 
-    extern "C" void PIPER_CC matteEvaluate(RestrictedContext* context, const void*, const void* storage, const Vec& wo,
+    extern "C" void PIPER_CC matteEvaluate(RestrictedContext*, const void*, const void* storage, const Vec& wo,
                                            const Vec& wi, const Normal<float, FOR::Shading>& Ng, BxDFPart require, BxDFValue& f) {
         const auto* bsdf = static_cast<const MatteBSDF*>(storage);
         const auto addition = ((dot(wo, Ng) * dot(wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Refraction);
@@ -177,7 +179,7 @@ namespace Piper {
     static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&matteEvaluate)>);
 
     extern "C" void PIPER_CC mattePdf(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,
-                                      const Normal<float, FOR::Shading>& Ng, BxDFPart require, PDFValue& pdf) {
+                                      const Normal<float, FOR::Shading>&, BxDFPart require, PDFValue& pdf) {
         const auto* bsdf = static_cast<const MatteBSDF*>(storage);
         pdf = {};
         pdfN(std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, bsdf->lambertian);

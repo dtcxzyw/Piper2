@@ -16,6 +16,7 @@
 
 #pragma once
 #include "../../Kernel/Protocol.hpp"
+#include "../../STL/Function.hpp"
 #include "../../STL/Optional.hpp"
 #include "../../STL/Variant.hpp"
 #include "../Infrastructure/Allocator.hpp"
@@ -51,9 +52,14 @@ namespace Piper {
 
     struct TriangleIndexedGeometryDesc final {
         Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
-        uint32_t vertCount, triCount, stride;
+        uint32_t vertCount, triCount;
         Ptr vertices;
         Ptr index;
+
+        // optional
+        Ptr texCoords;
+        Ptr normal;
+        Ptr tangent;
     };
 
     enum class PrimitiveShapeType { TriangleIndexed };
@@ -84,6 +90,8 @@ namespace Piper {
                            allocator };
     }
 
+    using CallSiteRegister = Function<uint32_t, const SharedPtr<RTProgram>&, const SBTPayload&>;
+
     struct RenderRECT final {
         uint32_t left, top, width, height;
     };
@@ -108,6 +116,7 @@ namespace Piper {
         virtual ResourceCacheManager& getCacheManager() = 0;
         virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
                            const SensorNDCAffineTransform& transform, uint32_t sample) = 0;
-        [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, TextureWrap wrap) const = 0;
+        [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
+                                                                 uint32_t channel) const = 0;
     };
 }  // namespace Piper

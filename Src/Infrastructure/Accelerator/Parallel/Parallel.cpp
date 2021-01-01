@@ -448,18 +448,19 @@ namespace Piper {
                         const auto flag =
                             llvm::JITSymbolFlags::Callable | llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Absolute;
                         llvm::orc::SymbolMap map = {
-#define PIPER_MATH_KERNEL_FUNC(name)                                            \
+#define PIPER_LIBC_FUNC(name)                                                   \
     {                                                                           \
         engine->getExecutionSession().intern(#name), llvm::JITEvaluatedSymbol { \
             reinterpret_cast<llvm::JITTargetAddress>(name), flag                \
         }                                                                       \
     }
-                            PIPER_MATH_KERNEL_FUNC(cosf),   PIPER_MATH_KERNEL_FUNC(sinf),      PIPER_MATH_KERNEL_FUNC(fabsf),
-                            PIPER_MATH_KERNEL_FUNC(fmaxf),  PIPER_MATH_KERNEL_FUNC(fminf),     PIPER_MATH_KERNEL_FUNC(sqrtf),
-                            PIPER_MATH_KERNEL_FUNC(cbrtf),  PIPER_MATH_KERNEL_FUNC(hypotf),    PIPER_MATH_KERNEL_FUNC(acosf),
-                            PIPER_MATH_KERNEL_FUNC(atan2f), PIPER_MATH_KERNEL_FUNC(asinf),     PIPER_MATH_KERNEL_FUNC(floorf),
-                            PIPER_MATH_KERNEL_FUNC(ceilf),  PIPER_MATH_KERNEL_FUNC(remainderf)
-#undef PIPER_MATH_KERNEL_FUNC
+                            PIPER_LIBC_FUNC(cosf),   PIPER_LIBC_FUNC(sinf),       PIPER_LIBC_FUNC(fabsf),
+                            PIPER_LIBC_FUNC(fmaxf),  PIPER_LIBC_FUNC(fminf),      PIPER_LIBC_FUNC(sqrtf),
+                            PIPER_LIBC_FUNC(cbrtf),  PIPER_LIBC_FUNC(hypotf),     PIPER_LIBC_FUNC(acosf),
+                            PIPER_LIBC_FUNC(atan2f), PIPER_LIBC_FUNC(asinf),      PIPER_LIBC_FUNC(floorf),
+                            PIPER_LIBC_FUNC(ceilf),  PIPER_LIBC_FUNC(remainderf), PIPER_LIBC_FUNC(memset),
+                            PIPER_LIBC_FUNC(memcpy), PIPER_LIBC_FUNC(memmove)
+#undef PIPER_LIBC_FUNC
                         };
                         for(const auto& symbol : nativeSymbol)
                             map.insert(std::make_pair(
@@ -507,7 +508,7 @@ namespace Piper {
                                                    }
                                                }
                                            },
-                                           std::move(kernel), scheduler.wrap(input))
+                                           kernel, scheduler.wrap(input))
                               .raw();
             binding->makeDirty(future);
             return Future<void>{ std::move(future) };

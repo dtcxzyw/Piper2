@@ -34,11 +34,4 @@ namespace Piper {
         [[nodiscard]] virtual const ImageAttributes& attributes() const noexcept = 0;
         [[nodiscard]] virtual const std::byte* data() const noexcept = 0;  // unsigned char
     };
-    // TODO:output HDR image
-    class ImageIO : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(ImageIO, Object)
-        virtual ~ImageIO() = default;
-        [[nodiscard]] virtual SharedPtr<Image> loadImage(const String& path, uint32_t channel) const = 0;
-    };
 }  // namespace Piper

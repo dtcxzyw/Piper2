@@ -466,7 +466,7 @@ namespace Piper {
 
         // ReSharper disable once CppMemberFunctionMayBeStatic
         [[nodiscard]] Future<void> ready() const noexcept {
-            return Future<void>(nullptr);
+            return Future<void>{ nullptr };
         }
 
         template <typename Callable, typename... Args>

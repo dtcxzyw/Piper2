@@ -28,6 +28,7 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Integrator, Object)
         virtual ~Integrator() = default;
 
-        virtual IntegratorProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
+        virtual IntegratorProgram materialize(Tracer& tracer, ResourceHolder& holder,
+                                              const CallSiteRegister& registerCall) const = 0;
     };
 }  // namespace Piper

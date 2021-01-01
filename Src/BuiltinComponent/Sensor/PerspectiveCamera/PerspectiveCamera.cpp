@@ -60,7 +60,7 @@ namespace Piper {
         [[nodiscard]] float getAspectRatio() const noexcept override {
             return mAspectRatio;
         }
-        SensorProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        SensorProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
             SensorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.rayGen = tracer.buildProgram(

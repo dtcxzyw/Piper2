@@ -23,7 +23,7 @@
 // TODO:change test layer
 void generalAllocatorTest(Piper::PiperContext& context) {
     // aligned alloc
-    auto ptr = context.getAllocator().alloc(1 << 20, 1 << 10);
+    const auto ptr = context.getAllocator().alloc(1 << 20, 1 << 10);
     ASSERT_EQ(ptr & 1023, 0);
     context.getAllocator().free(ptr);
     // STL Container
@@ -41,10 +41,8 @@ void generalAllocatorTest(Piper::PiperContext& context) {
 }
 
 TEST_F(PiperCoreEnvironment, Jemalloc) {
-    auto inst = context->getModuleLoader().newInstance("Piper.Infrastructure.JemallocAllocator.Allocator",
-                                                       Piper::makeSharedObject<Piper::Config>(*context));
-    inst.wait();
-    contextOwner->setAllocator(eastl::dynamic_shared_pointer_cast<Piper::Allocator>(inst.get()));
+    auto inst = context->getModuleLoader().newInstanceT<Piper::Allocator>("Piper.Infrastructure.JemallocAllocator.Allocator");
+    contextOwner->setAllocator(inst.getSync());
     generalAllocatorTest(*context);
 }
 

@@ -62,7 +62,8 @@ namespace Piper {
                 // printf("%f %f %f\n", pixel.r.val, pixel.g.val, pixel.b.val);
             }
         }
-        RenderDriverProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        RenderDriverProgram materialize(Tracer& tracer, ResourceHolder& holder,
+                                        const CallSiteRegister& registerCall) const override {
             RenderDriverProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.accumulate = tracer.buildProgram(

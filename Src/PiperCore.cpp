@@ -138,7 +138,7 @@ namespace Piper {
     public:
         MemoryTracer(PiperContext& context, const SharedPtr<Config>& config) : Allocator(context) {
             // TODO:concurrency
-            auto allocator = context.getModuleLoader().newInstanceT<Allocator>(config->at("ClassID")->get<String>(), config);
+            auto allocator = context.getModuleLoader().newInstanceT<Allocator>(config);
             allocator.wait();
             mImpl = std::move(allocator.get());
             mTrace.set_allocator(STLAllocator{ *mImpl });
@@ -346,19 +346,18 @@ namespace Piper {
     public:
         explicit ModuleLoaderImpl(PiperContextImpl& context);
         Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) override;
-        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
+        Future<SharedPtr<Object>> newInstance(const String& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             // TODO:asynchronous module loading
             module.wait();
 
-            auto stage = context().getErrorHandler().enterStage("new instance of " + String(classID, context().getAllocator()),
-                                                                PIPER_SOURCE_LOCATION());
+            auto stage = context().getErrorHandler().enterStage("new instance of " + classID, PIPER_SOURCE_LOCATION());
             const auto pos = classID.find_last_of('.');
             if(pos == String::npos)
                 context().getErrorHandler().raiseException("Invalid classID.", PIPER_SOURCE_LOCATION());
 
             std::unique_lock<std::recursive_mutex> guard{ mMutex };
-            const String name{ classID.substr(0, pos), context().getAllocator() };
+            const auto name = classID.substr(0, pos);
             const auto iter = mModules.find(name);
             if(iter == mModules.cend())
                 context().getErrorHandler().raiseException("Module \"" + name + "\" has not been loaded.",
@@ -374,15 +373,15 @@ namespace Piper {
                 context().getErrorHandler().raiseException("Undefined module \"" + moduleID + "\".", PIPER_SOURCE_LOCATION());
             return loadModule(iter->second.first, iter->second.second);
         }
-        Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config) override {
-            auto stage = context().getErrorHandler().enterStage("new instance of " + String(classID, context().getAllocator()),
-                                                                PIPER_SOURCE_LOCATION());
+        Future<SharedPtr<Object>> newInstance(const SharedPtr<Config>& config) override {
+            const auto classID = config->at("ClassID")->get<String>();
+            auto stage = context().getErrorHandler().enterStage("new instance of " + classID, PIPER_SOURCE_LOCATION());
             const auto pos = classID.find_last_of('.');
             if(pos == String::npos)
                 context().getErrorHandler().raiseException(
                     "Invalid classID \"" + String{ classID, context().getAllocator() } + "\".", PIPER_SOURCE_LOCATION());
 
-            const auto module = loadModule(String{ classID.substr(0, pos), context().getAllocator() });
+            const auto module = loadModule(classID.substr(0, pos));
             // TODO:reduce classID split time
             return newInstance(classID, config, module);
         }
@@ -478,7 +477,7 @@ namespace Piper {
             if(func.has_value())
                 func.value()();
         }
-        void parallelForImpl(const uint32_t n, Closure<uint32_t> func, const Span<SharedPtr<FutureImpl>>& dependencies,
+        void parallelForImpl(const uint32_t n, const Closure<uint32_t> func, const Span<SharedPtr<FutureImpl>>& dependencies,
                              const SharedPtr<FutureImpl>& res) override {
             for(auto&& dep : dependencies)
                 if(dep)

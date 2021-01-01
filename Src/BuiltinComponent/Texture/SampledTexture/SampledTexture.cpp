@@ -17,14 +17,14 @@
 #define PIPER_EXPORT
 #include <utility>
 
-#include "../../../Interface/BuiltinComponent/ImageIO.hpp"
+#include "../../../Interface/BuiltinComponent/Image.hpp"
 #include "../../../Interface/BuiltinComponent/Texture.hpp"
-#include "../../../Interface/BuiltinComponent/TextureSampler.hpp"
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/FileSystem.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
+#include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #include "Shared.hpp"
 #pragma warning(push, 0)
 #define STB_IMAGE_IMPLEMENTATION
@@ -34,32 +34,30 @@
 namespace Piper {
     class SampledTexture final : public Texture {
     private:
-        DynamicArray<std::byte> mImage;
+        SharedPtr<Image> mImage;
         Data mData;
-        uint32_t mChannel;
         Future<SharedPtr<PITU>> mKernel;
 
     public:
-        SampledTexture(PiperContext& context, const std::byte* data, const ImageAttributes& attributes, const TextureWrap wrap,
+        SampledTexture(PiperContext& context, const SharedPtr<Image>& image, const TextureWrap wrap,
                        Future<SharedPtr<PITU>> kernel)
-            : Texture(context),
-              mImage(data, data + attributes.width * attributes.height * attributes.channel, context.getAllocator()),
-              mData{ wrap,
-                     attributes.width,
-                     attributes.height,
-                     attributes.width * attributes.channel,
-                     attributes.channel,
-                     reinterpret_cast<const unsigned char*>(mImage.data()) },
-              mChannel(attributes.channel), mKernel(std::move(kernel)) {}
+            : Texture(context), mImage(image), mData{ wrap,
+                                                      image->attributes().width,
+                                                      image->attributes().height,
+                                                      image->attributes().width * image->attributes().channel,
+                                                      image->attributes().channel,
+                                                      reinterpret_cast<const unsigned char*>(mImage->data()) },
+              mKernel(std::move(kernel)) {}
 
         [[nodiscard]] uint32_t channel() const noexcept override {
-            return mChannel;
+            return mData.channel;
         }
-        TextureProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        TextureProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
             TextureProgram res;
             // TODO:concurrency
             const auto linkable = mKernel.getSync()->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat());
-            res.sample = tracer.buildProgram(linkable, "sample");
+            res.sample = tracer.buildProgram(linkable, "sampleTexture");
+            holder.retain(mImage);
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }
@@ -74,7 +72,7 @@ namespace Piper {
         SoftwareTextureSampler(PiperContext& context, const String& path)
             : TextureSampler(context), mKernel(context.getPITUManager().loadPITU(path + "/Kernel.bc")) {}
         SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, const TextureWrap wrap) const override {
-            return makeSharedObject<SampledTexture>(context(), image->data(), image->attributes(), wrap, mKernel);
+            return makeSharedObject<SampledTexture>(context(), image, wrap, mKernel);
         }
     };
 
@@ -104,16 +102,12 @@ namespace Piper {
         }
     };
 
-    class ImageReader final : public ImageIO {
-    public:
-        explicit ImageReader(PiperContext& context) noexcept : ImageIO(context) {}
-
-        [[nodiscard]] SharedPtr<Image> loadImage(const String& path, const uint32_t channel) const override {
+    class ModuleImpl final : public Module {
+    private:
+        String mPath;
+        [[nodiscard]] SharedPtr<Image> loadImage(const String& path) const {
             auto& errorHandler = context().getErrorHandler();
             auto stage = errorHandler.enterStage("load image " + path, PIPER_SOURCE_LOCATION());
-            if(channel != 1 && channel != 2 && channel != 4)
-                errorHandler.raiseException("Unsupported channel " + toString(context().getAllocator(), channel),
-                                            PIPER_SOURCE_LOCATION());
             const auto file = context().getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
             {
                 const auto image = file->map(0, file->size());
@@ -121,19 +115,22 @@ namespace Piper {
 
                 // TODO:color-space
                 int x, y, srcChannel;
+                if(!stbi_info_from_memory(reinterpret_cast<stbi_uc*>(span.data()), static_cast<int>(span.size_bytes()), &x, &y,
+                                          &srcChannel))
+                    errorHandler.raiseException(stbi_failure_reason(), PIPER_SOURCE_LOCATION());
+
+                auto desired = STBI_default;
+                if(srcChannel == STBI_rgb)
+                    desired = STBI_rgb_alpha;
+
                 ImageHolder ptr{ reinterpret_cast<std::byte*>(stbi_load_from_memory(reinterpret_cast<stbi_uc*>(span.data()),
                                                                                     static_cast<int>(span.size_bytes()), &x, &y,
-                                                                                    &srcChannel, channel)) };
+                                                                                    &srcChannel, desired)) };
                 if(ptr)
-                    return makeSharedObject<ImageStorage>(context(), std::move(ptr), x, y, channel);
+                    return makeSharedObject<ImageStorage>(context(), std::move(ptr), x, y, srcChannel);
                 errorHandler.raiseException(stbi_failure_reason(), PIPER_SOURCE_LOCATION());
             }
         }
-    };
-
-    class ModuleImpl final : public Module {
-    private:
-        String mPath;
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
@@ -145,9 +142,9 @@ namespace Piper {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<SoftwareTextureSampler>(context(), mPath)));
             }
-            if(classID == "ImageReader") {
+            if(classID == "Image") {
                 return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<ImageReader>(context())));
+                    eastl::static_shared_pointer_cast<Object>(loadImage(config->at("Path")->get<String>())));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }

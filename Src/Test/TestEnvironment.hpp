@@ -41,10 +41,9 @@ protected:
         desc.insert(Piper::makePair(Piper::String{ "Path", context->getAllocator() }, path));
         auto mod = context->getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(*context, std::move(desc)), base);
         auto parser = context->getModuleLoader().newInstanceT<Piper::ConfigSerializer>(
-            "Piper.Infrastructure.NlohmannJson.JsonSerializer", nullptr, mod);
-        parser.wait();
+            Piper::String{ "Piper.Infrastructure.NlohmannJson.JsonSerializer", context->getAllocator() }, nullptr, mod);
 
-        const auto modules = parser.get()->deserialize(Piper::String{ "Module.json", context->getAllocator() });
+        const auto modules = parser.getSync()->deserialize(Piper::String{ "Module.json", context->getAllocator() });
 
         for(auto&& modDesc : modules->viewAsArray())
             context->getModuleLoader().addModuleDescription(modDesc, base);

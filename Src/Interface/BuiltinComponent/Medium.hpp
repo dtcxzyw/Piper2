@@ -26,6 +26,6 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Medium, Object)
         virtual ~Medium() = default;
-        virtual MediumProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
+        virtual MediumProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const = 0;
     };
 }  // namespace Piper

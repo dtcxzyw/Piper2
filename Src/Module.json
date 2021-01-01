@@ -70,5 +70,9 @@
   {
     "Name": "Piper.BuiltinComponent.SampledTexture",
     "Path": "BuiltinComponent/Texture/SampledTexture/SampledTexture"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.ProceduralTexture",
+    "Path": "BuiltinComponent/Texture/ProceduralTexture/ProceduralTexture"
   }
 ]

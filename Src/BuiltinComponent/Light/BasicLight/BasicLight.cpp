@@ -33,7 +33,7 @@ namespace Piper {
             : Light(context), mKernelPath(path) {
             mData.texture = parseSpectrum<Radiance>(config->at("Radiance"));
         }
-        LightProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        LightProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =
@@ -63,7 +63,7 @@ namespace Piper {
             mData.pos = parsePoint<Distance, FOR::World>(config->at("Position"));
             mData.intensity = parseSpectrum<Intensity>(config->at("Intensity"));
         }
-        LightProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        LightProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =
@@ -94,7 +94,8 @@ namespace Piper {
             for(auto&& light : lights)
                 mFlags.push_back(light->isDelta());
         }
-        LightSamplerProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        LightSamplerProgram materialize(Tracer& tracer, ResourceHolder& holder,
+                                        const CallSiteRegister& registerCall) const override {
             LightSamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =

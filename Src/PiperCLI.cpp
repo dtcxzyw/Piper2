@@ -36,7 +36,7 @@ struct ContextDeleter {
 
 template <typename T, typename S>
 static Piper::Future<void> asyncLoad(Piper::PiperContextOwner& context, S call, const Piper::SharedPtr<Piper::Config>& config) {
-    auto future = context.getModuleLoader().newInstanceT<T>(config->at("ClassID")->get<Piper::String>(), config);
+    auto future = context.getModuleLoader().newInstanceT<T>(config);
     return context.getScheduler().spawn([&context, call](Piper::SharedPtr<T> comp) { (context.*call)(std::move(comp)); }, future);
 }
 
@@ -70,13 +70,12 @@ static void setupInfrastructure(Piper::PiperContextOwner& context, const Piper::
 }
 
 static Piper::SharedPtr<Piper::ConfigSerializer> getParser(Piper::PiperContext& context, Piper::StringView modulePath,
-                                                           Piper::StringView parserName) {
+                                                           const Piper::String& parserName) {
     const auto base = Piper::String{ ".", context.getAllocator() };
 
     const auto pos = parserName.find_last_of('.');
-    if(pos == Piper::StringView::npos)
-        context.getErrorHandler().raiseException(
-            "Invalid classID \"" + Piper::String{ parserName, context.getAllocator() } + "\".", PIPER_SOURCE_LOCATION());
+    if(pos == Piper::String::npos)
+        context.getErrorHandler().raiseException("Invalid classID \"" + parserName + "\".", PIPER_SOURCE_LOCATION());
 
     auto name = Piper::makeSharedObject<Piper::Config>(context, parserName.substr(0, pos));
     auto path = Piper::makeSharedObject<Piper::Config>(context, modulePath);
@@ -86,8 +85,7 @@ static Piper::SharedPtr<Piper::ConfigSerializer> getParser(Piper::PiperContext& 
 
     const auto mod = context.getModuleLoader().loadModule(Piper::makeSharedObject<Piper::Config>(context, std::move(desc)), base);
     auto parser = context.getModuleLoader().newInstanceT<Piper::ConfigSerializer>(parserName, nullptr, mod);
-    parser.wait();
-    return parser.get();
+    return parser.getSync();
 }
 
 // environment variable is not supported
@@ -110,7 +108,7 @@ int main(int argc, char* argv[]) {
         // TODO:help switch
 
         const auto parser = getParser(*context, Piper::StringView{ modulePath.data(), modulePath.size() },
-                                      Piper::StringView{ parserName.data(), parserName.size() });
+                                      Piper::String{ parserName.data(), parserName.size(), context->getAllocator() });
 
         const auto modules = parser->deserialize(
             Piper::String{ Piper::StringView{ moduleDesc.data(), moduleDesc.size() }, context->getAllocator() });
@@ -122,8 +120,7 @@ int main(int argc, char* argv[]) {
         setupInfrastructure(*context, parser->deserialize(Piper::String{ config.c_str(), context->getAllocator() }));
 
         stage.next("initialize operator", PIPER_SOURCE_LOCATION());
-        auto op = context->getModuleLoader().newInstanceT<Piper::Operator>(Piper::StringView{ command.c_str(), command.size() },
-                                                                           nullptr);
+        auto op = context->getModuleLoader().newInstanceT<Piper::Operator>(Piper::StringView{ command.c_str(), command.size() });
 
         stage.next("start operation", PIPER_SOURCE_LOCATION());
         auto future = PIPER_FUTURE_CALL(op, execute)(

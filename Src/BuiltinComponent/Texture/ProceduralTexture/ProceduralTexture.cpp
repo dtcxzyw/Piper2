@@ -15,35 +15,46 @@
 */
 
 #define PIPER_EXPORT
-#include "../../../Interface/BuiltinComponent/Sampler.hpp"
+#include "../../../Interface/BuiltinComponent/Texture.hpp"
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "Shared.hpp"
 
-// https://web.maths.unsw.edu.au/~fkuo/sobol/
 namespace Piper {
-    class ScrambledSobolSampler final : public Sampler {
+    class ConstantTexture final : public Texture {
     private:
+        Data mData;
         String mKernelPath;
 
     public:
-        ScrambledSobolSampler(PiperContext& context, const String& path, const SharedPtr<Config>& config)
-            : Sampler(context), mKernelPath(path + "/Kernel.bc") {
-            context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+        ConstantTexture(PiperContext& context, const SharedPtr<Config>& config, const String& path)
+            : Texture(context), mKernelPath(path + "/Kernel.bc") {
+            const auto& elements = config->at("Value")->viewAsArray();
+            mData.channel = static_cast<uint32_t>(elements.size());
+            if(mData.channel != 1 && mData.channel != 2 && mData.channel != 4)
+                context.getErrorHandler().raiseException("Unsupported channel " + toString(context.getAllocator(), mData.channel),
+                                                         PIPER_SOURCE_LOCATION());
+            for(uint32_t i = 0; i < mData.channel; ++i)
+                mData.value[i].val = static_cast<float>(elements[i]->get<double>());
         }
-        SamplerProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
-            SamplerProgram res;
+
+        [[nodiscard]] uint32_t channel() const noexcept override {
+            return mData.channel;
+        }
+        TextureProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+            TextureProgram res;
+            // TODO:concurrency
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.sample = tracer.buildProgram(
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
-                "generate");
-            // res.payload = ;
-            // res.maxDimension = ;
+                "constantTexture");
+            res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
         }
     };
+
     class ModuleImpl final : public Module {
     private:
         String mPath;
@@ -53,9 +64,9 @@ namespace Piper {
         explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mPath(path, context.getAllocator()) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
-            if(classID == "Sampler") {
+            if(classID == "ConstantTexture") {
                 return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<ScrambledSobolSampler>(context(), mPath, config)));
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<ConstantTexture>(context(), config, mPath)));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }

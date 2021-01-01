@@ -15,18 +15,11 @@
 */
 
 #pragma once
-#include "SharedPtr.hpp"
-#include "STLAllocator.hpp"
-#include <EASTL/unique_ptr.h>
+#include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    template <typename T, typename Deleter = DefaultDeleter<T>>
-    using UniquePtr = eastl::unique_ptr<T, Deleter>;
-
-    template <typename T, typename... Args>
-    inline auto makeUniquePtr(STLAllocator allocator, Args&&... args) {
-        auto ptr = static_cast<T*>(allocator.allocate(sizeof(T)));
-        new(ptr) T(std::forward<Args>(args)...);
-        return UniquePtr<T>{ ptr, DefaultDeleter<T>{ allocator } };
-    }
+    struct Data final {
+        uint32_t channel;
+        Dimensionless<float> value[4];
+    };
 }  // namespace Piper

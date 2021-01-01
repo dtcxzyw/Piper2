@@ -32,6 +32,13 @@ namespace Piper {
 
     enum class Face { Front, Back };
 
+    struct BuiltinTriangleBuffer {
+        const uint32_t* index;
+        const Vector2<float>* texCoord;
+        const Vector<float, FOR::Local>* Ns;
+        const Vector<float, FOR::Local>* Ts;
+    };
+
     struct BuiltinHitInfo final {
         Normal<float, FOR::Local> Ng;
         Vector2<float> barycentric;
@@ -79,14 +86,18 @@ namespace Piper {
     template <typename Float>
     struct Spectrum final {
         Float r, g, b;
-        Float luminosity() const noexcept {
+        Spectrum() noexcept = default;
+        explicit Spectrum(Float v[4]) noexcept : r(v[0]), g(v[1]), b(v[2]) {}
+        explicit Spectrum(Float rv, Float gv, Float bv) noexcept : r(rv), g(gv), b(bv) {}
+        [[nodiscard]] Float luminosity() const noexcept {
             // TODO:more accurate weight
             return Float{ 0.298f * r.val + 0.612f * g.val * 0.117f * b.val };
         }
         Spectrum operator+(Spectrum rhs) const noexcept {
-            return { r + rhs.r, g + rhs.g, b + rhs.b };
+            return Spectrum{ r + rhs.r, g + rhs.g, b + rhs.b };
         }
-        bool valid() const noexcept {
+
+        [[nodiscard]] bool valid() const noexcept {
             return r.val > 0.0f || g.val > 0.0f || b.val > 0.0f;
         }
         template <typename U>
@@ -191,7 +202,7 @@ namespace Piper {
 
     enum class TextureWrap : uint32_t { Repeat, Mirror };
     using TextureSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float t,
-                                              const Vector2<Dimensionless<float>>& texCoord, Dimensionless<float>* sample);
+                                              const Vector2<float>& texCoord, Dimensionless<float>* sample);
 
     enum class TraceKind : unsigned char { Surface, Missing };
     struct TraceSurface final {
@@ -205,6 +216,11 @@ namespace Piper {
             TraceSurface surface;
         };
         TraceKind kind;
+    };
+
+    struct CallInfo final {
+        uint64_t address;
+        const void* SBTData;
     };
 
     // TODO:replace uint64_t with unsigned<ptrdiff_t>
@@ -242,5 +258,14 @@ namespace Piper {
     void PIPER_CC piperPrintMessage(RestrictedContext* context, const char* msg);
     void PIPER_CC piperPrintFloat(RestrictedContext* context, const char* desc, float val);
     void PIPER_CC piperPrintUint(RestrictedContext* context, const char* desc, uint32_t val);
+
+    void PIPER_CC piperQueryCall(RestrictedContext* context, uint32_t id, CallInfo& info);
+    }
+    // TODO:better interface? consider optix
+    template <typename Func, typename... Args>
+    void piperCall(RestrictedContext* context, const uint32_t id, Args&&... args) {
+        CallInfo call;
+        piperQueryCall(context, id, call);
+        reinterpret_cast<Func>(call.address)(context, call.SBTData, std::forward<Args>(args)...);
     }
 }  // namespace Piper

@@ -37,7 +37,7 @@ namespace Piper {
 
     uint32_t locate(const float p, const uint32_t size, const TextureWrap wrap) noexcept {
         const auto s = (wrap == TextureWrap::Repeat ? repeat(p, static_cast<float>(size)) : mirror(p, static_cast<float>(size)));
-        return clamp(s, size - 1);
+        return clamp(static_cast<uint32_t>(s), size - 1);
     }
 
     uint32_t next(const uint32_t p, const uint32_t size, const TextureWrap wrap) noexcept {
@@ -46,7 +46,7 @@ namespace Piper {
     }
 
     void evaluate(const uint32_t u, const uint32_t v, float weight, const Data* data, Dimensionless<float>* sample) {
-        const auto idx = v * data->stride + u;
+        const auto idx = v * data->stride + u * data->channel;
         weight *= 1.0f / 255.0f;
         for(uint32_t i = 0; i < data->channel; ++i)
             sample[i].val += weight * static_cast<float>(data->texel[idx + i]);
@@ -56,19 +56,20 @@ namespace Piper {
         return 0.5f + std::floor(u + 0.5f) - u;
     }
 
-    extern "C" void PIPER_CC sample(RestrictedContext*, const void* SBTData, float, const Vector2<Dimensionless<float>>& texCoord,
-                                    Dimensionless<float>* sample) {
+    extern "C" void PIPER_CC sampleTexture(RestrictedContext*, const void* SBTData, float, const Vector2<float>& texCoord,
+                                           Dimensionless<float>* sample) {
         const auto* data = static_cast<const Data*>(SBTData);
-        const auto u = texCoord.x.val * static_cast<float>(data->width), v = texCoord.y.val * static_cast<float>(data->height);
-        const auto lu = u - 0.5f, ru = u + 0.5f, lv = v - 0.5f, rv = v + 0.5f;
-        const auto plu = locate(lu, data->width, data->wrap), pru = next(plu, data->width, data->wrap),
-                   plv = locate(lv, data->height, data->wrap), prv = next(plv, data->height, data->wrap);
+        const auto u = texCoord.x * static_cast<float>(data->width), v = texCoord.y * static_cast<float>(data->height);
+        const auto plu = locate(u - 0.5f, data->width, data->wrap), pru = next(plu, data->width, data->wrap),
+                   plv = locate(v - 0.5f, data->height, data->wrap), prv = next(plv, data->height, data->wrap);
         const auto lwx = evalLeftWeight(u), lwy = evalLeftWeight(v);
         const auto rwx = 1.0f - lwx, rwy = 1.0f - lwy;
+        for(uint32_t i = 0; i < data->channel; ++i)
+            sample[i].val = 0.0f;
         evaluate(plu, plv, lwx * lwy, data, sample);
         evaluate(pru, plv, rwx * lwy, data, sample);
         evaluate(plu, prv, lwx * rwy, data, sample);
         evaluate(pru, prv, rwx * rwy, data, sample);
     }
-    static_assert(std::is_same_v<TextureSampleFunc, decltype(&sample)>);
+    static_assert(std::is_same_v<TextureSampleFunc, decltype(&sampleTexture)>);
 }  // namespace Piper

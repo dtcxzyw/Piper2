@@ -275,15 +275,14 @@ void dynamicParallelism(Piper::Scheduler& scheduler) {
     ASSERT_EQ(future.get(), magic);
 }
 
-#define TEST_ENVIRONMENT(NAME, CLASS_ID)                                                                                    \
-    class NAME : public PiperCoreEnvironment {                                                                              \
-    protected:                                                                                                              \
-        void SetUp() override {                                                                                             \
-            PiperCoreEnvironment::SetUp();                                                                                  \
-            auto inst = context->getModuleLoader().newInstance(CLASS_ID, Piper::makeSharedObject<Piper::Config>(*context)); \
-            inst.wait();                                                                                                    \
-            contextOwner->setScheduler(eastl::dynamic_shared_pointer_cast<Piper::Scheduler>(inst.get()));                   \
-        }                                                                                                                   \
+#define TEST_ENVIRONMENT(NAME, CLASS_ID)                                                     \
+    class NAME : public PiperCoreEnvironment {                                               \
+    protected:                                                                               \
+        void SetUp() override {                                                              \
+            PiperCoreEnvironment::SetUp();                                                   \
+            auto inst = context->getModuleLoader().newInstanceT<Piper::Scheduler>(CLASS_ID); \
+            contextOwner->setScheduler(inst.getSync());                                      \
+        }                                                                                    \
     };
 
 #define TEST_CONTENT(NAME, FUNC)       \

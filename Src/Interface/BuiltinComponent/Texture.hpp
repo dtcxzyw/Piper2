@@ -31,7 +31,14 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Texture, Object)
         virtual ~Texture() = default;
         [[nodiscard]] virtual uint32_t channel() const noexcept = 0;
-        virtual TextureProgram materialize(Tracer& tracer, ResourceHolder& holder) const = 0;
+        virtual TextureProgram materialize(Tracer& tracer, ResourceHolder& holder,
+                                           const CallSiteRegister& registerCall) const = 0;
     };
-
+    // TODO:mipmap and anisotropic interpolation
+    class TextureSampler : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(TextureSampler, Object);
+        virtual ~TextureSampler() = default;
+        [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, TextureWrap wrap) const = 0;
+    };
 }  // namespace Piper

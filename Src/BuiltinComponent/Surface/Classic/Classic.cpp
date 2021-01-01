@@ -19,6 +19,7 @@
 
 #include "../../../Interface/BuiltinComponent/StructureParser.hpp"
 #include "../../../Interface/BuiltinComponent/Surface.hpp"
+#include "../../../Interface/BuiltinComponent/Texture.hpp"
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
@@ -32,7 +33,7 @@ namespace Piper {
 
     public:
         BlackBody(PiperContext& context, String path) : Surface(context), mKernelPath(std::move(path)) {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
@@ -69,13 +70,12 @@ namespace Piper {
     class Matte final : public Surface {
     private:
         String mKernelPath;
-        MatteData mData;
+        SharedPtr<Config> mTexture;
 
     public:
         Matte(PiperContext& context, const SharedPtr<Config>& config, String path)
-            : Surface(context),
-              mKernelPath(std::move(path)), mData{ parseSpectrum<Dimensionless<float>>(config->at("Diffuse")) } {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+            : Surface(context), mKernelPath(std::move(path)), mTexture(config->at("Diffuse")) {}
+        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
@@ -84,7 +84,12 @@ namespace Piper {
             res.sample = tracer.buildProgram(linkable, "matteSample");
             res.evaluate = tracer.buildProgram(linkable, "matteEvaluate");
             res.pdf = tracer.buildProgram(linkable, "mattePdf");
-            res.payload = packSBTPayload(context().getAllocator(), mData);
+
+            const auto texture = tracer.generateTexture(mTexture, 4);
+            auto [SBT, prog] = texture->materialize(tracer, holder, registerCall);
+
+            const MatteData data{ registerCall(prog, SBT) };
+            res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
     };

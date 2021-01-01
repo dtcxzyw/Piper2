@@ -45,13 +45,15 @@ namespace Piper {
                         const auto* scene =
                             importer.ReadFile(path.c_str(),
                                               aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType |
-                                                  aiProcess_GenSmoothNormals | aiProcess_GenUVCoords |
+                                                  aiProcess_GenSmoothNormals  |
                                                   aiProcess_FixInfacingNormals | aiProcess_ImproveCacheLocality);
 
+                        auto& errorHandler = ctx->getErrorHandler();
+
                         if(!scene || scene->mFlags == AI_SCENE_FLAGS_INCOMPLETE)
-                            ctx->getErrorHandler().raiseException("Failed to load scene " + path, PIPER_SOURCE_LOCATION());
+                            errorHandler.raiseException("Failed to load scene " + path, PIPER_SOURCE_LOCATION());
                         if(scene->mNumMeshes != 1)
-                            ctx->getErrorHandler().raiseException("Only one mesh is supported.", PIPER_SOURCE_LOCATION());
+                            errorHandler.raiseException("Only one mesh is supported.", PIPER_SOURCE_LOCATION());
                         const auto* mesh = scene->mMeshes[0];
 
                         TriangleIndexedGeometryDesc desc{};
@@ -59,17 +61,31 @@ namespace Piper {
                         index.resize(3 * mesh->mNumFaces);
                         for(Index i = 0; i < mesh->mNumFaces; ++i) {
                             if(mesh->mFaces[i].mNumIndices != 3)
-                                ctx->getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant,
-                                                                    "Only triangle is supported.", PIPER_SOURCE_LOCATION());
+                                errorHandler.raiseException("Only triangle is supported.", PIPER_SOURCE_LOCATION());
                             memcpy(index.data() + i * 3, mesh->mFaces[i].mIndices, sizeof(uint32_t) * 3);
                         }
 
                         desc.index = reinterpret_cast<Ptr>(index.data());
-                        desc.stride = sizeof(aiVector3D);
                         desc.transform.reset();
                         desc.triCount = mesh->mNumFaces;
                         desc.vertCount = mesh->mNumVertices;
                         desc.vertices = reinterpret_cast<Ptr>(mesh->mVertices);
+
+                        DynamicArray<Vector2<float>> texCoords(ctx->getAllocator());
+                        if(mesh->mTextureCoords[0]) {
+                            if(mesh->mNumUVComponents[0] != 2)
+                                errorHandler.raiseException("Only UV channel is supported.", PIPER_SOURCE_LOCATION());
+                            const auto* uv = mesh->mTextureCoords[0];
+                            texCoords.resize(mesh->mNumVertices);
+                            for(Index i = 0; i < mesh->mNumVertices; ++i) {
+                                texCoords[i].x = uv[i].x;
+                                texCoords[i].y = uv[i].y;
+                            }
+                            desc.texCoords = reinterpret_cast<Ptr>(texCoords.data());
+                        }
+
+                        // TODO:normal and tangent
+                        desc.normal = desc.tangent = 0;
 
                         auto res = tracer.buildAcceleration({ PrimitiveShapeType::TriangleIndexed, { desc } });
                         // TODO:RAII
@@ -78,7 +94,7 @@ namespace Piper {
                     } });
             return *res;
         }
-        GeometryProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        GeometryProgram materialize(Tracer&, ResourceHolder&, const CallSiteRegister&) const override {
             return {};
         }
     };
@@ -97,7 +113,7 @@ namespace Piper {
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
-    };  // namespace Piper
+    };
 }  // namespace Piper
 
 PIPER_INIT_MODULE_IMPL(Piper::ModuleImpl)

@@ -105,9 +105,7 @@ namespace Piper {
         // TODO:concurrency
         template <typename T>
         SharedPtr<T> syncLoad(const SharedPtr<Config>& config) {
-            auto future = context().getModuleLoader().newInstance(config->at("ClassID")->get<String>(), config);
-            future.wait();
-            return eastl::dynamic_shared_pointer_cast<T>(future.get());
+            return context().getModuleLoader().newInstanceT<T>(config).getSync();
         }
 
         SharedPtr<Node> buildScene(Tracer& tracer, const SharedPtr<Config>& config) {
@@ -191,10 +189,9 @@ namespace Piper {
             auto parserID = opt->at("SceneParser")->get<String>();
             auto fitMode = str2FitMode(context(), opt->at("FitMode")->get<String>());
 
-            auto parser = context().getModuleLoader().newInstanceT<ConfigSerializer>(parserID, nullptr);
-            parser.wait();
+            auto parser = context().getModuleLoader().newInstanceT<ConfigSerializer>(parserID);
 
-            auto scene = parser.get()->deserialize(scenePath);
+            auto scene = parser.getSync()->deserialize(scenePath);
             stage.next("initialize pipeline", PIPER_SOURCE_LOCATION());
             auto tracer = syncLoad<Tracer>(opt->at("Tracer"));
             auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));

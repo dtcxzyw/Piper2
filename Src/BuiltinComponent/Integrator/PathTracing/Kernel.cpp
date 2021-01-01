@@ -102,7 +102,7 @@ namespace Piper {
         const auto* data = static_cast<const Data*>(SBTData);
 
         Spectrum<Dimensionless<float>> pf{ { 1.0f }, { 1.0f }, { 1.0f } };
-        sample = { { 0.0f }, { 0.0f }, { 0.0f } };
+        sample = Spectrum<Radiance>{ { 0.0f }, { 0.0f }, { 0.0f } };
         auto specular = true;
         for(uint32_t i = 0;; ++i) {
             TraceResult res;

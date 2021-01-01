@@ -20,6 +20,7 @@
 #include "../Object.hpp"
 
 namespace Piper {
+    // TODO:better interface
     class PIPER_API ResourceHolder final : public Object {
     private:
         DynamicArray<SharedPtr<Object>> mPool;
@@ -44,7 +45,7 @@ namespace Piper {
     public:
         explicit ResourceCacheManager(PiperContext& context);
         template <typename T>
-        SharedPtr<T> materialize(ResourceID id, const Function<SharedPtr<T>>& gen) {
+        SharedPtr<T> materialize(const ResourceID id, const Function<SharedPtr<T>>& gen) {
             auto cache = lookup<T>(id);
             if(cache)
                 return cache;
@@ -53,7 +54,7 @@ namespace Piper {
             return res;
         }
         template <typename T>
-        SharedPtr<T> lookup(ResourceID id) const {
+        SharedPtr<T> lookup(const ResourceID id) const {
             auto res = lookupImpl(id);
             return res ? eastl::dynamic_shared_pointer_cast<T>(res) : nullptr;
         }

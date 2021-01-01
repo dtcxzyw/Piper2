@@ -34,7 +34,8 @@ namespace Piper {
             : Integrator(context), mKernelPath(path + "/Kernel.bc") {
             mData.maxDepth = static_cast<uint32_t>(config->at("MaxTraceDepth")->get<uintmax_t>());
         }
-        IntegratorProgram materialize(Tracer& tracer, ResourceHolder& holder) const override {
+        IntegratorProgram materialize(Tracer& tracer, ResourceHolder& holder,
+                                      const CallSiteRegister& registerCall) const override {
             IntegratorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.trace = tracer.buildProgram(

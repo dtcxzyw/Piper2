@@ -14,16 +14,14 @@
    limitations under the License.
 */
 
-#pragma once
-#include "ImageIO.hpp"
-#include "Texture.hpp"
+#include "Shared.hpp"
 
 namespace Piper {
-    // TODO:mipmap and anisotropic interpolation
-    class TextureSampler : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(TextureSampler, Object);
-        virtual ~TextureSampler() = default;
-        [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, TextureWrap wrap) const = 0;
-    };
+    extern "C" void PIPER_CC constantTexture(RestrictedContext*, const void* SBTData, float, const Vector2<float>&,
+                                    Dimensionless<float>* sample) {
+        const auto* data = static_cast<const Data*>(SBTData);
+        for(uint32_t i = 0; i < data->channel; ++i)
+            sample[i] = data->value[i];
+    }
+    static_assert(std::is_same_v<TextureSampleFunc, decltype(&constantTexture)>);
 }  // namespace Piper

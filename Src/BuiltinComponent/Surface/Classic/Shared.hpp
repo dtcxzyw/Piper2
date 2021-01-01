@@ -48,8 +48,7 @@ namespace Piper {
     };
     // TODO:BumpedMaterial
     struct MatteData final {
-        // TODO:texture support
-        Spectrum<Dimensionless<float>> diffuse;
+        uint32_t diffuseTexture;
 
         // Dimensionless<float> roughness;
     };
