@@ -124,7 +124,7 @@ namespace Piper {
             // TODO:surface intersect filter?
             result.kind = TraceKind::Surface;
             result.surface.t = Distance{ hit.ray.tfar };
-            auto scene = ctx->scene;
+            auto* scene = ctx->scene;
             RTCGeometry geo = nullptr;
 
             for(uint32_t i = 0; i < RTC_MAX_INSTANCE_LEVEL_COUNT && hit.hit.instID[i] != RTC_INVALID_GEOMETRY_ID; ++i) {
@@ -191,9 +191,10 @@ namespace Piper {
     }
 
     void piperEmbreeSurfaceInit(FullContext* context, const uint64_t instance, const float t, const Vector2<float>& texCoord,
-                                const Normal<float, FOR::Shading>& Ng, SurfaceStorage& storage, bool& noSpecular) {
+                                const Normal<float, FOR::Shading>& Ng, const Face face, const TransportMode mode,
+                                SurfaceStorage& storage, bool& noSpecular) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
-        func->init(decay(context), func->SFPayload, t, texCoord, Ng, &storage, noSpecular);
+        func->init(decay(context), func->SFPayload, t, texCoord, Ng, face, mode, &storage, noSpecular);
     }
     void piperEmbreeSurfaceSample(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
                                   const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng, BxDFPart require,
@@ -370,8 +371,8 @@ namespace Piper {
         const auto u = hit.builtin.barycentric.x, v = hit.builtin.barycentric.y,
                    w = 1.0f - hit.builtin.barycentric.x - hit.builtin.barycentric.y;
 
-        const Normal<float, FOR::Local> u1{ { { 1.0f }, { 0.0f }, { 0.0f } }, Unchecked{} };
-        const Normal<float, FOR::Local> u2{ { { 0.0f }, { 1.0f }, { 0.0f } }, Unchecked{} };
+        const Normal<float, FOR::Local> u1{ { { 1.0f }, { 0.0f }, { 0.0f } }, Unsafe{} };
+        const Normal<float, FOR::Local> u2{ { { 0.0f }, { 1.0f }, { 0.0f } }, Unsafe{} };
         if(fabsf(dot(info.N, u1).val) < fabsf(dot(info.N, u2).val))
             info.T = cross(info.N, u1);
         else
@@ -381,6 +382,7 @@ namespace Piper {
             info.texCoord = buffer->texCoord[pu] * u + buffer->texCoord[pv] * v + buffer->texCoord[pw] * w;
         else
             info.texCoord = { 0.0f, 0.0f };
+        info.face = hit.builtin.face;
     }
     static_assert(std::is_same_v<decltype(&calcTriangleMeshSurface), GeometryFunc>);
 

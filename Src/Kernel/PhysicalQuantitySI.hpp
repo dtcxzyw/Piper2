@@ -68,6 +68,10 @@ namespace Piper {
 
     template <typename T>
     using Square = typename SquareImpl<T>::Type;
+    template <typename T>
+    constexpr auto square(T x) {
+        return Square<T>{ x.val * x.val };
+    }
 
     template <typename T>
     struct InverseImpl final {
@@ -100,7 +104,7 @@ namespace Piper {
     using Sqrt = typename SqrtImpl<T>::Type;
 
     template <typename T, typename = Sqrt<T>>
-    auto sqrt(T val) noexcept {
+    auto sqrtSafe(T val) noexcept {
         return Sqrt<T>{ std::sqrt(std::fmax(val.val, static_cast<typename T::FT>(0.0))) };
     }
 
@@ -165,7 +169,7 @@ namespace Piper {
     }
 
     template <typename T>
-    constexpr auto acos(Dimensionless<T> a) noexcept {
+    constexpr auto acosSafe(Dimensionless<T> a) noexcept {
         return Radian<T>{ std::acos(std::fmax(static_cast<T>(-1.0), std::fmin(static_cast<T>(1.0), a.val))) };
     }
 

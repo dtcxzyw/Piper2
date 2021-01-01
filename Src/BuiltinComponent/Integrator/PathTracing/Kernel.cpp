@@ -135,7 +135,8 @@ namespace Piper {
             SurfaceStorage storage;
             const auto Ng = surface.intersect.local2Shading(surface.intersect.Ng);
             bool earlyCheck;
-            piperSurfaceInit(context, surface.instance, ray.t, surface.intersect.texCoord, Ng, storage, earlyCheck);
+            piperSurfaceInit(context, surface.instance, ray.t, surface.intersect.texCoord, Ng, res.surface.intersect.face,
+                             TransportMode::Radiance, storage, earlyCheck);
 
             const auto hit = ray.origin + ray.direction * surface.t;
 

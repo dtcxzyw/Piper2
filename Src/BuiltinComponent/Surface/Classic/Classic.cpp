@@ -70,11 +70,12 @@ namespace Piper {
     class Matte final : public Surface {
     private:
         String mKernelPath;
-        SharedPtr<Config> mTexture;
+        SharedPtr<Config> mDiffuse, mRoughness;
 
     public:
         Matte(PiperContext& context, const SharedPtr<Config>& config, String path)
-            : Surface(context), mKernelPath(std::move(path)), mTexture(config->at("Diffuse")) {}
+            : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")),
+              mRoughness(config->at("Roughness")) {}
         SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
@@ -85,10 +86,153 @@ namespace Piper {
             res.evaluate = tracer.buildProgram(linkable, "matteEvaluate");
             res.pdf = tracer.buildProgram(linkable, "mattePdf");
 
-            const auto texture = tracer.generateTexture(mTexture, 4);
+            // TODO:better interface
+            const auto diffuse = tracer.generateTexture(mDiffuse, 4);
+            auto [diffuseSBT, diffuseProg] = diffuse->materialize(tracer, holder, registerCall);
+
+            const auto roughness = tracer.generateTexture(mRoughness, 1);
+            auto [roughnessSBT, roughnessProg] = roughness->materialize(tracer, holder, registerCall);
+
+            const MatteData data{ registerCall(diffuseProg, diffuseSBT), registerCall(roughnessProg, roughnessSBT) };
+            res.payload = packSBTPayload(context().getAllocator(), data);
+            return res;
+        }
+    };
+
+    class Glass final : public Surface {
+    private:
+        String mKernelPath;
+        SharedPtr<Config> mReflection, mTransmission, mRoughnessX, mRoughnessY;
+
+    public:
+        Glass(PiperContext& context, const SharedPtr<Config>& config, String path)
+            : Surface(context), mKernelPath(std::move(path)), mReflection(config->at("Reflection")),
+              mTransmission(config->at("Transmission")), mRoughnessX(config->at("RoughnessX")),
+              mRoughnessY(config->at("RoughnessY")) {}
+        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+            SurfaceProgram res;
+            auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = tracer.buildProgram(linkable, "glassInit");
+            res.sample = tracer.buildProgram(linkable, "glassSample");
+            res.evaluate = tracer.buildProgram(linkable, "glassEvaluate");
+            res.pdf = tracer.buildProgram(linkable, "glassPdf");
+
+            const auto reflection = tracer.generateTexture(mReflection, 4);
+            auto [reflectionSBT, reflectionProg] = reflection->materialize(tracer, holder, registerCall);
+
+            const auto transmission = tracer.generateTexture(mTransmission, 4);
+            auto [transmissionSBT, transmissionProg] = transmission->materialize(tracer, holder, registerCall);
+
+            const auto roughnessX = tracer.generateTexture(mRoughnessX, 1);
+            auto [roughnessXSBT, roughnessXProg] = roughnessX->materialize(tracer, holder, registerCall);
+
+            const auto roughnessY = tracer.generateTexture(mRoughnessY, 1);
+            auto [roughnessYSBT, roughnessYProg] = roughnessY->materialize(tracer, holder, registerCall);
+
+            const GlassData data{ registerCall(reflectionProg, reflectionSBT), registerCall(transmissionProg, transmissionSBT),
+                                  registerCall(roughnessXProg, roughnessXSBT), registerCall(roughnessYProg, roughnessYSBT) };
+            res.payload = packSBTPayload(context().getAllocator(), data);
+            return res;
+        }
+    };
+
+    class Plastic final : public Surface {
+    private:
+        String mKernelPath;
+        SharedPtr<Config> mDiffuse, mSpecular, mRoughness;
+
+    public:
+        Plastic(PiperContext& context, const SharedPtr<Config>& config, String path)
+            : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")), mSpecular(config->at("Specular")),
+              mRoughness(config->at("Roughness")) {}
+        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+            SurfaceProgram res;
+            auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = tracer.buildProgram(linkable, "plasticInit");
+            res.sample = tracer.buildProgram(linkable, "plasticSample");
+            res.evaluate = tracer.buildProgram(linkable, "plasticEvaluate");
+            res.pdf = tracer.buildProgram(linkable, "plasticPdf");
+
+            const auto diffuse = tracer.generateTexture(mDiffuse, 4);
+            auto [diffuseSBT, diffuseProg] = diffuse->materialize(tracer, holder, registerCall);
+
+            const auto specular = tracer.generateTexture(mSpecular, 4);
+            auto [specularSBT, specularProg] = specular->materialize(tracer, holder, registerCall);
+
+            const auto roughness = tracer.generateTexture(mRoughness, 1);
+            auto [roughnessSBT, roughnessProg] = roughness->materialize(tracer, holder, registerCall);
+
+            const PlasticData data{ registerCall(diffuseProg, diffuseSBT), registerCall(specularProg, specularSBT),
+                                    registerCall(roughnessProg, roughnessSBT) };
+            res.payload = packSBTPayload(context().getAllocator(), data);
+            return res;
+        }
+    };
+
+    class Mirror final : public Surface {
+    private:
+        String mKernelPath;
+        SharedPtr<Config> mReflection;
+
+    public:
+        Mirror(PiperContext& context, const SharedPtr<Config>& config, String path)
+            : Surface(context), mKernelPath(std::move(path)), mReflection(config->at("Reflection")) {}
+        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+            SurfaceProgram res;
+            auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = tracer.buildProgram(linkable, "mirrorInit");
+            res.sample = tracer.buildProgram(linkable, "mirrorSample");
+            res.evaluate = tracer.buildProgram(linkable, "blackBodyEvaluate");
+            res.pdf = tracer.buildProgram(linkable, "blackBodyPdf");
+
+            const auto texture = tracer.generateTexture(mReflection, 4);
             auto [SBT, prog] = texture->materialize(tracer, holder, registerCall);
 
-            const MatteData data{ registerCall(prog, SBT) };
+            const MirrorData data{ registerCall(prog, SBT) };
+            res.payload = packSBTPayload(context().getAllocator(), data);
+            return res;
+        }
+    };
+
+    class Substrate final : public Surface {
+    private:
+        String mKernelPath;
+        SharedPtr<Config> mDiffuse, mSpecular, mRoughnessX, mRoughnessY;
+
+    public:
+        Substrate(PiperContext& context, const SharedPtr<Config>& config, String path)
+            : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")), mSpecular(config->at("Specular")),
+              mRoughnessX(config->at("RoughnessX")), mRoughnessY(config->at("RoughnessY")) {}
+        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+            SurfaceProgram res;
+            auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = tracer.buildProgram(linkable, "substrateInit");
+            res.sample = tracer.buildProgram(linkable, "substrateSample");
+            res.evaluate = tracer.buildProgram(linkable, "substrateEvaluate");
+            res.pdf = tracer.buildProgram(linkable, "substratePdf");
+
+            const auto diffuse = tracer.generateTexture(mDiffuse, 4);
+            auto [diffuseSBT, diffuseProg] = diffuse->materialize(tracer, holder, registerCall);
+
+            const auto specular = tracer.generateTexture(mSpecular, 4);
+            auto [specularSBT, specularProg] = specular->materialize(tracer, holder, registerCall);
+
+            const auto roughnessX = tracer.generateTexture(mRoughnessX, 1);
+            auto [roughnessXSBT, roughnessXProg] = roughnessX->materialize(tracer, holder, registerCall);
+
+            const auto roughnessY = tracer.generateTexture(mRoughnessY, 1);
+            auto [roughnessYSBT, roughnessYProg] = roughnessY->materialize(tracer, holder, registerCall);
+
+            const SubstrateData data{ registerCall(diffuseProg, diffuseSBT), registerCall(specularProg, specularSBT),
+                                      registerCall(roughnessXProg, roughnessXSBT), registerCall(roughnessYProg, roughnessYSBT) };
             res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
@@ -112,6 +256,22 @@ namespace Piper {
             if(classID == "Matte") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<Matte>(context(), config, mKernelPath)));
+            }
+            if(classID == "Plastic") {
+                return context().getScheduler().value(
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<Plastic>(context(), config, mKernelPath)));
+            }
+            if(classID == "Mirror") {
+                return context().getScheduler().value(
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<Mirror>(context(), config, mKernelPath)));
+            }
+            if(classID == "Glass") {
+                return context().getScheduler().value(
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<Glass>(context(), config, mKernelPath)));
+            }
+            if(classID == "Substrate") {
+                return context().getScheduler().value(
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<Substrate>(context(), config, mKernelPath)));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }

@@ -60,10 +60,11 @@ namespace Piper {
     struct SurfaceIntersectionInfo final {
         Normal<float, FOR::Local> T, B, N, Ng;
         Vector2<float> texCoord;
+        Face face;
 
         [[nodiscard]] auto local2Shading(Normal<float, FOR::Local> v) const noexcept {
             return Normal<float, FOR::Shading>{ Vector<Dimensionless<float>, FOR::Shading>{ dot(T, v), dot(B, v), dot(N, v) },
-                                                Unchecked{} };
+                                                Unsafe{} };
         }
 
         [[nodiscard]] auto shading2Local(Normal<float, FOR::Shading> v) const noexcept {
@@ -71,7 +72,7 @@ namespace Piper {
                                                   dot(T.x, v.x) + dot(B.x, v.y) + dot(N.x, v.z),
                                                   dot(T.y, v.x) + dot(B.y, v.y) + dot(N.y, v.z),
                                                   dot(T.z, v.x) + dot(B.z, v.y) + dot(N.z, v.z) },
-                                              Unchecked{} };
+                                              Unsafe{} };
         }
     };
 
@@ -132,7 +133,8 @@ namespace Piper {
     using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                                 const SensorNDCAffineTransform& transform, RayInfo& ray, Vector2<float>& point);
 
-    enum class BxDFPart : uint32_t { Reflection = 1, Refraction = 2, Diffuse = 4, Specular = 8, Glossy = 16, All = 31 };
+    enum class BxDFPart : uint8_t { Reflection = 1, Transmission = 2, Diffuse = 4, Specular = 8, Glossy = 16, All = 31 };
+    enum class TransportMode : uint8_t { Radiance, Importance };
     constexpr bool match(BxDFPart provide, BxDFPart require) {
         return (static_cast<uint32_t>(provide) & static_cast<uint32_t>(require)) == static_cast<uint32_t>(provide);
     }
@@ -150,13 +152,13 @@ namespace Piper {
         BxDFPart part;
     };
     struct SurfaceStorage final {
-        std::byte data[64];
+        std::byte data[96];
     };
 
     // TODO:simplify interface
     using SurfaceInitFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, float t,
-                                            const Vector2<float>& texCoord, const Normal<float, FOR::Shading>& Ng, void* storage,
-                                            bool& noSpecular);
+                                            const Vector2<float>& texCoord, const Normal<float, FOR::Shading>& Ng, Face face,
+                                            TransportMode mode, void* storage, bool& noSpecular);
     using SurfaceSampleFunc = void(PIPER_CC*)(RestrictedContext* context, const void* SBTData, const void* storage,
                                               const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng,
                                               BxDFPart require, SurfaceSample& sample);
@@ -226,7 +228,8 @@ namespace Piper {
     // TODO:replace uint64_t with unsigned<ptrdiff_t>
     extern "C" {
     void PIPER_CC piperSurfaceInit(FullContext* context, uint64_t instance, float t, const Vector2<float>& texCoord,
-                                   const Normal<float, FOR::Shading>& Ng, SurfaceStorage& storage, bool& noSpecular);
+                                   const Normal<float, FOR::Shading>& Ng, Face face, TransportMode mode, SurfaceStorage& storage,
+                                   bool& noSpecular);
     void PIPER_CC piperSurfaceSample(FullContext* context, uint64_t instance, const SurfaceStorage& storage,
                                      const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng,
                                      BxDFPart require, SurfaceSample& sample);
@@ -254,10 +257,11 @@ namespace Piper {
     // TODO:terminate/ignore intersection
     // TODO:need FullContext
     float PIPER_CC piperSample(RestrictedContext* context);
-    // TODO:debug interface
-    void PIPER_CC piperPrintMessage(RestrictedContext* context, const char* msg);
-    void PIPER_CC piperPrintFloat(RestrictedContext* context, const char* desc, float val);
-    void PIPER_CC piperPrintUint(RestrictedContext* context, const char* desc, uint32_t val);
+
+    void PIPER_CC piperStatisticsUint(RestrictedContext* context, uint32_t id, uint32_t val);
+    void PIPER_CC piperStatisticsBool(RestrictedContext* context, uint32_t id, bool val);
+    void PIPER_CC piperStatisticsFloat(RestrictedContext* context, uint32_t id, float val);
+    void PIPER_CC piperGetTime(RestrictedContext* context, uint32_t id, float& val);
 
     void PIPER_CC piperQueryCall(RestrictedContext* context, uint32_t id, CallInfo& info);
     }

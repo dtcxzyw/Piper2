@@ -49,7 +49,30 @@ namespace Piper {
     // TODO:BumpedMaterial
     struct MatteData final {
         uint32_t diffuseTexture;
+        uint32_t roughnessTexture;
+    };
 
-        // Dimensionless<float> roughness;
+    struct PlasticData final {
+        uint32_t diffuseTexture;
+        uint32_t specularTexture;
+        uint32_t roughnessTexture;
+    };
+
+    struct MirrorData final {
+        uint32_t reflectionTexture;
+    };
+
+    struct GlassData final {
+        uint32_t reflection;
+        uint32_t transmission;
+        uint32_t roughnessX;
+        uint32_t roughnessY;
+    };
+
+    struct SubstrateData final {
+        uint32_t diffuse;
+        uint32_t specular;
+        uint32_t roughnessX;
+        uint32_t roughnessY;
     };
 }  // namespace Piper

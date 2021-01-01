@@ -24,7 +24,7 @@ namespace Piper {
     template <typename T>
     Vector2<Dimensionless<T>> sampleUniformDisk(T u1, T u2) {
         auto ang = Radian<T>{ u1 * Constants::twoPi<T> };
-        auto rad = sqrt(Dimensionless<T>{ u2 });
+        auto rad = sqrtSafe(Dimensionless<T>{ u2 });
         // TODO:use sincos?
         return { { rad * cos(ang) }, { rad * sin(ang) } };
     }
@@ -45,8 +45,8 @@ namespace Piper {
     template <typename T>
     Normal<T, FOR::Shading> sampleCosineHemisphere(T u1, T u2) {
         const auto coord = sampleConcentricDisk(u1, u2);
-        const auto z = sqrt(Dimensionless<float>{ static_cast<T>(1) } - lengthSquared(coord));
+        const auto z = sqrtSafe(Dimensionless<float>{ static_cast<T>(1) } - lengthSquared(coord));
         return Normal<T, FOR::Shading>{ Vector<Dimensionless<T>, FOR::Shading>{ coord.x, coord.y, Dimensionless<T>{ z } },
-                                        Unchecked{} };
+                                        Unsafe{} };
     }
 }  // namespace Piper

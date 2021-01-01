@@ -21,7 +21,7 @@ namespace Piper {
     // TODO:unit test
     // TODO:Uninitialized
     // struct Uninitialized final {};
-    struct Unchecked final {};
+    struct Unsafe final {};
 
     template <typename Float>
     struct Vector2 {
@@ -181,7 +181,7 @@ namespace Piper {
 
     template <typename Float, FOR ref>
     Float length(Vector<Float, ref> a) noexcept {
-        return sqrt(lengthSquared(a));
+        return sqrtSafe(lengthSquared(a));
     }
 
     template <typename Float, FOR ref>
@@ -234,7 +234,7 @@ namespace Piper {
     struct Normal final {
         Dimensionless<Float> x, y, z;
         Normal() = default;
-        Normal(Vector<Dimensionless<Float>, ref> v, Unchecked) : x(v.x), y(v.y), z(v.z) {}
+        Normal(Vector<Dimensionless<Float>, ref> v, Unsafe) : x(v.x), y(v.y), z(v.z) {}
         template <typename U>
         explicit Normal(Vector<U, ref> v) noexcept {
             auto nv = v / length(v);
@@ -245,7 +245,10 @@ namespace Piper {
             return Vector<U, ref>{ x * distance, y * distance, z * distance };
         }
         Normal operator-() const noexcept {
-            return { Vector<Dimensionless<Float>, ref>{ -x, -y, -z }, Unchecked{} };
+            return { Vector<Dimensionless<Float>, ref>{ -x, -y, -z }, Unsafe{} };
+        }
+        Vector<Dimensionless<Float>, ref> asVector() const noexcept {
+            return { x, y, z };
         }
     };
 
@@ -253,7 +256,7 @@ namespace Piper {
     Normal<Float, ref> cross(Normal<Float, ref> a, Normal<Float, ref> b) noexcept {
         return { Vector<Dimensionless<Float>, ref>{ dot(a.y, b.z) - dot(a.z, b.y), dot(a.z, b.x) - dot(a.x, b.z),
                                                     dot(a.x, b.y) - dot(a.y, b.x) },
-                 Unchecked{} };
+                 Unsafe{} };
     }
 
     template <typename Float, FOR ref>
@@ -269,11 +272,6 @@ namespace Piper {
     template <typename Float, FOR ref>
     Normal<Float, ref> halfVector(Normal<Float, ref> a, Normal<Float, ref> b) {
         return Normal<Float, ref>{ Vector<Dimensionless<Float>, ref>{ a.x + b.x, a.y + b.y, a.z + b.z } };
-    }
-
-    template <typename Float, FOR ref>
-    Dimensionless<Float> cosTheta(Normal<Float, ref> a) {
-        return a.z;
     }
 
     template <typename T, FOR ref>
@@ -305,7 +303,7 @@ namespace Piper {
             return { Vector<Storage, refB>{ B2A[0][0] * n.x + B2A[1][0] * n.y + B2A[2][0] * n.z,
                                             B2A[0][1] * n.x + B2A[1][1] * n.y + B2A[2][1] * n.z,
                                             B2A[0][2] * n.x + B2A[1][2] * n.y + B2A[2][2] * n.z },
-                     Unchecked{} };
+                     Unsafe{} };
         }
 
         Vector<Float, refA> operator()(Vector<Float, refB> v) const noexcept {
@@ -323,7 +321,7 @@ namespace Piper {
             return { Vector<Storage, refA>{ A2B[0][0] * n.x + A2B[1][0] * n.y + A2B[2][0] * n.z,
                                             A2B[0][1] * n.x + A2B[1][1] * n.y + A2B[2][1] * n.z,
                                             A2B[0][2] * n.x + A2B[1][2] * n.y + A2B[2][2] * n.z },
-                     Unchecked{} };
+                     Unsafe{} };
         }
     };
 
@@ -349,15 +347,27 @@ namespace Piper {
         B2A[2][3] = -(B2A[2][0] * A2B[0][3] + B2A[2][1] * A2B[1][3] + B2A[2][2] * A2B[2][3]);
     }
 
+    template <typename Float, FOR ref>
+    Normal<Float, ref> reflect(Normal<Float, ref> wo, Normal<Float, ref> N) noexcept {
+        return { N * (Dimensionless<Float>{ static_cast<Float>(2.0) } * dot(wo, N)) - wo.asVector(), Unsafe{} };
+    }
+
+    template <typename Float, FOR ref>
+    bool refract(Normal<Float, ref> wi, Normal<Float, ref> N, Dimensionless<Float> eta, Normal<Float, ref>& wt) noexcept {
+        const auto cosThetaI = dot(N, wi);
+        const auto sin2ThetaI = Dimensionless<float>{ std::fmax(0.0f, 1.0f - cosThetaI.val * cosThetaI.val) };
+        const auto sin2ThetaT = eta * eta * sin2ThetaI;
+
+        if(sin2ThetaT.val >= 1.0f)
+            return false;
+        const auto cosThetaT = sqrtSafe(Dimensionless<float>{ 1.0f } - sin2ThetaT);
+        wt = Normal<Float, ref>{ N * (eta * cosThetaI - cosThetaT) - wi * eta };
+        return true;
+    }
+
     /*
     template <typename Float, FOR ref>
-    Normal<Float, ref> reflect(Normal<Float, ref> in, Normal<Float, ref> N) noexcept {}
-
-    template <typename Float, FOR ref>
-    bool refract(Normal<Float, ref> in, Normal<Float, ref> N, Float ior, Normal<Float, ref>& out) noexcept {}
-
-    template <typename Float, FOR ref>
-    Vector<Float, ref> faceForward(Vector<Float, ref> in, Normal<Float, ref> N) noexcept {}
+        Vector<Float, ref> faceForward(Vector<Float, ref> in, Normal<Float, ref> N) noexcept {}
     */
 
 }  // namespace Piper

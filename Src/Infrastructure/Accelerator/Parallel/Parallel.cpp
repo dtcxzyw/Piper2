@@ -454,12 +454,13 @@ namespace Piper {
             reinterpret_cast<llvm::JITTargetAddress>(name), flag                \
         }                                                                       \
     }
-                            PIPER_LIBC_FUNC(cosf),   PIPER_LIBC_FUNC(sinf),       PIPER_LIBC_FUNC(fabsf),
-                            PIPER_LIBC_FUNC(fmaxf),  PIPER_LIBC_FUNC(fminf),      PIPER_LIBC_FUNC(sqrtf),
-                            PIPER_LIBC_FUNC(cbrtf),  PIPER_LIBC_FUNC(hypotf),     PIPER_LIBC_FUNC(acosf),
-                            PIPER_LIBC_FUNC(atan2f), PIPER_LIBC_FUNC(asinf),      PIPER_LIBC_FUNC(floorf),
-                            PIPER_LIBC_FUNC(ceilf),  PIPER_LIBC_FUNC(remainderf), PIPER_LIBC_FUNC(memset),
-                            PIPER_LIBC_FUNC(memcpy), PIPER_LIBC_FUNC(memmove)
+                            PIPER_LIBC_FUNC(cosf), PIPER_LIBC_FUNC(sinf), PIPER_LIBC_FUNC(fabsf), PIPER_LIBC_FUNC(fmaxf),
+                            PIPER_LIBC_FUNC(fminf), PIPER_LIBC_FUNC(sqrtf), PIPER_LIBC_FUNC(cbrtf), PIPER_LIBC_FUNC(hypotf),
+                            PIPER_LIBC_FUNC(acosf), PIPER_LIBC_FUNC(atan2f), PIPER_LIBC_FUNC(asinf), PIPER_LIBC_FUNC(floorf),
+                            PIPER_LIBC_FUNC(ceilf), PIPER_LIBC_FUNC(remainderf), PIPER_LIBC_FUNC(memset), PIPER_LIBC_FUNC(memcpy),
+                            PIPER_LIBC_FUNC(memmove), PIPER_LIBC_FUNC(logf),
+                            // TODO:cross C library
+                            PIPER_LIBC_FUNC(_fdtest)
 #undef PIPER_LIBC_FUNC
                         };
                         for(const auto& symbol : nativeSymbol)

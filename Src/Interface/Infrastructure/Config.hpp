@@ -83,7 +83,7 @@ namespace Piper {
             return Piper::get<DynamicArray<SharedPtr<Config>>>(mValue);
         };
 
-        const SharedPtr<Config>& at(const StringView& key) const {
+        [[nodiscard]] const SharedPtr<Config>& at(const StringView& key) const {
             return viewAsObject().find(String(key, context().getAllocator()))->second;
         }
         SharedPtr<Config>& at(const StringView& key) {

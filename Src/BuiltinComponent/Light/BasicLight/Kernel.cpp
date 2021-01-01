@@ -28,7 +28,7 @@ namespace Piper {
         const auto delta = data->pos - hit;
         const auto dis2 = lengthSquared(delta);
         sample.rad = data->intensity / dis2;
-        sample.dir = Normal<float, FOR::World>{ delta / sqrt(dis2), Unchecked{} };
+        sample.dir = Normal<float, FOR::World>{ delta / sqrtSafe(dis2), Unsafe{} };
         sample.pdf = Dimensionless<float>{ 1.0f };
     }
     static_assert(std::is_same_v<LightSampleFunc, decltype(&pointSample)>);
@@ -52,7 +52,7 @@ namespace Piper {
         const auto theta = u * Radian<float>{ Constants::pi<float> }, phi = v * Radian<float>{ Constants::pi<float> };
         const auto cosTheta = cos(theta), sinTheta = sin(theta), cosPhi = cos(phi), sinPhi = sin(phi);
         // TODO:transform
-        sample.dir = Normal<float, FOR::World>{ { sinTheta * cosPhi, sinTheta * sinPhi, cosTheta }, Unchecked{} };
+        sample.dir = Normal<float, FOR::World>{ { sinTheta * cosPhi, sinTheta * sinPhi, cosTheta }, Unsafe{} };
         sample.pdf = { sinTheta.val == 0.0f ?
                            Dimensionless<float>{ 0.0f } :
                            Dimensionless<float>{ 1.0f } / (Dimensionless<float>{ 2.0f * Constants::sqrPi<float> } * sinTheta) };
@@ -66,7 +66,7 @@ namespace Piper {
     extern "C" void PIPER_CC SEPdf(RestrictedContext*, const void*, const void*, const Point<Distance, FOR::World>&,
                                    const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf) {
         // TODO:transform
-        const auto theta = acos(dir.z);  //, phi = atan2(dir.y, dir.x);
+        const auto theta = acosSafe(dir.z);  //, phi = atan2(dir.y, dir.x);
         const auto sinTheta = sin(theta);
         pdf = { sinTheta.val == 0.0f ?
                     Dimensionless<float>{ 0.0f } :
