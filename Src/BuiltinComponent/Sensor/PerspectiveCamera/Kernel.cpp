@@ -18,9 +18,8 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void PIPER_CC rayGen(RestrictedContext* context, const void* SBTData, const uint32_t x, const uint32_t y,
-                                    const uint32_t w, const uint32_t h, const SensorNDCAffineTransform& transform, RayInfo& ray,
-                                    Vector2<float>& point) {
+    extern "C" void rayGen(RestrictedContext* context, const void* SBTData, const uint32_t x, const uint32_t y, const uint32_t w,
+                           const uint32_t h, const SensorNDCAffineTransform& transform, RayInfo& ray, Vector2<float>& point) {
         point.x = static_cast<float>(x) + piperSample(context);
         point.y = static_cast<float>(y) + piperSample(context);
         const auto* data = static_cast<const PCData*>(SBTData);

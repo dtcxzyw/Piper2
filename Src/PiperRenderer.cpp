@@ -160,13 +160,17 @@ namespace Piper {
         void saveToFile(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, const uint32_t width,
                         const uint32_t height) const {
             DynamicArray<Imf::Rgba> rgba(res.size(), context().getAllocator());
-
-            eastl::transform(res.cbegin(), res.cend(), rgba.begin(), [](const Spectrum<Radiance> rad) {
+            auto invalid = false;
+            eastl::transform(res.cbegin(), res.cend(), rgba.begin(), [&](const Spectrum<Radiance> rad) {
                 if(isfinite(rad.r.val) && isfinite(rad.g.val) && isfinite(rad.b.val) &&
                    fminf(rad.r.val, fminf(rad.g.val, rad.b.val)) >= 0.0f)
                     return Imf::Rgba{ rad.r.val, rad.g.val, rad.b.val };
+                invalid = true;
                 return Imf::Rgba{ 1.0f, 0.0f, 0.0f };
             });
+            if(invalid && context().getLogger().allow(LogLevel::Warning)) {
+                context().getLogger().record(LogLevel::Warning, "Some invalid pixels are detected.", PIPER_SOURCE_LOCATION());
+            }
             // TODO:filesystem
             Imf::RgbaOutputFile out(dest.c_str(), width, height, Imf::WRITE_RGB);
             out.setFrameBuffer(rgba.data(), 1, width);
@@ -235,6 +239,9 @@ namespace Piper {
             stage.next("start rendering", PIPER_SOURCE_LOCATION());
             DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
             renderDriver->renderFrame(res, width, height, rect, transform, *tracer, *pipeline);
+
+            if(context().getLogger().allow(LogLevel::Info))
+                context().getLogger().record(LogLevel::Info, pipeline->generateStatisticsReport(), PIPER_SOURCE_LOCATION());
 
             stage.next("save to image", PIPER_SOURCE_LOCATION());
             auto output = opt->at("OutputFile")->get<String>();

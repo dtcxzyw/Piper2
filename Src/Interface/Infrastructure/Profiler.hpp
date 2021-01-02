@@ -15,12 +15,16 @@
 */
 
 #pragma once
+#include "../../STL/String.hpp"
 #include "../Object.hpp"
 
 namespace Piper {
+    enum class StatisticsType { Bool, UInt, Float, Time };
     class Profiler : public Object {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         PIPER_INTERFACE_CONSTRUCT(Profiler, Object)
+        virtual uint32_t registerDesc(StringView group, StringView name, const void* uid, StatisticsType type) = 0;
+        [[nodiscard]] virtual String generateReport() const = 0;
         virtual ~Profiler() = default;
     };
 }  // namespace Piper

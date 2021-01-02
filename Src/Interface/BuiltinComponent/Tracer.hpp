@@ -35,6 +35,7 @@ namespace Piper {
     class Pipeline : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Pipeline, Object)
+        virtual String generateStatisticsReport() const = 0;
         virtual ~Pipeline() = default;
     };
 
@@ -90,10 +91,18 @@ namespace Piper {
                            allocator };
     }
 
-    using CallSiteRegister = Function<uint32_t, const SharedPtr<RTProgram>&, const SBTPayload&>;
-
     struct RenderRECT final {
         uint32_t left, top, width, height;
+    };
+
+    using CallSiteRegister = Function<uint32_t, const SharedPtr<RTProgram>&, const SBTPayload&>;
+    using TextureLoader = Function<uint32_t, const SharedPtr<Config>&, uint32_t>;
+    struct MaterializeContext final {
+        Tracer& tracer;
+        ResourceHolder& holder;
+        const CallSiteRegister registerCall;
+        Profiler& profiler;
+        const TextureLoader loadTexture;
     };
 
     // TODO:Texture extension for Accelerator

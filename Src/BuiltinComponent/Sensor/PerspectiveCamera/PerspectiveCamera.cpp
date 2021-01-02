@@ -60,11 +60,11 @@ namespace Piper {
         [[nodiscard]] float getAspectRatio() const noexcept override {
             return mAspectRatio;
         }
-        SensorProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SensorProgram materialize(const MaterializeContext& ctx) const override {
             SensorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            res.rayGen = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+            res.rayGen = ctx.tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
                 "rayGen");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;

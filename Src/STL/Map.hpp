@@ -14,14 +14,11 @@
    limitations under the License.
 */
 
-#include "Shared.hpp"
+#pragma once
+#include "STLAllocator.hpp"
+#include <EASTL/map.h>
 
 namespace Piper {
-    extern "C" void constantTexture(RestrictedContext*, const void* SBTData, float, const Vector2<float>&,
-                                    Dimensionless<float>* sample) {
-        const auto* data = static_cast<const Data*>(SBTData);
-        for(uint32_t i = 0; i < data->channel; ++i)
-            sample[i] = data->value[i];
-    }
-    static_assert(std::is_same_v<TextureSampleFunc, decltype(&constantTexture)>);
+    template <typename Key, typename T, typename Compare = eastl::less<Key>>
+    using Map = eastl::map<Key, T, Compare>;
 }  // namespace Piper

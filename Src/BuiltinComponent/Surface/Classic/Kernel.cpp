@@ -42,21 +42,21 @@ namespace Piper {
         return baseColor * factor;
     }
     */
-    extern "C" void PIPER_CC blackBodyInit(RestrictedContext*, const void*, float, const Vector2<float>&,
-                                           const Normal<float, FOR::Shading>&, Face, TransportMode, void*, bool& noSpecular) {
+    extern "C" void blackBodyInit(RestrictedContext*, const void*, float, const Vector2<float>&,
+                                  const Normal<float, FOR::Shading>&, Face, TransportMode, void*, bool& noSpecular) {
         noSpecular = false;
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&blackBodyInit)>);
-    extern "C" void PIPER_CC blackBodySample(RestrictedContext*, const void*, const void*, const Vec&,
-                                             const Normal<float, FOR::Shading>&, BxDFPart, SurfaceSample&) {}
+    extern "C" void blackBodySample(RestrictedContext*, const void*, const void*, const Vec&, const Normal<float, FOR::Shading>&,
+                                    BxDFPart, SurfaceSample&) {}
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&blackBodySample)>);
-    extern "C" void PIPER_CC blackBodyEvaluate(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
-                                               const Normal<float, FOR::Shading>&, BxDFPart, BxDFValue& f) {
+    extern "C" void blackBodyEvaluate(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
+                                      const Normal<float, FOR::Shading>&, BxDFPart, BxDFValue& f) {
         f = Spectrum<Dimensionless<float>>{ { 0.0f }, { 0.0f }, { 0.0f } };
     }
     static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&blackBodyEvaluate)>);
-    extern "C" void PIPER_CC blackBodyPdf(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
-                                          const Normal<float, FOR::Shading>&, BxDFPart, Dimensionless<float>& pdf) {
+    extern "C" void blackBodyPdf(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
+                                 const Normal<float, FOR::Shading>&, BxDFPart, Dimensionless<float>& pdf) {
         pdf = Dimensionless<float>{ 0.0f };
     }
     static_assert(std::is_same_v<SurfacePdfFunc, decltype(&blackBodyPdf)>);
@@ -200,31 +200,29 @@ namespace Piper {
             sample.pdf = sample.pdf * Dimensionless<float>{ 1.0f / count };
     }
 
-#define KERNEL_FUNCTION_GROUP(PREFIX, BSDF, ...)                                                                             \
-    extern "C" void PIPER_CC PREFIX##Sample(RestrictedContext* context, const void*, const void* storage, const Vec& wo,     \
-                                            const Normal<float, FOR::Shading>& Ng, const BxDFPart require,                   \
-                                            SurfaceSample& sample) {                                                         \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                                \
-        Piper::sample(bsdf->mask, piperSample(context), piperSample(context), wo, Ng, require, sample, __VA_ARGS__);         \
-    }                                                                                                                        \
-    static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&PREFIX##Sample)>);                                             \
-                                                                                                                             \
-    extern "C" void PIPER_CC PREFIX##Evaluate(RestrictedContext*, const void*, const void* storage, const Vec& wo,           \
-                                              const Vec& wi, const Normal<float, FOR::Shading>& Ng, const BxDFPart require,  \
-                                              BxDFValue& f) {                                                                \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                                \
-        const auto addition = ((dot(wo, Ng) * dot(wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Transmission);      \
-        f = {};                                                                                                              \
-        evaluateN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, addition, f, __VA_ARGS__);              \
-    }                                                                                                                        \
-    static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&PREFIX##Evaluate)>);                                         \
-                                                                                                                             \
-    extern "C" void PIPER_CC PREFIX##Pdf(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi, \
-                                         const Normal<float, FOR::Shading>&, const BxDFPart require, PDFValue& pdf) {        \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                                \
-        pdf = {};                                                                                                            \
-        pdfN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, __VA_ARGS__);                           \
-    }                                                                                                                        \
+#define KERNEL_FUNCTION_GROUP(PREFIX, BSDF, ...)                                                                           \
+    extern "C" void PREFIX##Sample(RestrictedContext* context, const void*, const void* storage, const Vec& wo,            \
+                                   const Normal<float, FOR::Shading>& Ng, const BxDFPart require, SurfaceSample& sample) { \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                              \
+        Piper::sample(bsdf->mask, piperSample(context), piperSample(context), wo, Ng, require, sample, __VA_ARGS__);       \
+    }                                                                                                                      \
+    static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&PREFIX##Sample)>);                                           \
+                                                                                                                           \
+    extern "C" void PREFIX##Evaluate(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,   \
+                                     const Normal<float, FOR::Shading>& Ng, const BxDFPart require, BxDFValue& f) {        \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                              \
+        const auto addition = ((dot(wo, Ng) * dot(wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Transmission);    \
+        f = {};                                                                                                            \
+        evaluateN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, addition, f, __VA_ARGS__);            \
+    }                                                                                                                      \
+    static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&PREFIX##Evaluate)>);                                       \
+                                                                                                                           \
+    extern "C" void PREFIX##Pdf(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,        \
+                                const Normal<float, FOR::Shading>&, const BxDFPart require, PDFValue& pdf) {               \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                              \
+        pdf = {};                                                                                                          \
+        pdfN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, __VA_ARGS__);                         \
+    }                                                                                                                      \
     static_assert(std::is_same_v<SurfacePdfFunc, decltype(&PREFIX##Pdf)>);
 
     struct MatteBSDF final {
@@ -237,8 +235,8 @@ namespace Piper {
 
     KERNEL_FUNCTION_GROUP(matte, MatteBSDF, bsdf->orenNayar, bsdf->lambertian)
 
-    extern "C" void PIPER_CC matteInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
-                                       const Normal<float, FOR::Shading>&, Face, TransportMode, void* storage, bool& noSpecular) {
+    extern "C" void matteInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+                              const Normal<float, FOR::Shading>&, Face, TransportMode, void* storage, bool& noSpecular) {
         const auto* data = static_cast<const MatteData*>(SBTData);
         auto* bsdf = static_cast<MatteBSDF*>(storage);
         static_assert(sizeof(MatteBSDF) <= sizeof(SurfaceStorage));
@@ -430,9 +428,9 @@ namespace Piper {
         Mask mask;
     };
 
-    extern "C" void PIPER_CC plasticInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
-                                         const Normal<float, FOR::Shading>&, const Face face, TransportMode, void* storage,
-                                         bool& noSpecular) {
+    extern "C" void plasticInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+                                const Normal<float, FOR::Shading>&, const Face face, TransportMode, void* storage,
+                                bool& noSpecular) {
         const auto* data = static_cast<const PlasticData*>(SBTData);
         auto* bsdf = static_cast<PlasticBSDF*>(storage);
         static_assert(sizeof(PlasticBSDF) <= sizeof(SurfaceStorage));
@@ -516,6 +514,7 @@ namespace Piper {
                 res.pdf = f;
                 res.f = mReflection * (f / abs(res.wi.z));
             } else {
+                // TODO:fixme!
                 // specular transmission
                 if(!refract(wo, { { { 0.0f }, { 0.0f }, { 1.0f } }, Unsafe{} }, mEta, res.wi))
                     return;
@@ -600,9 +599,9 @@ namespace Piper {
         Mask mask;
     };
 
-    extern "C" void PIPER_CC glassInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
-                                       const Normal<float, FOR::Shading>&, Face face, TransportMode mode, void* storage,
-                                       bool& noSpecular) {
+    extern "C" void glassInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+                              const Normal<float, FOR::Shading>&, Face face, TransportMode mode, void* storage,
+                              bool& noSpecular) {
         const auto* data = static_cast<const GlassData*>(SBTData);
         auto* bsdf = static_cast<GlassBSDF*>(storage);
         static_assert(sizeof(GlassBSDF) <= sizeof(SurfaceStorage));
@@ -654,9 +653,8 @@ namespace Piper {
         BxDFValue reflection;
     };
 
-    extern "C" void PIPER_CC mirrorInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
-                                        const Normal<float, FOR::Shading>&, Face, TransportMode, void* storage,
-                                        bool& noSpecular) {
+    extern "C" void mirrorInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+                               const Normal<float, FOR::Shading>&, Face, TransportMode, void* storage, bool& noSpecular) {
         const auto* data = static_cast<const MirrorData*>(SBTData);
         auto* bsdf = static_cast<MirrorBSDF*>(storage);
         static_assert(sizeof(MirrorBSDF) <= sizeof(SurfaceStorage));
@@ -667,8 +665,8 @@ namespace Piper {
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&mirrorInit)>);
 
-    extern "C" void PIPER_CC mirrorSample(RestrictedContext*, const void*, const void* storage, const Vec& wo,
-                                          const Normal<float, FOR::Shading>&, const BxDFPart require, SurfaceSample& sample) {
+    extern "C" void mirrorSample(RestrictedContext*, const void*, const void* storage, const Vec& wo,
+                                 const Normal<float, FOR::Shading>&, const BxDFPart require, SurfaceSample& sample) {
         const auto* bsdf = static_cast<const MirrorBSDF*>(storage);
         constexpr auto part = BxDFPart::Reflection | BxDFPart::Specular;
         if(match(part, require)) {
@@ -740,9 +738,9 @@ namespace Piper {
         Mask mask;
     };
 
-    extern "C" void PIPER_CC substrateInit(RestrictedContext* context, const void* SBTData, float t,
-                                           const Vector2<float>& texCoord, const Normal<float, FOR::Shading>&, Face face,
-                                           TransportMode mode, void* storage, bool& noSpecular) {
+    extern "C" void substrateInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+                                  const Normal<float, FOR::Shading>&, Face face, TransportMode mode, void* storage,
+                                  bool& noSpecular) {
         const auto* data = static_cast<const SubstrateData*>(SBTData);
         auto* bsdf = static_cast<SubstrateBSDF*>(storage);
         static_assert(sizeof(SubstrateBSDF) <= sizeof(SurfaceStorage));

@@ -56,9 +56,10 @@ namespace Piper {
         return 0.5f + std::floor(u + 0.5f) - u;
     }
 
-    extern "C" void PIPER_CC sampleTexture(RestrictedContext*, const void* SBTData, float, const Vector2<float>& texCoord,
-                                           Dimensionless<float>* sample) {
+    extern "C" void sampleTexture(RestrictedContext* context, const void* SBTData, float, const Vector2<float>& texCoord,
+                                  Dimensionless<float>* sample) {
         const auto* data = static_cast<const Data*>(SBTData);
+        TimeProfiler profiler{ context, data->profileSample };
         const auto u = texCoord.x * static_cast<float>(data->width), v = texCoord.y * static_cast<float>(data->height);
         const auto plu = locate(u - 0.5f, data->width, data->wrap), pru = next(plu, data->width, data->wrap),
                    plv = locate(v - 0.5f, data->height, data->wrap), prv = next(plv, data->height, data->wrap);

@@ -30,7 +30,6 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Surface, Object)
         virtual ~Surface() = default;
-        virtual SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder,
-                                           const CallSiteRegister& registerCall) const = 0;
+        virtual SurfaceProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

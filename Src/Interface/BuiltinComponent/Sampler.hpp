@@ -28,7 +28,6 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Sampler, Object)
         virtual ~Sampler() = default;
-        virtual SamplerProgram materialize(Tracer& tracer, ResourceHolder& holder,
-                                           const CallSiteRegister& registerCall) const = 0;
+        virtual SamplerProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

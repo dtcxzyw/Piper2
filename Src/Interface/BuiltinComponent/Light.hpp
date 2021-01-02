@@ -28,8 +28,7 @@ namespace Piper {
         virtual ~LightSampler() = default;
         // TODO:state less
         virtual void preprocess(const Span<const SharedPtr<Light>>& lights) = 0;
-        virtual LightSamplerProgram materialize(Tracer& tracer, ResourceHolder& holder,
-                                                const CallSiteRegister& registerCall) const = 0;
+        virtual LightSamplerProgram materialize(const MaterializeContext& context) const = 0;
     };
     struct LightProgram final {
         SharedPtr<RTProgram> init;
@@ -43,7 +42,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Light, Object)
         virtual ~Light() = default;
-        virtual LightProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const = 0;
+        virtual LightProgram materialize(const MaterializeContext& ctx) const = 0;
         virtual bool isDelta() const noexcept = 0;
     };
 }  // namespace Piper

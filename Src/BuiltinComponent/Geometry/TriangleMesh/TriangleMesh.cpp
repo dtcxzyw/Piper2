@@ -94,7 +94,7 @@ namespace Piper {
                     } });
             return *res;
         }
-        GeometryProgram materialize(Tracer&, ResourceHolder&, const CallSiteRegister&) const override {
+        GeometryProgram materialize(const MaterializeContext& context) const override {
             return {};
         }
     };

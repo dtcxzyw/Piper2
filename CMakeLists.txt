@@ -16,7 +16,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Bin/${REPATH} PARENT_SCOP
 endfunction()
 
 function(compile_kernel PROJECT FILE OUT)
-add_custom_command(TARGET ${PROJECT} PRE_BUILD COMMAND clang -emit-llvm -std=c++17 -O3 ${FILE} -c -o ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${OUT} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_custom_command(TARGET ${PROJECT} PRE_BUILD COMMAND clang -emit-llvm -std=c++17 -fno-exceptions -O3 ${FILE} -c -o ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${OUT} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endfunction()
 
 add_subdirectory("Src")

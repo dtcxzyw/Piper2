@@ -33,15 +33,15 @@ namespace Piper {
 
     public:
         BlackBody(PiperContext& context, String path) : Surface(context), mKernelPath(std::move(path)) {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
-            res.init = tracer.buildProgram(linkable, "blackBodyInit");
-            res.sample = tracer.buildProgram(linkable, "blackBodySample");
-            res.evaluate = tracer.buildProgram(linkable, "blackBodyEvaluate");
-            res.pdf = tracer.buildProgram(linkable, "blackBodyPdf");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = ctx.tracer.buildProgram(linkable, "blackBodyInit");
+            res.sample = ctx.tracer.buildProgram(linkable, "blackBodySample");
+            res.evaluate = ctx.tracer.buildProgram(linkable, "blackBodyEvaluate");
+            res.pdf = ctx.tracer.buildProgram(linkable, "blackBodyPdf");
             return res;
         }
     };
@@ -76,24 +76,17 @@ namespace Piper {
         Matte(PiperContext& context, const SharedPtr<Config>& config, String path)
             : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")),
               mRoughness(config->at("Roughness")) {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
-            res.init = tracer.buildProgram(linkable, "matteInit");
-            res.sample = tracer.buildProgram(linkable, "matteSample");
-            res.evaluate = tracer.buildProgram(linkable, "matteEvaluate");
-            res.pdf = tracer.buildProgram(linkable, "mattePdf");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = ctx.tracer.buildProgram(linkable, "matteInit");
+            res.sample = ctx.tracer.buildProgram(linkable, "matteSample");
+            res.evaluate = ctx.tracer.buildProgram(linkable, "matteEvaluate");
+            res.pdf = ctx.tracer.buildProgram(linkable, "mattePdf");
 
-            // TODO:better interface
-            const auto diffuse = tracer.generateTexture(mDiffuse, 4);
-            auto [diffuseSBT, diffuseProg] = diffuse->materialize(tracer, holder, registerCall);
-
-            const auto roughness = tracer.generateTexture(mRoughness, 1);
-            auto [roughnessSBT, roughnessProg] = roughness->materialize(tracer, holder, registerCall);
-
-            const MatteData data{ registerCall(diffuseProg, diffuseSBT), registerCall(roughnessProg, roughnessSBT) };
+            const MatteData data{ ctx.loadTexture(mDiffuse, 4), ctx.loadTexture(mRoughness, 1) };
             res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
@@ -109,30 +102,18 @@ namespace Piper {
             : Surface(context), mKernelPath(std::move(path)), mReflection(config->at("Reflection")),
               mTransmission(config->at("Transmission")), mRoughnessX(config->at("RoughnessX")),
               mRoughnessY(config->at("RoughnessY")) {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
-            res.init = tracer.buildProgram(linkable, "glassInit");
-            res.sample = tracer.buildProgram(linkable, "glassSample");
-            res.evaluate = tracer.buildProgram(linkable, "glassEvaluate");
-            res.pdf = tracer.buildProgram(linkable, "glassPdf");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = ctx.tracer.buildProgram(linkable, "glassInit");
+            res.sample = ctx.tracer.buildProgram(linkable, "glassSample");
+            res.evaluate = ctx.tracer.buildProgram(linkable, "glassEvaluate");
+            res.pdf = ctx.tracer.buildProgram(linkable, "glassPdf");
 
-            const auto reflection = tracer.generateTexture(mReflection, 4);
-            auto [reflectionSBT, reflectionProg] = reflection->materialize(tracer, holder, registerCall);
-
-            const auto transmission = tracer.generateTexture(mTransmission, 4);
-            auto [transmissionSBT, transmissionProg] = transmission->materialize(tracer, holder, registerCall);
-
-            const auto roughnessX = tracer.generateTexture(mRoughnessX, 1);
-            auto [roughnessXSBT, roughnessXProg] = roughnessX->materialize(tracer, holder, registerCall);
-
-            const auto roughnessY = tracer.generateTexture(mRoughnessY, 1);
-            auto [roughnessYSBT, roughnessYProg] = roughnessY->materialize(tracer, holder, registerCall);
-
-            const GlassData data{ registerCall(reflectionProg, reflectionSBT), registerCall(transmissionProg, transmissionSBT),
-                                  registerCall(roughnessXProg, roughnessXSBT), registerCall(roughnessYProg, roughnessYSBT) };
+            const GlassData data{ ctx.loadTexture(mReflection, 4), ctx.loadTexture(mTransmission, 4),
+                                  ctx.loadTexture(mRoughnessX, 1), ctx.loadTexture(mRoughnessY, 1) };
             res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
@@ -147,27 +128,17 @@ namespace Piper {
         Plastic(PiperContext& context, const SharedPtr<Config>& config, String path)
             : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")), mSpecular(config->at("Specular")),
               mRoughness(config->at("Roughness")) {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
-            res.init = tracer.buildProgram(linkable, "plasticInit");
-            res.sample = tracer.buildProgram(linkable, "plasticSample");
-            res.evaluate = tracer.buildProgram(linkable, "plasticEvaluate");
-            res.pdf = tracer.buildProgram(linkable, "plasticPdf");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = ctx.tracer.buildProgram(linkable, "plasticInit");
+            res.sample = ctx.tracer.buildProgram(linkable, "plasticSample");
+            res.evaluate = ctx.tracer.buildProgram(linkable, "plasticEvaluate");
+            res.pdf = ctx.tracer.buildProgram(linkable, "plasticPdf");
 
-            const auto diffuse = tracer.generateTexture(mDiffuse, 4);
-            auto [diffuseSBT, diffuseProg] = diffuse->materialize(tracer, holder, registerCall);
-
-            const auto specular = tracer.generateTexture(mSpecular, 4);
-            auto [specularSBT, specularProg] = specular->materialize(tracer, holder, registerCall);
-
-            const auto roughness = tracer.generateTexture(mRoughness, 1);
-            auto [roughnessSBT, roughnessProg] = roughness->materialize(tracer, holder, registerCall);
-
-            const PlasticData data{ registerCall(diffuseProg, diffuseSBT), registerCall(specularProg, specularSBT),
-                                    registerCall(roughnessProg, roughnessSBT) };
+            const PlasticData data{ ctx.loadTexture(mDiffuse, 4), ctx.loadTexture(mSpecular, 4), ctx.loadTexture(mRoughness, 1) };
             res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
@@ -181,20 +152,17 @@ namespace Piper {
     public:
         Mirror(PiperContext& context, const SharedPtr<Config>& config, String path)
             : Surface(context), mKernelPath(std::move(path)), mReflection(config->at("Reflection")) {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
-            res.init = tracer.buildProgram(linkable, "mirrorInit");
-            res.sample = tracer.buildProgram(linkable, "mirrorSample");
-            res.evaluate = tracer.buildProgram(linkable, "blackBodyEvaluate");
-            res.pdf = tracer.buildProgram(linkable, "blackBodyPdf");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = ctx.tracer.buildProgram(linkable, "mirrorInit");
+            res.sample = ctx.tracer.buildProgram(linkable, "mirrorSample");
+            res.evaluate = ctx.tracer.buildProgram(linkable, "blackBodyEvaluate");
+            res.pdf = ctx.tracer.buildProgram(linkable, "blackBodyPdf");
 
-            const auto texture = tracer.generateTexture(mReflection, 4);
-            auto [SBT, prog] = texture->materialize(tracer, holder, registerCall);
-
-            const MirrorData data{ registerCall(prog, SBT) };
+            const MirrorData data{ ctx.loadTexture(mReflection, 4) };
             res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
@@ -209,30 +177,18 @@ namespace Piper {
         Substrate(PiperContext& context, const SharedPtr<Config>& config, String path)
             : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")), mSpecular(config->at("Specular")),
               mRoughnessX(config->at("RoughnessX")), mRoughnessY(config->at("RoughnessY")) {}
-        SurfaceProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
-            res.init = tracer.buildProgram(linkable, "substrateInit");
-            res.sample = tracer.buildProgram(linkable, "substrateSample");
-            res.evaluate = tracer.buildProgram(linkable, "substrateEvaluate");
-            res.pdf = tracer.buildProgram(linkable, "substratePdf");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.init = ctx.tracer.buildProgram(linkable, "substrateInit");
+            res.sample = ctx.tracer.buildProgram(linkable, "substrateSample");
+            res.evaluate = ctx.tracer.buildProgram(linkable, "substrateEvaluate");
+            res.pdf = ctx.tracer.buildProgram(linkable, "substratePdf");
 
-            const auto diffuse = tracer.generateTexture(mDiffuse, 4);
-            auto [diffuseSBT, diffuseProg] = diffuse->materialize(tracer, holder, registerCall);
-
-            const auto specular = tracer.generateTexture(mSpecular, 4);
-            auto [specularSBT, specularProg] = specular->materialize(tracer, holder, registerCall);
-
-            const auto roughnessX = tracer.generateTexture(mRoughnessX, 1);
-            auto [roughnessXSBT, roughnessXProg] = roughnessX->materialize(tracer, holder, registerCall);
-
-            const auto roughnessY = tracer.generateTexture(mRoughnessY, 1);
-            auto [roughnessYSBT, roughnessYProg] = roughnessY->materialize(tracer, holder, registerCall);
-
-            const SubstrateData data{ registerCall(diffuseProg, diffuseSBT), registerCall(specularProg, specularSBT),
-                                      registerCall(roughnessXProg, roughnessXSBT), registerCall(roughnessYProg, roughnessYSBT) };
+            const SubstrateData data{ ctx.loadTexture(mDiffuse, 4), ctx.loadTexture(mSpecular, 4),
+                                      ctx.loadTexture(mRoughnessX, 1), ctx.loadTexture(mRoughnessY, 1) };
             res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }

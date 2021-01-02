@@ -90,7 +90,7 @@ namespace Piper {
     class LLVMProgram final : public RunnableProgram {
     private:
         std::unique_ptr<llvm::orc::LLJIT> mJIT;
-        using KernelFunction = void(PIPER_CC*)(uint32_t idx, const std::byte* payload);
+        using KernelFunction = void(*)(uint32_t idx, const std::byte* payload);
         KernelFunction mFunction, mUnroll;
 
     public:

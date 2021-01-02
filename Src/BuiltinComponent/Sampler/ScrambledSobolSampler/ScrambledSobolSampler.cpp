@@ -33,11 +33,11 @@ namespace Piper {
             : Sampler(context), mKernelPath(path + "/Kernel.bc") {
             context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
         }
-        SamplerProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        SamplerProgram materialize(const MaterializeContext& ctx) const override {
             SamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            res.sample = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+            res.sample = ctx.tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
                 "generate");
             // res.payload = ;
             // res.maxDimension = ;

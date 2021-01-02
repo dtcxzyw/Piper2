@@ -27,7 +27,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Sensor, Object)
         virtual ~Sensor() = default;
-        virtual SensorProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const = 0;
+        virtual SensorProgram materialize(const MaterializeContext& ctx) const = 0;
         [[nodiscard]] virtual float getAspectRatio() const noexcept = 0;
     };
 }  // namespace Piper

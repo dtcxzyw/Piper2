@@ -19,6 +19,7 @@
 #include "../../../Interface/BuiltinComponent/StructureParser.hpp"
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
+#include "../../../Interface/Infrastructure/Profiler.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "Shared.hpp"
 
@@ -27,24 +28,29 @@ namespace Piper {
     class PathTracing final : public Integrator {
     private:
         String mKernelPath;
-        Data mData;
+        uint32_t mMaxDepth;
 
     public:
         PathTracing(PiperContext& context, const String& path, const SharedPtr<Config>& config)
             : Integrator(context), mKernelPath(path + "/Kernel.bc") {
-            mData.maxDepth = static_cast<uint32_t>(config->at("MaxTraceDepth")->get<uintmax_t>());
+            mMaxDepth = static_cast<uint32_t>(config->at("MaxTraceDepth")->get<uintmax_t>());
         }
-        IntegratorProgram materialize(Tracer& tracer, ResourceHolder& holder,
-                                      const CallSiteRegister& registerCall) const override {
+
+        [[nodiscard]] IntegratorProgram materialize(const MaterializeContext& ctx) const override {
             IntegratorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            res.trace = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+            res.trace = ctx.tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
                 "trace");
-            res.payload = packSBTPayload(context().getAllocator(), mData);
+            static char p1, p2, p3;
+            res.payload =
+                packSBTPayload(context().getAllocator(),
+                               Data{ mMaxDepth, ctx.profiler.registerDesc("Integrator", "Trace Depth", &p1, StatisticsType::UInt),
+                                     ctx.profiler.registerDesc("Integrator", "Time Per Path", &p2, StatisticsType::Time),
+                                     ctx.profiler.registerDesc("Integrator", "Valid Rays", &p3, StatisticsType::Bool) });
             return res;
         }
-    };
+    };  // namespace Piper
     class ModuleImpl final : public Module {
     private:
         String mPath;

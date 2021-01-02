@@ -28,9 +28,12 @@
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
+#include "../../../Interface/Infrastructure/Profiler.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #include "../../../Kernel/Protocol.hpp"
+#include "../../../STL/Map.hpp"
+
 #include <random>
 
 #include <cassert>
@@ -41,6 +44,195 @@
 // TODO:https://www.embree.org/api.html#performance-recommendations
 
 namespace Piper {
+    // TODO:controlled by RenderDriver for per tile analysis
+    class EmbreeProfiler final : public Profiler {
+    private:
+        using BoolCounter = std::pair<std::atomic_uint64_t, std::atomic_uint64_t>;
+        using FloatCounter = std::pair<std::atomic<double>, std::atomic_uint64_t>;
+        using UIntCounter = UMap<std::thread::id, UMap<uint32_t, uint64_t>, std::hash<std::thread::id>>;
+        using TimeCounter = std::pair<std::atomic_uint64_t, std::atomic_uint64_t>;
+        struct Record final {
+            StatisticsType type;
+            union {
+                BoolCounter bc;
+                FloatCounter fc;
+                UIntCounter uc;
+                TimeCounter tc;
+            };
+            Record(Record&& rhs) noexcept : type(rhs.type) {
+                switch(type) {
+                    case StatisticsType::Bool: {
+                        bc.first = 0;
+                        bc.second = 0;
+                    } break;
+                    case StatisticsType::Float: {
+                        fc.first = 0.0;
+                        fc.second = 0;
+                    } break;
+                    case StatisticsType::UInt: {
+                        new(&uc) UIntCounter{ rhs.uc.get_allocator() };
+                    } break;
+                    case StatisticsType::Time: {
+                        tc.first = 0;
+                        tc.second = 0;
+                    } break;
+                }
+            }
+
+            ~Record() {
+                if(type == StatisticsType::UInt)
+                    std::destroy_at(&uc);
+            }
+        };
+
+        DynamicArray<Record> mStatistics;
+        struct ItemInfo final {
+            String group;
+            String name;
+            uint32_t id;
+        };
+        UMap<const void*, ItemInfo> mID;
+        mutable std::mutex mMutex;
+        using Clock = std::chrono::high_resolution_clock;
+
+    public:
+        explicit EmbreeProfiler(PiperContext& context)
+            : Profiler(context), mStatistics(context.getAllocator()), mID(context.getAllocator()) {}
+        uint32_t registerDesc(const StringView group, const StringView name, const void* uid,
+                              const StatisticsType type) override {
+            std::lock_guard<std::mutex> guard{ mMutex };
+            const auto iter = mID.find(uid);
+            if(iter != mID.cend())
+                return iter->second.id;
+            String sGroup{ group, context().getAllocator() }, sName{ name, context().getAllocator() };
+            const auto res = static_cast<uint32_t>(mStatistics.size());
+            mID.insert(makePair(uid, ItemInfo{ std::move(sGroup), std::move(sName), res }));
+            auto& record = *static_cast<Record*>(mStatistics.push_back_uninitialized());
+            record.type = type;
+            switch(type) {
+                case StatisticsType::Bool: {
+                    record.bc.first = 0;
+                    record.bc.second = 0;
+                } break;
+                case StatisticsType::UInt: {
+                    record.uc = UIntCounter{ context().getAllocator() };
+                } break;
+                case StatisticsType::Float: {
+                    record.fc.first = 0.0;
+                    record.fc.second = 0;
+                } break;
+                case StatisticsType::Time: {
+                    record.tc.first = 0;
+                    record.tc.second = 0;
+                } break;
+            }
+            return res;
+        }
+        void addBool(const uint32_t id, const bool val) {
+            auto& [first, second] = mStatistics[id].bc;
+            ++(val ? first : second);
+        }
+        void addFloat(const uint32_t id, const float val) {
+            auto& [first, second] = mStatistics[id].fc;
+            double src = first;
+            while(!first.compare_exchange_strong(src, src + static_cast<double>(val)))
+                ;
+            ++second;
+        }
+        void addTime(const uint32_t id, const uint64_t val) {
+            auto& [first, second] = mStatistics[id].tc;
+            first += val;
+            ++second;
+        }
+        [[nodiscard]] static uint64_t getTime() {
+            return Clock::now().time_since_epoch().count();
+        }
+        void addUInt(const uint32_t id, const uint32_t val) {
+            const auto locate = [this, id]() -> UMap<uint32_t, uint64_t>& {
+                std::lock_guard<std::mutex> guard{ mMutex };
+                auto& map = mStatistics[id].uc;
+                const auto iter = map.find(std::this_thread::get_id());
+                if(iter != map.cend())
+                    return iter->second;
+                return map.emplace(std::this_thread::get_id(), UMap<uint32_t, uint64_t>{ context().getAllocator() })
+                    .first->second;
+            };
+            ++locate()[val];
+        }
+        [[nodiscard]] String generateReport() const override {
+            std::lock_guard<std::mutex> guard{ mMutex };
+            DynamicArray<String> report{ context().getAllocator() };
+            report.reserve(mStatistics.size());
+            for(auto&& item : mStatistics) {
+                switch(item.type) {
+                    case StatisticsType::Bool: {
+                        const auto& [hit, miss] = item.bc;
+                        const auto tot = hit + miss;
+                        report.emplace_back(
+                            toString(context().getAllocator(),
+                                     static_cast<double>(hit) / static_cast<double>(std::max(1ULL, tot)) * 100.0) +
+                            "% (" + toString(context().getAllocator(), hit) + "/" + toString(context().getAllocator(), tot) +
+                            ")\n");
+                    } break;
+                    case StatisticsType::Float: {
+                        const auto& [sum, cnt] = item.fc;
+                        report.emplace_back(
+                            toString(context().getAllocator(),
+                                     static_cast<double>(sum) / static_cast<double>(std::max(1ULL, static_cast<uint64_t>(cnt)))) +
+                            " (" + toString(context().getAllocator(), cnt) + " samples)\n");
+                    } break;
+                    case StatisticsType::UInt: {
+                        const auto& record = item.uc;
+                        auto sum = 0.0;
+                        uint64_t tot = 0;
+                        Map<uint32_t, uint64_t> count{ context().getAllocator() };
+                        for(auto&& part : record) {
+                            for(auto [val, cnt] : part.second) {
+                                sum += static_cast<double>(val) * static_cast<double>(cnt);
+                                tot += cnt;
+                                count[val] += cnt;
+                            }
+                        }
+                        auto res = "mean " + toString(context().getAllocator(), sum / static_cast<double>(std::max(1ULL, tot))) +
+                            " (" + toString(context().getAllocator(), tot) + " samples)\n";
+                        for(auto [val, cnt] : count)
+                            res += toString(context().getAllocator(), val) + ": " +
+                                toString(context().getAllocator(),
+                                         static_cast<double>(cnt) / static_cast<double>(std::max(1ULL, tot)) * 100.0) +
+                                "% (" + toString(context().getAllocator(), cnt) + " samples)\n";
+                        report.emplace_back(res);
+                    } break;
+                    case StatisticsType::Time: {
+                        using Ratio = std::ratio_divide<std::nano, Clock::period>;
+                        const auto& [sum, cnt] = item.tc;
+                        report.emplace_back(
+                            toString(context().getAllocator(), sum * Ratio::num / std::max(1ULL, Ratio::den * cnt)) + " ns (" +
+                            toString(context().getAllocator(), cnt) + " samples)\n");
+                    } break;
+                }
+            }
+
+            Map<String, Map<String, String>> remap(context().getAllocator());
+            auto locate = [&, this](const String& group) -> Map<String, String>& {
+                const auto iter = remap.find(group);
+                if(iter != remap.cend())
+                    return iter->second;
+                return remap.emplace(group, Map<String, String>{ context().getAllocator() }).first->second;
+            };
+            for(auto&& [_, info] : mID)
+                locate(info.group).emplace(info.name, info.name + ": " + report[info.id]);
+            const auto* const line = "\n========================================\n";
+            String res{ "\n=============== Pipeline Statistics ===============\n", context().getAllocator() };
+            for(auto&& [group, map] : remap) {
+                res += "\n=============== " + group + " ===============\n";
+                for(auto&& [_, val] : map)
+                    res += val;
+            }
+            res += line;
+            return res;
+        }
+    };  // namespace Piper
+
     // TODO:move to Kernel
 
     struct LightFuncGroup final {
@@ -70,6 +262,12 @@ namespace Piper {
         uint32_t maxDimension;
         SensorNDCAffineTransform transform;
         CallInfo* callInfo;
+        EmbreeProfiler* profiler;
+
+        uint32_t profileIntersectHit;
+        uint32_t profileIntersectTime;
+        uint32_t profileOccludeHit;
+        uint32_t profileOccludeTime;
     };
     enum class HitKind { Builtin, Custom };
     struct InstanceUserData final : public Object {
@@ -92,8 +290,30 @@ namespace Piper {
     };
     // static void intersect() {}
 
+    void piperEmbreeStatisticsUInt(RestrictedContext* context, const uint32_t id, const uint32_t val) {
+        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
+        ctx->profiler->addUInt(id, val);
+    }
+    void piperEmbreeStatisticsBool(RestrictedContext* context, const uint32_t id, const bool val) {
+        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
+        ctx->profiler->addBool(id, val);
+    }
+    void piperEmbreeStatisticsFloat(RestrictedContext* context, const uint32_t id, const float val) {
+        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
+        ctx->profiler->addFloat(id, val);
+    }
+    void piperEmbreeStatisticsTime(RestrictedContext* context, const uint32_t id, const uint64_t val) {
+        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
+        ctx->profiler->addTime(id, val);
+    }
+    void piperEmbreeGetTime(RestrictedContext*, uint64_t& val) {
+        val = EmbreeProfiler::getTime();
+    }
+
     void piperEmbreeTrace(FullContext* context, const RayInfo& ray, const float minT, const float maxT, TraceResult& result) {
         auto* ctx = reinterpret_cast<KernelArgument*>(context);
+        const auto begin = EmbreeProfiler::getTime();
+
         IntersectContext intersectCtx;
         rtcInitIntersectContext(&intersectCtx.ctx);
         // TODO:context flags
@@ -157,13 +377,18 @@ namespace Piper {
 
             static_assert(sizeof(void*) == 8);
             result.surface.instance = reinterpret_cast<uint64_t>(data);
+            ctx->profiler->addBool(ctx->profileIntersectHit, true);
         } else {
             result.kind = TraceKind::Missing;
+            ctx->profiler->addBool(ctx->profileIntersectHit, false);
         }
+        const auto end = EmbreeProfiler::getTime();
+        ctx->profiler->addTime(ctx->profileIntersectTime, end - begin);
     }
 
     void piperEmbreeOcclude(FullContext* context, const RayInfo& ray, const float minT, const float maxT, bool& result) {
         const auto* ctx = reinterpret_cast<KernelArgument*>(context);
+        const auto begin = EmbreeProfiler::getTime();
         IntersectContext intersectCtx;
         rtcInitIntersectContext(&intersectCtx.ctx);
         // TODO:context flags
@@ -188,6 +413,9 @@ namespace Piper {
         rtcOccluded1(ctx->scene, &intersectCtx.ctx, &rayInfo);
 
         result = (rayInfo.tfar < 0.0f);
+        ctx->profiler->addBool(ctx->profileOccludeHit, result);
+        const auto end = EmbreeProfiler::getTime();
+        ctx->profiler->addTime(ctx->profileOccludeTime, end - begin);
     }
 
     void piperEmbreeSurfaceInit(FullContext* context, const uint64_t instance, const float t, const Vector2<float>& texCoord,
@@ -245,19 +473,7 @@ namespace Piper {
         func->pdf(decay(context), func->LIPayload, &storage, lightSourceHit, dir, pdf);
     }
 
-    // TODO:more option
-    // TODO:use logger
-    void PIPER_CC piperEmbreePrintMessage(RestrictedContext* context, const char* msg) {
-        printf("%s\n", msg);
-    }
-    void PIPER_CC piperEmbreePrintFloat(RestrictedContext* context, const char* desc, const float val) {
-        printf("%s: %f\n", desc, static_cast<double>(val));
-    }
-    void PIPER_CC piperEmbreePrintUint(RestrictedContext* context, const char* desc, const uint32_t val) {
-        printf("%s: %u\n", desc, val);
-    }
-
-    void PIPER_CC piperEmbreeQueryCall(RestrictedContext* context, const uint32_t id, CallInfo& info) {
+    void piperEmbreeQueryCall(RestrictedContext* context, const uint32_t id, CallInfo& info) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         info = ctx->callInfo[id];
     }
@@ -330,9 +546,11 @@ namespace Piper {
         PIPER_APPEND(SurfaceSample);
         PIPER_APPEND(SurfaceInit);
         PIPER_APPEND(SurfacePdf);
-        PIPER_APPEND(PrintMessage);
-        PIPER_APPEND(PrintFloat);
-        PIPER_APPEND(PrintUint);
+        PIPER_APPEND(StatisticsUInt);
+        PIPER_APPEND(StatisticsBool);
+        PIPER_APPEND(StatisticsFloat);
+        PIPER_APPEND(StatisticsTime);
+        PIPER_APPEND(GetTime);
         PIPER_APPEND(QueryCall);
 #undef PIPER_APPEND
         return LinkableProgram{ context.getScheduler().value(res), String{ "Native", context.getAllocator() },
@@ -525,8 +743,8 @@ namespace Piper {
         SharedPtr<InstanceUserData> mUserData;
 
     public:
-        EmbreeLeafNode(PiperContext& context, Tracer& tracer, RTCDevice device, const GSMInstanceDesc& gsm)
-            : EmbreeNode(context), mInstance(gsm) {
+        EmbreeLeafNode(PiperContext& context, Tracer& tracer, RTCDevice device, GSMInstanceDesc gsm)
+            : EmbreeNode(context), mInstance(std::move(gsm)) {
             mScene.reset(rtcNewScene(device));
             // rtcSetSceneFlags(mScene.get(), RTC_SCENE_FLAG_CONTEXT_FILTER_FUNCTION);
 
@@ -559,8 +777,8 @@ namespace Piper {
     struct EmbreeRTProgram final : public RTProgram {
         LinkableProgram program;
         String symbol;
-        EmbreeRTProgram(PiperContext& context, LinkableProgram program, String symbol)
-            : RTProgram(context), program(std::move(program)), symbol(std::move(symbol)) {}
+        EmbreeRTProgram(PiperContext& context, LinkableProgram prog, String sym)
+            : RTProgram(context), program(std::move(prog)), symbol(std::move(sym)) {}
     };
 
     class EmbreePipeline final : public Pipeline {
@@ -572,6 +790,7 @@ namespace Piper {
         KernelArgument mArg;
         ResourceHolder mHolder;
         SharedPtr<EmbreeNode> mScene;
+        EmbreeProfiler mProfiler;
 
         void* upload(const SBTPayload& payload) {
             if(payload.empty())
@@ -582,23 +801,30 @@ namespace Piper {
         }
 
     public:
-        EmbreePipeline(PiperContext& context, Tracer& tracer, SharedPtr<EmbreeNode> scene, Sensor& sensor, Integrator& integrator,
-                       RenderDriver& renderDriver, const LightSampler& lightSampler, const Span<SharedPtr<Light>>& lights,
-                       Sampler* sampler, uint32_t width, uint32_t height)
+        EmbreePipeline(PiperContext& context, Tracer& tracer, const SharedPtr<EmbreeNode>& scene, Sensor& sensor,
+                       Integrator& integrator, RenderDriver& renderDriver, const LightSampler& lightSampler,
+                       const Span<SharedPtr<Light>>& lights, Sampler* sampler, uint32_t width, uint32_t height)
             : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
-              mScene(scene) {
+              mScene(scene), mProfiler(context) {
             DynamicArray<LinkableProgram> modules(context.getAllocator());
             modules.push_back(prepareKernelNative(context));
 
             DynamicArray<Pair<String, void*>> call(context.getAllocator());
 
-            const auto registerCall = CallSiteRegister{ [&](const SharedPtr<RTProgram>& program, const SBTPayload& payload) {
-                const auto id = static_cast<size_t>(call.size());
-                const auto* prog = dynamic_cast<EmbreeRTProgram*>(program.get());
-                modules.emplace_back(prog->program);
-                call.emplace_back(prog->symbol, upload(payload));
-                return id;
-            } };
+            const MaterializeContext materialize{
+                tracer, mHolder, CallSiteRegister{ [&](const SharedPtr<RTProgram>& program, const SBTPayload& payload) {
+                    const auto id = static_cast<size_t>(call.size());
+                    const auto* prog = dynamic_cast<EmbreeRTProgram*>(program.get());
+                    modules.emplace_back(prog->program);
+                    call.emplace_back(prog->symbol, upload(payload));
+                    return id;
+                } },
+                mProfiler, TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> uint32_t {
+                    const auto texture = tracer.generateTexture(desc, channel);
+                    auto [SBT, prog] = texture->materialize(materialize);
+                    return materialize.registerCall(prog, SBT);
+                } }
+            };
 
             mArg.scene = scene->getScene();
             UMap<EmbreeLeafNode*, InstanceProgram> nodeProg{ context.getAllocator() };
@@ -628,7 +854,7 @@ namespace Piper {
             // TODO:shared RTProgram
             for(auto&& [_, prog] : nodeProg) {
                 if(!surfaceProg.count(prog.surface.get())) {
-                    auto sp = prog.surface->materialize(tracer, mHolder, registerCall);
+                    auto sp = prog.surface->materialize(materialize);
                     auto& info = surfaceProg[prog.surface.get()];
                     info.payload = upload(sp.payload);
                     auto& init = dynamic_cast<EmbreeRTProgram&>(*sp.init);
@@ -645,7 +871,7 @@ namespace Piper {
                     info.pdfFunc = pdf.symbol;
                 }
                 if(!geometryProg.count(prog.geometry.get())) {
-                    auto gp = prog.geometry->materialize(tracer, mHolder, registerCall);
+                    auto gp = prog.geometry->materialize(materialize);
                     auto& info = geometryProg[prog.geometry.get()];
 
                     if(gp.surface) {
@@ -664,21 +890,22 @@ namespace Piper {
                 }
             }
 
-            auto ACP = renderDriver.materialize(tracer, mHolder, registerCall);
+            auto ACP = renderDriver.materialize(materialize);
             auto& ACRTP = dynamic_cast<EmbreeRTProgram&>(*ACP.accumulate);
             modules.push_back(ACRTP.program);
             mArg.ACPayload = nullptr;
 
-            auto LSP = lightSampler.materialize(tracer, mHolder, registerCall);
+            auto LSP = lightSampler.materialize(materialize);
             auto& LSRTP = dynamic_cast<EmbreeRTProgram&>(*LSP.select);
             modules.push_back(LSRTP.program);
             mArg.LSPayload = upload(LSP.payload);
 
             mArg.lights = mArena.alloc<LightFuncGroup>(lights.size());
 
+            DynamicArray<LightProgram> LIPs{ context.getAllocator() };
             for(size_t idx = 0; idx < lights.size(); ++idx) {
                 auto&& light = lights[idx];
-                auto LIP = light->materialize(tracer, mHolder, registerCall);
+                auto LIP = light->materialize(materialize);
                 auto& init = dynamic_cast<EmbreeRTProgram&>(*LIP.init);
                 auto& sample = dynamic_cast<EmbreeRTProgram&>(*LIP.sample);
                 auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*LIP.evaluate);
@@ -688,21 +915,22 @@ namespace Piper {
                 modules.push_back(evaluate.program);
                 modules.push_back(pdf.program);
                 mArg.lights[idx].LIPayload = upload(LIP.payload);
+                LIPs.emplace_back(std::move(LIP));
             }
 
-            auto RGP = sensor.materialize(tracer, mHolder, registerCall);
+            auto RGP = sensor.materialize(materialize);
             auto& RGRTP = dynamic_cast<EmbreeRTProgram&>(*RGP.rayGen);
             modules.push_back(RGRTP.program);
             mArg.RGPayload = upload(RGP.payload);
 
-            auto TRP = integrator.materialize(tracer, mHolder, registerCall);
+            auto TRP = integrator.materialize(materialize);
             auto& TRRTP = dynamic_cast<EmbreeRTProgram&>(*TRP.trace);
             modules.push_back(TRRTP.program);
             mArg.TRPayload = upload(TRP.payload);
 
             String sampleSymbol;
             if(sampler) {
-                auto SAP = sampler->materialize(tracer, mHolder, registerCall);
+                auto SAP = sampler->materialize(materialize);
                 auto& SARTP = dynamic_cast<EmbreeRTProgram&>(*SAP.sample);
                 modules.push_back(SARTP.program);
                 mArg.SAPayload = upload(SAP.payload);
@@ -752,8 +980,7 @@ namespace Piper {
             mArg.accumulate = static_cast<RenderDriverFunc>(mKernel->lookup(ACRTP.symbol));
 
             for(size_t idx = 0; idx < lights.size(); ++idx) {
-                auto&& light = lights[idx];
-                auto LIP = light->materialize(tracer, mHolder, registerCall);
+                auto& LIP = LIPs[idx];
                 auto& init = dynamic_cast<EmbreeRTProgram&>(*LIP.init);
                 auto& sample = dynamic_cast<EmbreeRTProgram&>(*LIP.sample);
                 auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*LIP.evaluate);
@@ -770,6 +997,13 @@ namespace Piper {
 
             mArg.generate = (sampler ? static_cast<SampleFunc>(mKernel->lookup(sampleSymbol)) :
                                        ([](const void*, uint32_t, uint32_t, uint32_t, float*) {}));
+
+            static char p1, p2, p3, p4;
+            mArg.profileIntersectHit = mProfiler.registerDesc("Tracer", "Intersect Hit", &p1, StatisticsType::Bool);
+            mArg.profileIntersectTime = mProfiler.registerDesc("Tracer", "Intersect Time", &p2, StatisticsType::Time);
+            mArg.profileOccludeHit = mProfiler.registerDesc("Tracer", "Occlude Hit", &p3, StatisticsType::Bool);
+            mArg.profileOccludeTime = mProfiler.registerDesc("Tracer", "Occlude Time", &p4, StatisticsType::Time);
+            mArg.profiler = &mProfiler;
         }
         void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload, const SensorNDCAffineTransform& transform,
                  const uint32_t sample) {
@@ -788,6 +1022,9 @@ namespace Piper {
             const auto future =
                 mAccelerator.runKernel(rect.width * rect.height, context().getScheduler().value(mKernel), payload);
             future.wait();
+        }
+        String generateStatisticsReport() const override {
+            return mProfiler.generateReport();
         }
     };
 

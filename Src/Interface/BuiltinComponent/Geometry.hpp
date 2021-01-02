@@ -28,6 +28,6 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Geometry, Object);
         virtual ~Geometry() = default;
         virtual AccelerationStructure& getAcceleration(Tracer& tracer) const = 0;
-        virtual GeometryProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const = 0;
+        virtual GeometryProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

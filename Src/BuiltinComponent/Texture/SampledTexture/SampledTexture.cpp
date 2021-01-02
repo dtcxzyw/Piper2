@@ -23,6 +23,7 @@
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/FileSystem.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
+#include "../../../Interface/Infrastructure/Profiler.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #include "Shared.hpp"
@@ -52,13 +53,16 @@ namespace Piper {
         [[nodiscard]] uint32_t channel() const noexcept override {
             return mData.channel;
         }
-        TextureProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        TextureProgram materialize(const MaterializeContext& ctx) const override {
             TextureProgram res;
             // TODO:concurrency
-            const auto linkable = mKernel.getSync()->generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat());
-            res.sample = tracer.buildProgram(linkable, "sampleTexture");
-            holder.retain(mImage);
-            res.payload = packSBTPayload(context().getAllocator(), mData);
+            const auto linkable = mKernel.getSync()->generateLinkable(ctx.tracer.getAccelerator().getSupportedLinkableFormat());
+            res.sample = ctx.tracer.buildProgram(linkable, "sampleTexture");
+            ctx.holder.retain(mImage);
+            auto data = mData;
+            static char uid;
+            data.profileSample = ctx.profiler.registerDesc("Texture", "Sample Time", &uid, StatisticsType::Time);
+            res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
     };

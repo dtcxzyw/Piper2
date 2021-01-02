@@ -15,7 +15,6 @@
 */
 
 #pragma once
-#define PIPER_CC _stdcall
 
 #ifndef PIPER_API
 #if defined(_MSC_VER)

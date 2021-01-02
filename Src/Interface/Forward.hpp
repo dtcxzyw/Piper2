@@ -37,6 +37,7 @@ namespace Piper {
     class ModuleLoader;
     class Object;
     class PITUManager;
+    class Profiler;
     class RenderDriver;
     class ResourceCacheManager;
     class ResourceHolder;

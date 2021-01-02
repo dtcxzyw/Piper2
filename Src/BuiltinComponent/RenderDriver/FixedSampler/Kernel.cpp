@@ -17,8 +17,8 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void PIPER_CC accumulate(RestrictedContext*, const void* SBTData, const Vector2<float>& point,
-                                        const Spectrum<Radiance>& sample) {
+    extern "C" void accumulate(RestrictedContext*, const void* SBTData, const Vector2<float>& point,
+                               const Spectrum<Radiance>& sample) {
         const auto* data = static_cast<const Data*>(SBTData);
         auto px = static_cast<uint32_t>(point.x > 0.0f ? point.x : 0.0f);
         px = (px < data->w ? px : data->w - 1);

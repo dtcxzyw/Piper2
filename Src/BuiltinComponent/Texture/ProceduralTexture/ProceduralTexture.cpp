@@ -43,12 +43,12 @@ namespace Piper {
         [[nodiscard]] uint32_t channel() const noexcept override {
             return mData.channel;
         }
-        TextureProgram materialize(Tracer& tracer, ResourceHolder& holder, const CallSiteRegister& registerCall) const override {
+        TextureProgram materialize(const MaterializeContext& ctx) const override {
             TextureProgram res;
             // TODO:concurrency
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            res.sample = tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+            res.sample = ctx.tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
                 "constantTexture");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;

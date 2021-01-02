@@ -98,13 +98,14 @@ namespace Piper {
         const auto partB = sampleBSDF();
         return (partA + partB) / select.pdf;
     }
-    extern "C" void PIPER_CC trace(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample) {
+    extern "C" void trace(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample) {
         const auto* data = static_cast<const Data*>(SBTData);
-
+        TimeProfiler profiler{ decay(context), data->profilePathTime };
         Spectrum<Dimensionless<float>> pf{ { 1.0f }, { 1.0f }, { 1.0f } };
         sample = Spectrum<Radiance>{ { 0.0f }, { 0.0f }, { 0.0f } };
         auto specular = true;
-        for(uint32_t i = 0;; ++i) {
+        uint32_t depth = 0;
+        while(true) {
             TraceResult res;
             piperTrace(context, ray, 0.0f, 1e5f, res);
 
@@ -125,8 +126,8 @@ namespace Piper {
                 sample += pf * rad;
             }
 
-            if(res.kind == TraceKind::Missing || i >= data->maxDepth)
-                return;
+            if(res.kind == TraceKind::Missing || depth >= data->maxDepth)
+                break;
             const auto& surface = res.surface;
 
             auto localDir = surface.transform(ray.direction);
@@ -144,18 +145,21 @@ namespace Piper {
                 sample += multipleImportanceSampling(context, hit, ray.t, surface.instance, storage, wo, surface, Ng);
             SurfaceSample ss;
             piperSurfaceSample(context, surface.instance, storage, wo, Ng, BxDFPart::All, ss);
-            if(ss.pdf.val <= 0.0f || !ss.f.valid())
-                return;
+            const auto valid = ss.pdf.val > 0.0f && ss.f.valid();
+            piperStatisticsBool(decay(context), data->profileValidRay, valid);
+            if(!valid)
+                break;
+
             pf = pf * ss.f * (abs(ss.wi.z) / ss.pdf);
 
             // TODO:BSSRDF
 
             // Russian roulette
             // TODO:better p estimation(etaScale)
-            if(i > 3) {
+            if(depth > 3) {
                 const auto p = std::fmax(0.05f, 1.0f - std::fmax(pf.r.val, std::fmax(pf.g.val, pf.b.val)));
                 if(piperSample(decay(context)) < p)
-                    return;
+                    break;
                 pf = pf / Dimensionless<float>{ 1.0f - p };
             }
 
@@ -164,7 +168,10 @@ namespace Piper {
                 surface.transform(surface.intersect.Ng) *
                     Distance{ ss.part & BxDFPart::Reflection ? 0.001f : -0.001f };  // TODO:better bias
             specular = ss.part & BxDFPart::Specular;
+
+            ++depth;
         }
+        piperStatisticsUInt(decay(context), data->profileDepth, depth + 1);
     }
     static_assert(std::is_same_v<IntegratorFunc, decltype(&trace)>);
 }  // namespace Piper

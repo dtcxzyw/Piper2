@@ -35,25 +35,25 @@ namespace Piper {
     }  // namespace Detail
 
     // TODO:use fmt
-    inline String toString(const STLAllocator& allocator, int32_t value) {
+    inline String toString(const STLAllocator& allocator, const int32_t value) {
         return Detail::toStringImpl(allocator, "%" PRId32, value);
     }
-    inline String toString(const STLAllocator& allocator, int64_t value) {
+    inline String toString(const STLAllocator& allocator, const int64_t value) {
         return Detail::toStringImpl(allocator, "%" PRId64, value);
     }
-    inline String toString(const STLAllocator& allocator, uint32_t value) {
+    inline String toString(const STLAllocator& allocator, const uint32_t value) {
         return Detail::toStringImpl(allocator, "%" PRIu32, value);
     }
-    inline String toString(const STLAllocator& allocator, uint64_t value) {
+    inline String toString(const STLAllocator& allocator, const uint64_t value) {
         return Detail::toStringImpl(allocator, "%" PRIu64, value);
     }
-    inline String toString(const STLAllocator& allocator, float value) {
+    inline String toString(const STLAllocator& allocator, const float value) {
         return Detail::toStringImpl(allocator, "%f", value);
     }
-    inline String toString(const STLAllocator& allocator, double value) {
+    inline String toString(const STLAllocator& allocator, const double value) {
         return Detail::toStringImpl(allocator, "%lf", value);
     }
-    inline String toString(const STLAllocator& allocator, long double value) {
+    inline String toString(const STLAllocator& allocator, const long double value) {
         return Detail::toStringImpl(allocator, "%Lf", value);
     }
 
