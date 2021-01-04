@@ -40,7 +40,7 @@ namespace Piper {
                          Pipeline& pipeline) override {
             // TODO:use buffer (pass dependencies to tracer)
             // auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(Spectrum<Radiance>), 128);
-            Data payload;
+            ConstantData payload;
             payload.w = width;
             payload.h = height;
             // payload.res = reinterpret_cast<Spectrum<Radiance>*>(buffer->ref()->getHandle());

@@ -21,6 +21,7 @@
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #pragma warning(push, 0)
+//NOTE: assimp -> Irrlicht.dll->opengl32 will cause memory leak.
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
@@ -94,7 +95,8 @@ namespace Piper {
                     } });
             return *res;
         }
-        GeometryProgram materialize(const MaterializeContext& context) const override {
+
+        [[nodiscard]] GeometryProgram materialize(const MaterializeContext& context) const override {
             return {};
         }
     };

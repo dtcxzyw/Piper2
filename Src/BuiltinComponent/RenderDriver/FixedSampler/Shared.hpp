@@ -18,7 +18,7 @@
 #include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct Data final {
+    struct ConstantData final {
         Spectrum<Radiance>* res;
         uint32_t w, h;
     };

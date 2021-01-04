@@ -110,17 +110,20 @@ namespace Piper {
         [[nodiscard]] bool fastReady() const noexcept override {
             return data->first;
         }
-        bool ready() const noexcept override {
+
+        [[nodiscard]] bool ready() const noexcept override {
             return data->first;
         }
         void wait() const override {
             while(!data->first)
                 std::this_thread::yield();
         }
-        const void* storage() const override {
+
+        [[nodiscard]] const void* storage() const override {
             return &data->second;
         }
-        bool supportNotify() const noexcept override {
+
+        [[nodiscard]] bool supportNotify() const noexcept override {
             return true;
         }
     };
@@ -135,13 +138,14 @@ namespace Piper {
     public:
         StreamImpl(PiperContext& context, SharedPtr<void>&& handle)
             : Stream(context), mHandle(std::move(handle)), mSize(getFileSize(mHandle.get())) {}
-        size_t size() const noexcept override {
+
+        [[nodiscard]] size_t size() const noexcept override {
             return mSize;
         }
         Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) override {
             auto future = makeSharedObject<ReadFuture>(context(), context().getAllocator(), size);
             auto& allocator = context().getAllocator();
-            auto payload = reinterpret_cast<IOPayload*>(allocator.alloc(sizeof(IOPayload)));
+            auto* payload = reinterpret_cast<IOPayload*>(allocator.alloc(sizeof(IOPayload)));
             new(payload) IOPayload();
             memset(&payload->overlapped, 0, sizeof(payload->overlapped));
             // set payload->overlapped.Offset?
@@ -151,14 +155,15 @@ namespace Piper {
             payload->data = future->data;
             payload->file = mHandle;
 
-            auto low = static_cast<LONG>(offset), high = static_cast<LONG>(offset >> 32);
+            const auto low = static_cast<LONG>(offset);
+            auto high = static_cast<LONG>(offset >> 32);
             {
                 std::lock_guard<std::mutex> guard{ mMutex };
                 size_t readCount = 0;
                 // TODO:ReadFileScatter
                 SetFilePointer(mHandle.get(), low, &high, FILE_BEGIN);
                 while(readCount != size) {
-                    DWORD needRead = static_cast<DWORD>(std::min(size - readCount, readUnit));
+                    auto needRead = static_cast<DWORD>(std::min(size - readCount, readUnit));
                     auto res = ReadFile(mHandle.get(), future->data->second.data() + readCount, needRead, nullptr,
                                         reinterpret_cast<LPOVERLAPPED>(payload));
                     if(!res)
@@ -211,7 +216,7 @@ namespace Piper {
         MappedSpanImpl(PiperContext& context, void* ptr, const Span<std::byte>& span)
             : MappedSpan(context), mPtr(ptr), mSpan(span) {}
 
-        Span<std::byte> get() const noexcept override {
+        [[nodiscard]] Span<std::byte> get() const noexcept override {
             return mSpan;
         }
 
@@ -244,7 +249,7 @@ namespace Piper {
             : MappedMemory(context), mFileHandle(std::move(handle)), mSize(maxSize ? maxSize : getFileSize(mFileHandle.get())),
               mAccess(access) {
             if(mSize != 0) {
-                const auto mapHandle = CreateFileMappingW(
+                auto* const mapHandle = CreateFileMappingW(
                     mFileHandle.get(), nullptr, access == FileAccessMode::Read ? PAGE_READONLY : PAGE_READWRITE,
                     static_cast<DWORD>(maxSize >> 32), static_cast<DWORD>(maxSize), nullptr);
                 if(mapHandle == INVALID_HANDLE_VALUE)
@@ -284,7 +289,7 @@ namespace Piper {
 
         auto openFile(const StringView& path, const FileAccessMode access, const FileCacheHint hint, bool async) {
             const auto nativePath = fs::u8path(path.cbegin(), path.cend());
-            const auto handle = CreateFileW(
+            auto* const handle = CreateFileW(
                 nativePath.generic_wstring().c_str(),
                 (access == FileAccessMode::Read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE),
                 (access == FileAccessMode::Write ? 0 : FILE_SHARE_READ), nullptr,
@@ -311,7 +316,7 @@ namespace Piper {
         explicit FileSystemImpl(PiperContext& context) : FileSystem(context), mWorkers(context.getAllocator()) {
             const auto poolSize = 2 * std::thread::hardware_concurrency();
             // TODO:shared with socket
-            const auto handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, poolSize);
+            auto* const handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, poolSize);
             if(!handle)
                 raiseWin32Error(context, "CreateIoCompletionPort", PIPER_SOURCE_LOCATION());
             mIOCP.reset(handle);

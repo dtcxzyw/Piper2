@@ -45,9 +45,8 @@ namespace Piper {
         return s == size ? (wrap == TextureWrap::Repeat ? 0 : p) : s;
     }
 
-    void evaluate(const uint32_t u, const uint32_t v, float weight, const Data* data, Dimensionless<float>* sample) {
+    void evaluate(const uint32_t u, const uint32_t v, const float weight, const Data* data, Dimensionless<float>* sample) {
         const auto idx = v * data->stride + u * data->channel;
-        weight *= 1.0f / 255.0f;
         for(uint32_t i = 0; i < data->channel; ++i)
             sample[i].val += weight * static_cast<float>(data->texel[idx + i]);
     }
@@ -71,6 +70,9 @@ namespace Piper {
         evaluate(pru, plv, rwx * lwy, data, sample);
         evaluate(plu, prv, lwx * rwy, data, sample);
         evaluate(pru, prv, rwx * rwy, data, sample);
+        constexpr auto scale = 0.003921568f;
+        for(uint32_t i = 0; i < data->channel; ++i)
+            sample[i].val *= scale;
     }
     static_assert(std::is_same_v<TextureSampleFunc, decltype(&sampleTexture)>);
 }  // namespace Piper

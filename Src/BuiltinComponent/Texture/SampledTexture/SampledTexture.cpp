@@ -123,7 +123,7 @@ namespace Piper {
                                           &srcChannel))
                     errorHandler.raiseException(stbi_failure_reason(), PIPER_SOURCE_LOCATION());
 
-                auto desired = STBI_default;
+                auto desired = srcChannel;
                 if(srcChannel == STBI_rgb)
                     desired = STBI_rgb_alpha;
 
@@ -131,7 +131,7 @@ namespace Piper {
                                                                                     static_cast<int>(span.size_bytes()), &x, &y,
                                                                                     &srcChannel, desired)) };
                 if(ptr)
-                    return makeSharedObject<ImageStorage>(context(), std::move(ptr), x, y, srcChannel);
+                    return makeSharedObject<ImageStorage>(context(), std::move(ptr), x, y, desired);
                 errorHandler.raiseException(stbi_failure_reason(), PIPER_SOURCE_LOCATION());
             }
         }

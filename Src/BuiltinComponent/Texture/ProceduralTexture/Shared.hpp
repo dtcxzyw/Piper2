@@ -18,8 +18,13 @@
 #include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct Data final {
+    struct ConstantData final {
         uint32_t channel;
         Dimensionless<float> value[4];
+    };
+    struct CheckBoardData final {
+        float scale;
+        uint32_t channel;
+        Dimensionless<float> black[4], white[4];
     };
 }  // namespace Piper

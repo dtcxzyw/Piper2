@@ -18,6 +18,6 @@
 #include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct Data final {
+    struct ConstantData final {
     };
 }  // namespace Piper

@@ -243,7 +243,7 @@ namespace Piper {
             if(context().getLogger().allow(LogLevel::Info))
                 context().getLogger().record(LogLevel::Info, pipeline->generateStatisticsReport(), PIPER_SOURCE_LOCATION());
 
-            stage.next("save to image", PIPER_SOURCE_LOCATION());
+            stage.next("write image to disk", PIPER_SOURCE_LOCATION());
             auto output = opt->at("OutputFile")->get<String>();
             // TODO:move OpenEXR to ImageIO
             saveToFile(output, res, width, height);

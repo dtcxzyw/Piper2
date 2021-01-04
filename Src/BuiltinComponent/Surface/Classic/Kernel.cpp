@@ -48,7 +48,9 @@ namespace Piper {
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&blackBodyInit)>);
     extern "C" void blackBodySample(RestrictedContext*, const void*, const void*, const Vec&, const Normal<float, FOR::Shading>&,
-                                    BxDFPart, SurfaceSample&) {}
+                                    BxDFPart, SurfaceSample& sample) {
+        sample.pdf = Dimensionless<float>{ 0.0f };
+    }
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&blackBodySample)>);
     extern "C" void blackBodyEvaluate(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
                                       const Normal<float, FOR::Shading>&, BxDFPart, BxDFValue& f) {
@@ -72,7 +74,7 @@ namespace Piper {
         }
 
         [[nodiscard]] PDFValue pdf(const Vec& wo, const Vec& wi) const {
-            return (wo.z * wi.z).val > 0.0f ? PDFValue{ std::abs(wi.z.val) * Constants::invPi<float> } : PDFValue{ 0.0f };
+            return wi.z.val > 0.0f ? PDFValue{ std::abs(wi.z.val) * Constants::invPi<float> } : PDFValue{ 0.0f };
         }
     };
 
@@ -89,6 +91,7 @@ namespace Piper {
         }
     };
 
+    // TODO:better diffuse+roughness model
     class OrenNayar final : public DefaultBxDFHelper<OrenNayar> {
     private:
         BxDFValue mReflection;
@@ -132,7 +135,7 @@ namespace Piper {
                 sinAlpha = sinThetaI;
                 tanBeta = sinThetaO / abs(wo.z);
             }
-            return mReflection * (Dimensionless<float>{ Constants::invPi<float> } * (mA + mB * maxCos * sinAlpha * tanBeta));
+            return mReflection * Dimensionless<float>{ Constants::invPi<float> * (mA + mB * maxCos * sinAlpha * tanBeta).val };
         }
     };
 
@@ -181,23 +184,25 @@ namespace Piper {
     }
 
     template <typename... BxDFs>
-    void sample(const Mask mask, float u1, float u2, const Vec& wo, const Normal<float, FOR::Shading>& Ng, BxDFPart require,
+    void sample(const Mask mask, float u1, const float u2, const Vec& wo, const Normal<float, FOR::Shading>& Ng, BxDFPart require,
                 SurfaceSample& sample, const BxDFs&... bxdfs) {
+        sample.pdf = Dimensionless<float>{ 0.0f };
         const auto count = countN(mask, require, bxdfs...);
-        if(count == 0)
+        if(count == 0) 
             return;
         const auto select = std::min(static_cast<uint32_t>(std::floor(u1 * static_cast<float>(count))), count - 1);
         u1 = u1 * static_cast<float>(count) - static_cast<float>(select);
         sampleN(mask, select, u1, u2, wo, require, sample, bxdfs...);
-        if(static_cast<uint32_t>(sample.part) == 0)
+        if(sample.pdf.val <= 0.0f)
             return;
-        if(count > 1 && !(sample.part & BxDFPart::Specular)) {
+
+        if(!(sample.part & BxDFPart::Specular)) {
             const auto addition = ((dot(wo, Ng) * dot(sample.wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Transmission);
             evaluateN(mask, select, wo, sample.wi, require, addition, sample.f, bxdfs...);
             pdfN(mask, select, wo, sample.wi, require, sample.pdf, bxdfs...);
         }
         if(count > 1)
-            sample.pdf = sample.pdf * Dimensionless<float>{ 1.0f / count };
+            sample.pdf = sample.pdf / Dimensionless<float>{ static_cast<float>(count) };
     }
 
 #define KERNEL_FUNCTION_GROUP(PREFIX, BSDF, ...)                                                                           \
@@ -220,8 +225,13 @@ namespace Piper {
     extern "C" void PREFIX##Pdf(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,        \
                                 const Normal<float, FOR::Shading>&, const BxDFPart require, PDFValue& pdf) {               \
         const auto* bsdf = static_cast<const BSDF*>(storage);                                                              \
-        pdf = {};                                                                                                          \
+        pdf = Dimensionless<float>{ 0.0f };                                                                                \
+        const auto count = countN(bsdf->mask, require, __VA_ARGS__);                                                       \
+        if(count == 0)                                                                                                     \
+            return;                                                                                                        \
         pdfN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, __VA_ARGS__);                         \
+        if(count > 1)                                                                                                      \
+            pdf = pdf / Dimensionless<float>{ static_cast<float>(count) };                                                 \
     }                                                                                                                      \
     static_assert(std::is_same_v<SurfacePdfFunc, decltype(&PREFIX##Pdf)>);
 
@@ -260,12 +270,12 @@ namespace Piper {
     struct FresnelDielectric final {
         Dimensionless<float> etaI, etaT;
         Dimensionless<float> operator()(Dimensionless<float> cosThetaI) const {
-            cosThetaI = { std::fmax(-1.0f, std::fmin(1.0f, cosThetaI.val)) };
+            cosThetaI = { std::fmax(0.0f, std::fmin(1.0f, std::fabs(cosThetaI.val))) };
             const auto sinThetaI = sqrtSafe(Dimensionless<float>{ 1.0f } - cosThetaI * cosThetaI);
             const auto sinThetaT = etaI / etaT * sinThetaI;
             if(sinThetaT.val >= 1.0f)
                 return { 1.0f };
-            const auto cosThetaT = sqrtSafe(Dimensionless<float>{ 1.0f } - sinThetaT * sinThetaI);
+            const auto cosThetaT = sqrtSafe(Dimensionless<float>{ 1.0f } - sinThetaT * sinThetaT);
             const auto p1 = etaT * cosThetaI, p2 = etaI * cosThetaT;
             const auto parallelPart = (p1 - p2) / (p1 + p2);
             const auto p3 = etaI * cosThetaI, p4 = etaT * cosThetaT;
@@ -334,7 +344,6 @@ namespace Piper {
             const auto tan2Theta = sin2Theta / cos2Theta;
             if(std::isinf(tan2Theta.val))
                 return { 0.0f };
-            const auto cos4Theta = cos2Theta * cos2Theta;
             const auto sinTheta = Dimensionless<float>{ std::sqrt(sin2Theta.val) };
             const auto cosPhi =
                 Dimensionless<float>{ sinTheta.val == 0.0f ? 1.0f : std::fmin(1.0f, std::fmax(-1.0f, wh.x.val / sinTheta.val)) };
@@ -342,8 +351,8 @@ namespace Piper {
             const auto sinPhi =
                 Dimensionless<float>{ sinTheta.val == 0.0f ? 0.0f : std::fmin(1.0f, std::fmax(-1.0f, wh.y.val / sinTheta.val)) };
             const auto p2 = sinPhi / mAlphaY;
-            const auto e = Dimensionless<float>{ 1.0f } + (p1 * p1 + p2 * p2) * tan2Theta;
-            return Dimensionless<float>{ Constants::invPi<float> } / (mAlphaX * mAlphaY * cos4Theta * e * e);
+            const auto e = cos2Theta * (Dimensionless<float>{ 1.0f } + (p1 * p1 + p2 * p2) * tan2Theta);
+            return Dimensionless<float>{ Constants::invPi<float> } / (mAlphaX * mAlphaY * e * e);
         }
         // TODO:comment
         [[nodiscard]] Vec sampleWh(const Vec& wi, const float u1, const float u2) const {
@@ -393,7 +402,7 @@ namespace Piper {
                    (Dimensionless<float>{ 1.0f } + mDistribution.lambda(wo) + mDistribution.lambda(wi)) * abs(wo.z * wi.z))));
         }
         [[nodiscard]] PDFValue pdf(const Vec& wo, const Vec& wi) const {
-            if((wo.z * wi.z).val <= 0.0f)
+            if(wi.z.val <= 0.0f)
                 return { 0.0f };
             const auto wh = halfVector(wo, wi);
             const auto p1 = Dimensionless<float>{ 1.0f } + mDistribution.lambda(wo);
@@ -407,7 +416,7 @@ namespace Piper {
             if(dot(wo, wh).val < 0.0f)
                 return;
             res.wi = reflect(wo, wh);
-            if((wo.z * res.wi.z).val <= 0.0f)
+            if(res.wi.z.val <= 0.0f)
                 return;
 
             const auto p1 = Dimensionless<float>{ 1.0f } + mDistribution.lambda(wo);
@@ -450,6 +459,7 @@ namespace Piper {
             Dimensionless<float> roughness;
             piperCall<TextureSampleFunc>(context, data->roughnessTexture, t, texCoord, &roughness);
             roughness = MicrofacetDistribution::remapRoughness(roughness);
+            // TODO:acquire eta from medium
             const Dimensionless<float> etaI = { face == Face::Front ? 1.0f : 1.46f };
             const Dimensionless<float> etaT = { face == Face::Front ? 1.46f : 1.0f };
             bsdf->glossy = MicrofacetReflection<FresnelDielectric>{ BxDFValue{ specular }, FresnelDielectric{ etaI, etaT },
@@ -481,7 +491,7 @@ namespace Piper {
             res.wi = { { -wo.x, -wo.y, wo.z }, Unsafe{} };
             res.pdf = { 1.0f };
             res.part = part;
-            res.f = mFresnel(res.wi.z);
+            res.f = mReflection * mFresnel(res.wi.z);
             return res;
         }
     };
@@ -514,9 +524,8 @@ namespace Piper {
                 res.pdf = f;
                 res.f = mReflection * (f / abs(res.wi.z));
             } else {
-                // TODO:fixme!
                 // specular transmission
-                if(!refract(wo, { { { 0.0f }, { 0.0f }, { 1.0f } }, Unsafe{} }, mEta, res.wi))
+                if(!refract(wo, { { { 0.0f }, { 0.0f }, { 1.0f } }, Unsafe{} }, mEta, res.wi)) 
                     return;
 
                 res.part = BxDFPart::Transmission | BxDFPart::Specular;
@@ -541,7 +550,7 @@ namespace Piper {
               mCorrect(mode == TransportMode::Radiance ? Dimensionless<float>{ 1.0f } : square(mEta)) {}
 
         [[nodiscard]] BxDFValue evaluate(const Vec& wo, const Vec& wi) const {
-            if((wo.z * wi.z).val >= 0.0f)
+            if(wi.z.val >= 0.0f)
                 return {};
             auto wh = Vec{ wo.asVector() + wi * mEta };
             if(wh.z.val < 0.0f)
@@ -554,14 +563,15 @@ namespace Piper {
 
             const auto sqrtDenom = dot(wo, wh) + mEta * dot(wi, wh);
 
-            return mTransmission *
+            const auto res = mTransmission *
                 abs((Dimensionless<float>{ 1.0f } - f) * mDistribution.evaluateD(wh) * abs(dot(wi, wh)) * abs(dot(wo, wh)) *
                     mCorrect /
                     ((Dimensionless<float>{ 1.0f } + mDistribution.lambda(wo) + mDistribution.lambda(wi)) * wo.z * wi.z *
                      square(sqrtDenom)));
+            return res;
         }
         [[nodiscard]] PDFValue pdf(const Vec& wo, const Vec& wi) const {
-            if((wo.z * wi.z).val >= 0.0f)
+            if(wi.z.val >= 0.0f)
                 return { 0.0f };
             const auto wh = Vec{ wo.asVector() + wi * mEta };
 
@@ -589,18 +599,18 @@ namespace Piper {
     };
 
     struct GlassBSDF final {
-        union {
+        union Type {
             FresnelSpecular specular;
-            struct {
+            struct Microfacet {
                 MicrofacetReflection<FresnelDielectric> reflection;
                 MicrofacetTransmission transmission;
-            };
-        };
+            } microfacet;
+        } bsdf;
         Mask mask;
     };
 
     extern "C" void glassInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
-                              const Normal<float, FOR::Shading>&, Face face, TransportMode mode, void* storage,
+                              const Normal<float, FOR::Shading>&, const Face face, const TransportMode mode, void* storage,
                               bool& noSpecular) {
         const auto* data = static_cast<const GlassData*>(SBTData);
         auto* bsdf = static_cast<GlassBSDF*>(storage);
@@ -626,26 +636,27 @@ namespace Piper {
         if(roughnessX.val == 0.0f && roughnessY.val == 0.0f) {
             bsdf->mask = 0b001;
             noSpecular = false;
-            bsdf->specular = FresnelSpecular{ reflection, transmission, etaI, etaT, mode };
+            bsdf->bsdf.specular = FresnelSpecular{ reflection, transmission, etaI, etaT, mode };
         } else {
             bsdf->mask = 0;
             const MicrofacetDistribution distribution{ MicrofacetDistribution::remapRoughness(roughnessX),
                                                        MicrofacetDistribution::remapRoughness(roughnessY) };
             if(reflection.valid()) {
                 bsdf->mask |= 0b010;
-                bsdf->reflection =
+                bsdf->bsdf.microfacet.reflection =
                     MicrofacetReflection<FresnelDielectric>{ reflection, FresnelDielectric{ etaI, etaT }, distribution };
             }
             if(transmission.valid()) {
                 bsdf->mask |= 0b100;
-                bsdf->transmission = MicrofacetTransmission{ transmission, etaI, etaT, distribution, mode };
+                bsdf->bsdf.microfacet.transmission = MicrofacetTransmission{ transmission, etaI, etaT, distribution, mode };
             }
             noSpecular = true;
         }
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&glassInit)>);
 
-    KERNEL_FUNCTION_GROUP(glass, GlassBSDF, bsdf->specular, bsdf->reflection, bsdf->transmission)
+    KERNEL_FUNCTION_GROUP(glass, GlassBSDF, bsdf->bsdf.specular, bsdf->bsdf.microfacet.reflection,
+                          bsdf->bsdf.microfacet.transmission)
 
     // TODO:Metal
 
@@ -674,7 +685,8 @@ namespace Piper {
             sample.f = bsdf->reflection / abs(sample.wi.z);
             sample.part = part;
             sample.pdf = { 1.0f };
-        }
+        } else
+            sample.pdf = { 0.0f };
     }
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&mirrorSample)>);
 
@@ -707,7 +719,7 @@ namespace Piper {
             return diffuse + specular;
         }
         [[nodiscard]] PDFValue pdf(const Vec& wo, const Vec& wi) const {
-            if((wo.z * wi.z).val <= 0.0f)
+            if(wi.z.val <= 0.0f)
                 return { 0.0f };
             const auto wh = halfVector(wo, wi);
             return Dimensionless<float>{ 0.5f } *
@@ -724,7 +736,7 @@ namespace Piper {
                 u1 = std::fmin(2.0f * (u1 - 0.5f), 1.0f);
                 const auto wh = mDistribution.sampleWh(wo, u1, u2);
                 res.wi = reflect(wo, wh);
-                if((wo.z * res.wi.z).val <= 0.0f)
+                if(res.wi.z.val <= 0.0f)
                     return;
             }
             res.part = part;

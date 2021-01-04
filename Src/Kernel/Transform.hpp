@@ -237,7 +237,7 @@ namespace Piper {
         Normal(Vector<Dimensionless<Float>, ref> v, Unsafe) : x(v.x), y(v.y), z(v.z) {}
         template <typename U>
         explicit Normal(Vector<U, ref> v) noexcept {
-            auto nv = v / length(v);
+            const auto nv = v / length(v);
             x = nv.x, y = nv.y, z = nv.z;
         }
         template <typename U>

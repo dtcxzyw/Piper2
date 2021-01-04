@@ -25,4 +25,4 @@ namespace Piper {
         uint32_t profilePathTime;
         uint32_t profileValidRay;
     };
-}
+}  // namespace Piper

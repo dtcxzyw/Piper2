@@ -102,7 +102,8 @@ namespace Piper {
             : Surface(context), mKernelPath(std::move(path)), mReflection(config->at("Reflection")),
               mTransmission(config->at("Transmission")), mRoughnessX(config->at("RoughnessX")),
               mRoughnessY(config->at("RoughnessY")) {}
-        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
+
+        [[nodiscard]] SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
@@ -128,7 +129,8 @@ namespace Piper {
         Plastic(PiperContext& context, const SharedPtr<Config>& config, String path)
             : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")), mSpecular(config->at("Specular")),
               mRoughness(config->at("Roughness")) {}
-        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
+
+        [[nodiscard]] SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
@@ -152,7 +154,8 @@ namespace Piper {
     public:
         Mirror(PiperContext& context, const SharedPtr<Config>& config, String path)
             : Surface(context), mKernelPath(std::move(path)), mReflection(config->at("Reflection")) {}
-        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
+
+        [[nodiscard]] SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
@@ -177,7 +180,8 @@ namespace Piper {
         Substrate(PiperContext& context, const SharedPtr<Config>& config, String path)
             : Surface(context), mKernelPath(std::move(path)), mDiffuse(config->at("Diffuse")), mSpecular(config->at("Specular")),
               mRoughnessX(config->at("RoughnessX")), mRoughnessY(config->at("RoughnessY")) {}
-        SurfaceProgram materialize(const MaterializeContext& ctx) const override {
+
+        [[nodiscard]] SurfaceProgram materialize(const MaterializeContext& ctx) const override {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =

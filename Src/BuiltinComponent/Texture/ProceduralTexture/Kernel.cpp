@@ -19,9 +19,22 @@
 namespace Piper {
     extern "C" void constantTexture(RestrictedContext*, const void* SBTData, float, const Vector2<float>&,
                                     Dimensionless<float>* sample) {
-        const auto* data = static_cast<const Data*>(SBTData);
+        const auto* data = static_cast<const ConstantData*>(SBTData);
         for(uint32_t i = 0; i < data->channel; ++i)
             sample[i] = data->value[i];
     }
     static_assert(std::is_same_v<TextureSampleFunc, decltype(&constantTexture)>);
+
+    extern "C" void checkBoard(RestrictedContext*, const void* SBTData, float, const Vector2<float>& texCoord,
+                               Dimensionless<float>* sample) {
+        const auto* data = static_cast<const CheckBoardData*>(SBTData);
+        auto mod = [scale = data->scale](const float x) {
+            const auto rem = std::remainderf(x * scale, 2.0f);
+            return rem < 0.0f ? rem + 2.0f : rem;
+        };
+        const auto* arr = (mod(texCoord.x) > 1.0f) == (mod(texCoord.y) > 1.0f) ? data->white : data->black;
+        for(uint32_t i = 0; i < data->channel; ++i)
+            sample[i] = arr[i];
+    }
+    static_assert(std::is_same_v<TextureSampleFunc, decltype(&checkBoard)>);
 }  // namespace Piper

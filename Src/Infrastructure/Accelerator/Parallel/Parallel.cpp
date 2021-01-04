@@ -24,6 +24,7 @@
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
+#include "../../../STL/USet.hpp"
 #include "../../../STL/UniquePtr.hpp"
 #include <new>
 #include <utility>
@@ -44,11 +45,10 @@
 #include <llvm/Transforms/Utils/Cloning.h>
 // use LLJIT
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
-#pragma warning(pop)
+#include <llvm/Support/ManagedStatic.h>
 #define NOMINMAX
-#include "../../../STL/USet.hpp"
-
 #include <Windows.h>
+#pragma warning(pop)
 
 namespace Piper {
     static CommandQueue currentThreadID() {
@@ -90,7 +90,7 @@ namespace Piper {
     class LLVMProgram final : public RunnableProgram {
     private:
         std::unique_ptr<llvm::orc::LLJIT> mJIT;
-        using KernelFunction = void(*)(uint32_t idx, const std::byte* payload);
+        using KernelFunction = void (*)(uint32_t idx, const std::byte* payload);
         KernelFunction mFunction, mUnroll;
 
     public:
@@ -331,7 +331,7 @@ namespace Piper {
             // TODO:remove unused functions/maintain symbol reference
             const bool entryInNative = nativeSymbol.count(entry);
             auto kernel = scheduler.spawn(
-                [ctx = &context(), llvmCtx = llCtx.get(), entry,
+                [ctx = &context(), llvmCtx = std::move(llCtx), entry,
                  entryInNative](const DynamicArray<std::unique_ptr<llvm::Module>>& units) {
                     auto& errorHandler = ctx->getErrorHandler();
                     auto stage = errorHandler.enterStage("link LLVM modules", PIPER_SOURCE_LOCATION());
@@ -413,16 +413,17 @@ namespace Piper {
                     if(ctx->getLogger().allow(LogLevel::Debug))
                         ctx->getLogger().record(LogLevel::Debug, output.c_str(), PIPER_SOURCE_LOCATION());
 
-                    return module;
+                    return llvm::orc::ThreadSafeModule{ std::move(module),
+                                                        std::move(const_cast<std::remove_const_t<decltype(llvmCtx)>&>(llvmCtx)) };
                 },
                 scheduler.wrap(modules));
             return scheduler.spawn(
-                [ctx = &context(), llvmCtx = std::move(llCtx), entry, nativeSymbol, this](std::unique_ptr<llvm::Module> mod) {
+                [ctx = &context(), entry, nativeSymbol, this](llvm::orc::ThreadSafeModule mod) {
                     // TODO:LLVM use fake host triple,use true host triple to initialize JITTargetMachineBuilder
                     auto JTMB = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(), llvm::orc::JITTargetMachineBuilder::detectHost());
-
+                    
                     // TODO:test settings
-                    // TODO:FP Precise/Atomic
+                    // TODO:FP Precise
                     JTMB.setCodeGenOptLevel(llvm::CodeGenOpt::Aggressive);
                     JTMB.setRelocationModel(llvm::Reloc::PIC_);
                     JTMB.setCodeModel(llvm::CodeModel::Small);
@@ -431,17 +432,16 @@ namespace Piper {
                     options.EmulatedTLS = false;
                     options.TLSSize = 0;
 
-                    // TODO:shared engine
                     auto engine = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(),
                                                 std::move(llvm::orc::LLJITBuilder{}
-                                                              .setNumCompileThreads(std::thread::hardware_concurrency())
+                                                              //.setNumCompileThreads(std::thread::hardware_concurrency())
+                                                              .setNumCompileThreads(0)  // NOTE: LLVM hasn't fix the bug in LLJIT construction.
                                                               .setJITTargetMachineBuilder(std::move(JTMB)))
                                                     .create());
 
-                    mod->setDataLayout(engine->getDataLayout());
+                    mod.getModuleUnlocked()->setDataLayout(engine->getDataLayout());
 
-                    if(auto err = engine->addIRModule(llvm::orc::ThreadSafeModule{
-                           std::move(mod), std::move(const_cast<std::remove_const_t<decltype(llvmCtx)>&>(llvmCtx)) }))
+                    if(auto err = engine->addIRModule(std::move(mod)))
                         ctx->getErrorHandler().raiseException(llvm::toString(std::move(err)).c_str(), PIPER_SOURCE_LOCATION());
 
                     {
@@ -467,11 +467,9 @@ namespace Piper {
                             map.insert(std::make_pair(
                                 engine->getExecutionSession().intern(llvm::StringRef{ symbol.first.data(), symbol.first.size() }),
                                 llvm::JITEvaluatedSymbol{ reinterpret_cast<llvm::JITTargetAddress>(symbol.second), flag }));
-                        static char id;
-                        auto MU = std::make_unique<llvm::orc::AbsoluteSymbolsMaterializationUnit>(
-                            map, reinterpret_cast<llvm::orc::VModuleKey>(&id));
 
-                        if(auto err = engine->define(std::move(MU)))
+                        if(auto err = engine->getMainJITDylib().define(
+                               std::make_unique<llvm::orc::AbsoluteSymbolsMaterializationUnit>(map)))
                             ctx->getErrorHandler().raiseException(llvm::toString(std::move(err)).c_str(),
                                                                   PIPER_SOURCE_LOCATION());
                     }

@@ -115,7 +115,7 @@ namespace Piper {
                     record.bc.second = 0;
                 } break;
                 case StatisticsType::UInt: {
-                    record.uc = UIntCounter{ context().getAllocator() };
+                    new(&record.uc) UIntCounter{ context().getAllocator() };
                 } break;
                 case StatisticsType::Float: {
                     record.fc.first = 0.0;
@@ -149,6 +149,7 @@ namespace Piper {
         }
         void addUInt(const uint32_t id, const uint32_t val) {
             const auto locate = [this, id]() -> UMap<uint32_t, uint64_t>& {
+                // TODO:lock free or double check
                 std::lock_guard<std::mutex> guard{ mMutex };
                 auto& map = mStatistics[id].uc;
                 const auto iter = map.find(std::this_thread::get_id());
@@ -268,6 +269,8 @@ namespace Piper {
         uint32_t profileIntersectTime;
         uint32_t profileOccludeHit;
         uint32_t profileOccludeTime;
+        bool debug;
+        ErrorHandler* errorHandler;
     };
     enum class HitKind { Builtin, Custom };
     struct InstanceUserData final : public Object {
@@ -478,6 +481,11 @@ namespace Piper {
         info = ctx->callInfo[id];
     }
 
+    // TODO:more option
+    void piperEmbreePrintFloat(RestrictedContext*, const char* msg, const float ref) {
+        printf("%s:%lf\n", msg, static_cast<double>(ref));
+    }
+
     struct MainArgument final {
         const KernelArgument* SBT;
     };
@@ -517,7 +525,7 @@ namespace Piper {
         return std::generate_canonical<float, -1>(ctx->eng);
     }
 
-    static LinkableProgram prepareKernelNative(PiperContext& context) {
+    static LinkableProgram prepareKernelNative(PiperContext& context, const bool debug) {
         static_assert(sizeof(void*) == 8);
         DynamicArray<std::byte> res{ context.getAllocator() };
         constexpr auto header = "Native";
@@ -552,6 +560,9 @@ namespace Piper {
         PIPER_APPEND(StatisticsTime);
         PIPER_APPEND(GetTime);
         PIPER_APPEND(QueryCall);
+        if(debug) {
+            PIPER_APPEND(PrintFloat);
+        }
 #undef PIPER_APPEND
         return LinkableProgram{ context.getScheduler().value(res), String{ "Native", context.getAllocator() },
                                 reinterpret_cast<uint64_t>(piperEmbreeMain) };
@@ -578,7 +589,7 @@ namespace Piper {
     };
     using SceneHandle = UniquePtr<RTCSceneTy, SceneDeleter>;
 
-    // TODO:per-vertex TBN,TexCoord
+    // TODO:per-vertex TBN
     static void calcTriangleMeshSurface(RestrictedContext*, const void* payload, const HitInfo& hit, float t,
                                         SurfaceIntersectionInfo& info) {
         const auto* buffer = static_cast<const BuiltinTriangleBuffer*>(payload);
@@ -636,7 +647,7 @@ namespace Piper {
                     rtcSetGeometryVertexAttributeCount(
                         mGeometry.get(), (triDesc.texCoords ? 1 : 0) + (triDesc.normal ? 1 : 0) + (triDesc.tangent ? 1 : 0));
                     uint32_t slot = 0;
-                    // TODO: rtcSetGeometryVertexAttributeTopology();
+                    // TODO: rtcSetGeometryVertexAttributeTopology
                     if(triDesc.texCoords) {
                         auto* const texCoord = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE, slot++,
                                                                        RTC_FORMAT_FLOAT2, 2 * sizeof(float), triDesc.vertCount);
@@ -803,11 +814,11 @@ namespace Piper {
     public:
         EmbreePipeline(PiperContext& context, Tracer& tracer, const SharedPtr<EmbreeNode>& scene, Sensor& sensor,
                        Integrator& integrator, RenderDriver& renderDriver, const LightSampler& lightSampler,
-                       const Span<SharedPtr<Light>>& lights, Sampler* sampler, uint32_t width, uint32_t height)
+                       const Span<SharedPtr<Light>>& lights, Sampler* sampler, uint32_t width, uint32_t height, bool debug)
             : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
               mScene(scene), mProfiler(context) {
             DynamicArray<LinkableProgram> modules(context.getAllocator());
-            modules.push_back(prepareKernelNative(context));
+            modules.push_back(prepareKernelNative(context, debug));
 
             DynamicArray<Pair<String, void*>> call(context.getAllocator());
 
@@ -1004,6 +1015,7 @@ namespace Piper {
             mArg.profileOccludeHit = mProfiler.registerDesc("Tracer", "Occlude Hit", &p3, StatisticsType::Bool);
             mArg.profileOccludeTime = mProfiler.registerDesc("Tracer", "Occlude Time", &p4, StatisticsType::Time);
             mArg.profiler = &mProfiler;
+            mArg.errorHandler = &context.getErrorHandler();
         }
         void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload, const SensorNDCAffineTransform& transform,
                  const uint32_t sample) {
@@ -1053,6 +1065,7 @@ namespace Piper {
         ResourceCacheManager mCache;
         DeviceHandle mDevice;
         SharedPtr<TextureSampler> mSampler;
+        bool mDebugMode;
 
         SharedPtr<Texture> generateTextureImpl(const SharedPtr<Config>& textureDesc) const {
             const auto& attr = textureDesc->viewAsObject();
@@ -1080,7 +1093,8 @@ namespace Piper {
             context().getErrorHandler().raiseException(
                 "Embree Error:" + toString(context().getAllocator(), static_cast<uint32_t>(ec)) + str, PIPER_SOURCE_LOCATION());
         }
-        Embree(PiperContext& context, const SharedPtr<Config>& config) : Tracer(context), mCache(context) {
+        Embree(PiperContext& context, const SharedPtr<Config>& config)
+            : Tracer(context), mCache(context), mDebugMode(config->at("DebugMode")->get<bool>()) {
             mAccelerator = context.getModuleLoader().newInstanceT<Accelerator>(config->at("Accelerator")).getSync();
             mDevice.reset(rtcNewDevice(config->at("EmbreeDeviceConfig")->get<String>().c_str()));
             if(!mDevice) {
@@ -1114,7 +1128,7 @@ namespace Piper {
                                              uint32_t height) override {
             return makeUniqueObject<Pipeline, EmbreePipeline>(
                 context(), *this, eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), sensor, integrator, renderDriver,
-                lightSampler, lights, sampler, width, height);
+                lightSampler, lights, sampler, width, height, mDebugMode);
         }
         Accelerator& getAccelerator() override {
             return *mAccelerator;

@@ -19,7 +19,7 @@
 namespace Piper {
     extern "C" void accumulate(RestrictedContext*, const void* SBTData, const Vector2<float>& point,
                                const Spectrum<Radiance>& sample) {
-        const auto* data = static_cast<const Data*>(SBTData);
+        const auto* data = static_cast<const ConstantData*>(SBTData);
         auto px = static_cast<uint32_t>(point.x > 0.0f ? point.x : 0.0f);
         px = (px < data->w ? px : data->w - 1);
         auto py = static_cast<uint32_t>(point.y > 0.0f ? point.y : 0.0f);
