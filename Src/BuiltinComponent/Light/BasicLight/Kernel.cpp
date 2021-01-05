@@ -23,7 +23,7 @@ namespace Piper {
     extern "C" void pointInit(RestrictedContext*, const void*, float, void*) {}
     static_assert(std::is_same_v<LightInitFunc, decltype(&pointInit)>);
     extern "C" void pointSample(RestrictedContext*, const void* SBTData, const void*, const Point<Distance, FOR::World>& hit,
-                                LightSample& sample) {
+                                float, float, LightSample& sample) {
         const auto* data = static_cast<const PointLightData*>(SBTData);
         const auto delta = data->pos - hit;
         const auto dis2 = lengthSquared(delta);
@@ -44,12 +44,11 @@ namespace Piper {
     static_assert(std::is_same_v<LightPdfFunc, decltype(&deltaPdf)>);
     extern "C" void SEInit(RestrictedContext*, const void*, float, void*) {}
     static_assert(std::is_same_v<LightInitFunc, decltype(&SEInit)>);
-    extern "C" void SESample(RestrictedContext* context, const void* SBTData, const void*, const Point<Distance, FOR::World>& hit,
-                             LightSample& sample) {
+    extern "C" void SESample(RestrictedContext* context, const void* SBTData, const void*, const Point<Distance, FOR::World>&,
+                             float u1, float u2, LightSample& sample) {
         const auto* data = static_cast<const SampledEnvironmentData*>(SBTData);
         sample.rad = data->texture;
-        const Dimensionless<float> u = { piperSample(context) }, v = { piperSample(context) };
-        const auto theta = u * Radian<float>{ Constants::pi<float> }, phi = v * Radian<float>{ Constants::pi<float> };
+        const auto theta = Radian<float>{ u1 * Constants::pi<float> }, phi = Radian<float>{ u2 * Constants::pi<float> };
         const auto cosTheta = cos(theta), sinTheta = sin(theta), cosPhi = cos(phi), sinPhi = sin(phi);
         // TODO:transform
         sample.dir = Normal<float, FOR::World>{ { sinTheta * cosPhi, sinTheta * sinPhi, cosTheta }, Unsafe{} };
@@ -73,11 +72,10 @@ namespace Piper {
                     Dimensionless<float>{ 1.0f } / (Dimensionless<float>{ 2.0f * Constants::sqrPi<float> } * sinTheta) };
     }
     static_assert(std::is_same_v<LightPdfFunc, decltype(&SEPdf)>);
-    extern "C" void uniformSelect(RestrictedContext* context, const void* SBTData, LightSelectResult& result) {
+    extern "C" void uniformSelect(RestrictedContext* context, const void* SBTData, const float u, LightSelectResult& result) {
         const auto count = *static_cast<const uint32_t*>(SBTData);
-        const auto u = piperSample(context);
         result.light = std::min(static_cast<uint32_t>(std::floor(u * static_cast<float>(count))), count - 1);
-        // TODO:remap u?
+        // TODO:remap u for reuse?
         result.delta = *(static_cast<const bool*>(SBTData) + sizeof(uint32_t) + result.light);
         result.pdf = { 1.0f / static_cast<float>(count) };
     }

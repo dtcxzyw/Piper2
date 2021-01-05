@@ -18,21 +18,19 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void rayGen(RestrictedContext* context, const void* SBTData, const uint32_t x, const uint32_t y, const uint32_t w,
-                           const uint32_t h, const SensorNDCAffineTransform& transform, RayInfo& ray, Vector2<float>& point) {
-        point.x = static_cast<float>(x) + piperSample(context);
-        point.y = static_cast<float>(y) + piperSample(context);
+    extern "C" void rayGen(RestrictedContext*, const void* SBTData, const Vector2<float>& NDC, const float u1, const float u2,
+                           RayInfo& ray, Dimensionless<float>& weight) {
         const auto* data = static_cast<const PCData*>(SBTData);
-        const auto filmHit = data->anchor +
-            data->offX * Dimensionless<float>{ 1.0f - (transform.ox + transform.sx * point.x / static_cast<float>(w)) } +
-            data->offY * Dimensionless<float>{ 1.0f - (transform.oy + transform.sy * point.y / static_cast<float>(h)) };
-        const auto lensOffset = sampleUniformDisk(piperSample(context), piperSample(context));
+        const auto filmHit =
+            data->anchor + data->offX * Dimensionless<float>{ 1.0f - NDC.x } + data->offY * Dimensionless<float>{ 1.0f - NDC.y };
+        const auto lensOffset = sampleUniformDisk(u1, u2);
         const auto lensHit = data->lensCenter + data->apertureX * lensOffset.x + data->apertureY * lensOffset.y;
         const auto dir = data->lensCenter - filmHit;
         const auto planeOfFocusHit = data->lensCenter + dir * (data->focalDistance / dot(dir, data->forward));
         ray.origin = lensHit;
         ray.direction = normalize(planeOfFocusHit - ray.origin);
         ray.t = 0.0f;  // TODO:motion blur
+        weight = { 1.0f };
     }
     static_assert(std::is_same_v<SensorFunc, decltype(&rayGen)>);
 }  // namespace Piper

@@ -151,9 +151,7 @@ namespace Piper {
             lightSampler->preprocess({ lights.cbegin(), lights.cend() });
             const auto integrator = syncLoad<Integrator>(config->at("Integrator"));
             const auto node = buildScene(tracer, config->at("Scene"));
-            const auto& attr = config->viewAsObject();
-            const auto samplerDesc = attr.find(String{ "Sampler", context().getAllocator() });
-            const auto sampler = samplerDesc != attr.cend() ? syncLoad<Sampler>(samplerDesc->second) : SharedPtr<Sampler>{};
+            const auto sampler = syncLoad<Sampler>(config->at("Sampler"));
             return tracer.buildPipeline(node, *sensor, *integrator, renderDriver, *lightSampler, lights, sampler.get(), width,
                                         height);
         }
@@ -172,6 +170,7 @@ namespace Piper {
                 context().getLogger().record(LogLevel::Warning, "Some invalid pixels are detected.", PIPER_SOURCE_LOCATION());
             }
             // TODO:filesystem
+
             Imf::RgbaOutputFile out(dest.c_str(), width, height, Imf::WRITE_RGB);
             out.setFrameBuffer(rgba.data(), 1, width);
             out.writePixels(height);

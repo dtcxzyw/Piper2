@@ -48,7 +48,7 @@ namespace Piper {
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&blackBodyInit)>);
     extern "C" void blackBodySample(RestrictedContext*, const void*, const void*, const Vec&, const Normal<float, FOR::Shading>&,
-                                    BxDFPart, SurfaceSample& sample) {
+                                    BxDFPart, float, float, SurfaceSample& sample) {
         sample.pdf = Dimensionless<float>{ 0.0f };
     }
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&blackBodySample)>);
@@ -188,7 +188,7 @@ namespace Piper {
                 SurfaceSample& sample, const BxDFs&... bxdfs) {
         sample.pdf = Dimensionless<float>{ 0.0f };
         const auto count = countN(mask, require, bxdfs...);
-        if(count == 0) 
+        if(count == 0)
             return;
         const auto select = std::min(static_cast<uint32_t>(std::floor(u1 * static_cast<float>(count))), count - 1);
         u1 = u1 * static_cast<float>(count) - static_cast<float>(select);
@@ -205,34 +205,35 @@ namespace Piper {
             sample.pdf = sample.pdf / Dimensionless<float>{ static_cast<float>(count) };
     }
 
-#define KERNEL_FUNCTION_GROUP(PREFIX, BSDF, ...)                                                                           \
-    extern "C" void PREFIX##Sample(RestrictedContext* context, const void*, const void* storage, const Vec& wo,            \
-                                   const Normal<float, FOR::Shading>& Ng, const BxDFPart require, SurfaceSample& sample) { \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                              \
-        Piper::sample(bsdf->mask, piperSample(context), piperSample(context), wo, Ng, require, sample, __VA_ARGS__);       \
-    }                                                                                                                      \
-    static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&PREFIX##Sample)>);                                           \
-                                                                                                                           \
-    extern "C" void PREFIX##Evaluate(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,   \
-                                     const Normal<float, FOR::Shading>& Ng, const BxDFPart require, BxDFValue& f) {        \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                              \
-        const auto addition = ((dot(wo, Ng) * dot(wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Transmission);    \
-        f = {};                                                                                                            \
-        evaluateN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, addition, f, __VA_ARGS__);            \
-    }                                                                                                                      \
-    static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&PREFIX##Evaluate)>);                                       \
-                                                                                                                           \
-    extern "C" void PREFIX##Pdf(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,        \
-                                const Normal<float, FOR::Shading>&, const BxDFPart require, PDFValue& pdf) {               \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                              \
-        pdf = Dimensionless<float>{ 0.0f };                                                                                \
-        const auto count = countN(bsdf->mask, require, __VA_ARGS__);                                                       \
-        if(count == 0)                                                                                                     \
-            return;                                                                                                        \
-        pdfN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, __VA_ARGS__);                         \
-        if(count > 1)                                                                                                      \
-            pdf = pdf / Dimensionless<float>{ static_cast<float>(count) };                                                 \
-    }                                                                                                                      \
+#define KERNEL_FUNCTION_GROUP(PREFIX, BSDF, ...)                                                                         \
+    extern "C" void PREFIX##Sample(RestrictedContext* context, const void*, const void* storage, const Vec& wo,          \
+                                   const Normal<float, FOR::Shading>& Ng, const BxDFPart require, const float u1,        \
+                                   const float u2, SurfaceSample& sample) {                                              \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                            \
+        Piper::sample(bsdf->mask, u1, u2, wo, Ng, require, sample, __VA_ARGS__);                                         \
+    }                                                                                                                    \
+    static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&PREFIX##Sample)>);                                         \
+                                                                                                                         \
+    extern "C" void PREFIX##Evaluate(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi, \
+                                     const Normal<float, FOR::Shading>& Ng, const BxDFPart require, BxDFValue& f) {      \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                            \
+        const auto addition = ((dot(wo, Ng) * dot(wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Transmission);  \
+        f = {};                                                                                                          \
+        evaluateN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, addition, f, __VA_ARGS__);          \
+    }                                                                                                                    \
+    static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&PREFIX##Evaluate)>);                                     \
+                                                                                                                         \
+    extern "C" void PREFIX##Pdf(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,      \
+                                const Normal<float, FOR::Shading>&, const BxDFPart require, PDFValue& pdf) {             \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                            \
+        pdf = Dimensionless<float>{ 0.0f };                                                                              \
+        const auto count = countN(bsdf->mask, require, __VA_ARGS__);                                                     \
+        if(count == 0)                                                                                                   \
+            return;                                                                                                      \
+        pdfN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, __VA_ARGS__);                       \
+        if(count > 1)                                                                                                    \
+            pdf = pdf / Dimensionless<float>{ static_cast<float>(count) };                                               \
+    }                                                                                                                    \
     static_assert(std::is_same_v<SurfacePdfFunc, decltype(&PREFIX##Pdf)>);
 
     struct MatteBSDF final {
@@ -525,7 +526,7 @@ namespace Piper {
                 res.f = mReflection * (f / abs(res.wi.z));
             } else {
                 // specular transmission
-                if(!refract(wo, { { { 0.0f }, { 0.0f }, { 1.0f } }, Unsafe{} }, mEta, res.wi)) 
+                if(!refract(wo, { { { 0.0f }, { 0.0f }, { 1.0f } }, Unsafe{} }, mEta, res.wi))
                     return;
 
                 res.part = BxDFPart::Transmission | BxDFPart::Specular;
@@ -677,7 +678,8 @@ namespace Piper {
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&mirrorInit)>);
 
     extern "C" void mirrorSample(RestrictedContext*, const void*, const void* storage, const Vec& wo,
-                                 const Normal<float, FOR::Shading>&, const BxDFPart require, SurfaceSample& sample) {
+                                 const Normal<float, FOR::Shading>&, const BxDFPart require, float, float,
+                                 SurfaceSample& sample) {
         const auto* bsdf = static_cast<const MirrorBSDF*>(storage);
         constexpr auto part = BxDFPart::Reflection | BxDFPart::Specular;
         if(match(part, require)) {

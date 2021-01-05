@@ -19,7 +19,6 @@
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/FileSystem.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
-#include "../../../Interface/Infrastructure/PerformancePrimitivesLibrary.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
@@ -35,15 +34,12 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/Linker/Linker.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
-#include <llvm/Transforms/Utils/Cloning.h>
 #pragma warning(pop)
-#include <mutex>
 #include <new>
 #include <utility>
 

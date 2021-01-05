@@ -23,7 +23,8 @@ namespace Piper {
     class Profiler : public Object {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         PIPER_INTERFACE_CONSTRUCT(Profiler, Object)
-        virtual uint32_t registerDesc(StringView group, StringView name, const void* uid, StatisticsType type) = 0;
+        virtual uint32_t registerDesc(StringView group, StringView name, const void* uid, StatisticsType type,
+                                      uint32_t maxValue = 0) = 0;
         [[nodiscard]] virtual String generateReport() const = 0;
         virtual ~Profiler() = default;
     };

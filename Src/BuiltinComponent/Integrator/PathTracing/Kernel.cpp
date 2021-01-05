@@ -44,10 +44,8 @@ namespace Piper {
                 Spectrum<Dimensionless<float>> f;
                 piperSurfaceEvaluate(context, surface.instance, surfaceStorage, wo, wi, Ng, noSpecular, f);
                 if(f.valid()) {
-                    bool occlude;
                     const RayInfo shadowRay{ hit, light.dir, t };
-                    piperOcclude(context, shadowRay, 1e-3f, 1e5f, occlude);
-                    if(!occlude) {
+                    if(!piperOcclude(context, shadowRay, 1e-3f, 1e5f)) {
                         auto w = abs(wi.z) / light.pdf;
                         if(!select.delta) {
                             Dimensionless<float> pdf;
@@ -160,7 +158,7 @@ namespace Piper {
             // TODO:better p estimation(etaScale)
             if(depth > 3) {
                 const auto p = std::fmax(0.05f, 1.0f - std::fmax(pf.r.val, std::fmax(pf.g.val, pf.b.val)));
-                if(piperSample(decay(context)) < p)
+                if(piperSample(context) < p)
                     break;
                 pf = pf / Dimensionless<float>{ 1.0f - p };
             }

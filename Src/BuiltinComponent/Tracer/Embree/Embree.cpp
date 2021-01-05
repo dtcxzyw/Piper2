@@ -49,7 +49,7 @@ namespace Piper {
     private:
         using BoolCounter = std::pair<std::atomic_uint64_t, std::atomic_uint64_t>;
         using FloatCounter = std::pair<std::atomic<double>, std::atomic_uint64_t>;
-        using UIntCounter = UMap<std::thread::id, UMap<uint32_t, uint64_t>, std::hash<std::thread::id>>;
+        using UIntCounter = DynamicArray<std::atomic_uint64_t>;
         using TimeCounter = std::pair<std::atomic_uint64_t, std::atomic_uint64_t>;
         struct Record final {
             StatisticsType type;
@@ -70,7 +70,7 @@ namespace Piper {
                         fc.second = 0;
                     } break;
                     case StatisticsType::UInt: {
-                        new(&uc) UIntCounter{ rhs.uc.get_allocator() };
+                        new(&uc) UIntCounter{ std::move(rhs.uc) };
                     } break;
                     case StatisticsType::Time: {
                         tc.first = 0;
@@ -98,8 +98,8 @@ namespace Piper {
     public:
         explicit EmbreeProfiler(PiperContext& context)
             : Profiler(context), mStatistics(context.getAllocator()), mID(context.getAllocator()) {}
-        uint32_t registerDesc(const StringView group, const StringView name, const void* uid,
-                              const StatisticsType type) override {
+        uint32_t registerDesc(const StringView group, const StringView name, const void* uid, const StatisticsType type,
+                              const uint32_t maxValue = 0) override {
             std::lock_guard<std::mutex> guard{ mMutex };
             const auto iter = mID.find(uid);
             if(iter != mID.cend())
@@ -115,7 +115,7 @@ namespace Piper {
                     record.bc.second = 0;
                 } break;
                 case StatisticsType::UInt: {
-                    new(&record.uc) UIntCounter{ context().getAllocator() };
+                    new(&record.uc) UIntCounter{ maxValue + 1, context().getAllocator() };
                 } break;
                 case StatisticsType::Float: {
                     record.fc.first = 0.0;
@@ -148,17 +148,7 @@ namespace Piper {
             return Clock::now().time_since_epoch().count();
         }
         void addUInt(const uint32_t id, const uint32_t val) {
-            const auto locate = [this, id]() -> UMap<uint32_t, uint64_t>& {
-                // TODO:lock free or double check
-                std::lock_guard<std::mutex> guard{ mMutex };
-                auto& map = mStatistics[id].uc;
-                const auto iter = map.find(std::this_thread::get_id());
-                if(iter != map.cend())
-                    return iter->second;
-                return map.emplace(std::this_thread::get_id(), UMap<uint32_t, uint64_t>{ context().getAllocator() })
-                    .first->second;
-            };
-            ++locate()[val];
+            ++mStatistics[id].uc[val];
         }
         [[nodiscard]] String generateReport() const override {
             std::lock_guard<std::mutex> guard{ mMutex };
@@ -186,22 +176,22 @@ namespace Piper {
                         const auto& record = item.uc;
                         auto sum = 0.0;
                         uint64_t tot = 0;
-                        Map<uint32_t, uint64_t> count{ context().getAllocator() };
-                        for(auto&& part : record) {
-                            for(auto [val, cnt] : part.second) {
-                                sum += static_cast<double>(val) * static_cast<double>(cnt);
-                                tot += cnt;
-                                count[val] += cnt;
-                            }
+                        String res{ context().getAllocator() };
+                        for(uint32_t idx = 0; idx < record.size(); ++idx) {
+                            const uint64_t cnt = record[idx];
+                            sum += static_cast<double>(idx) * static_cast<double>(cnt);
+                            tot += cnt;
                         }
-                        auto res = "mean " + toString(context().getAllocator(), sum / static_cast<double>(std::max(1ULL, tot))) +
-                            " (" + toString(context().getAllocator(), tot) + " samples)\n";
-                        for(auto [val, cnt] : count)
-                            res += toString(context().getAllocator(), val) + ": " +
+                        for(uint32_t idx = 0; idx < record.size(); ++idx) {
+                            const uint64_t cnt = record[idx];
+                            res += toString(context().getAllocator(), idx) + ": " +
                                 toString(context().getAllocator(),
                                          static_cast<double>(cnt) / static_cast<double>(std::max(1ULL, tot)) * 100.0) +
                                 "% (" + toString(context().getAllocator(), cnt) + " samples)\n";
-                        report.emplace_back(res);
+                        }
+                        report.emplace_back("mean " +
+                                            toString(context().getAllocator(), sum / static_cast<double>(std::max(1ULL, tot))) +
+                                            " (" + toString(context().getAllocator(), tot) + " samples)\n" + res);
                     } break;
                     case StatisticsType::Time: {
                         using Ratio = std::ratio_divide<std::nano, Clock::period>;
@@ -256,9 +246,9 @@ namespace Piper {
         LightFuncGroup* lights;
         LightSelectFunc lightSample;
         const void* LSPayload;
-        SampleFunc generate;
+        SampleStartFunc start;
+        SampleGenerateFunc generate;
         const void* SAPayload;
-        float* samples;
         uint32_t sample;
         uint32_t maxDimension;
         SensorNDCAffineTransform transform;
@@ -293,27 +283,28 @@ namespace Piper {
     };
     // static void intersect() {}
 
-    void piperEmbreeStatisticsUInt(RestrictedContext* context, const uint32_t id, const uint32_t val) {
+    static void piperEmbreeStatisticsUInt(RestrictedContext* context, const uint32_t id, const uint32_t val) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         ctx->profiler->addUInt(id, val);
     }
-    void piperEmbreeStatisticsBool(RestrictedContext* context, const uint32_t id, const bool val) {
+    static void piperEmbreeStatisticsBool(RestrictedContext* context, const uint32_t id, const bool val) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         ctx->profiler->addBool(id, val);
     }
-    void piperEmbreeStatisticsFloat(RestrictedContext* context, const uint32_t id, const float val) {
+    static void piperEmbreeStatisticsFloat(RestrictedContext* context, const uint32_t id, const float val) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         ctx->profiler->addFloat(id, val);
     }
-    void piperEmbreeStatisticsTime(RestrictedContext* context, const uint32_t id, const uint64_t val) {
+    static void piperEmbreeStatisticsTime(RestrictedContext* context, const uint32_t id, const uint64_t val) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         ctx->profiler->addTime(id, val);
     }
-    void piperEmbreeGetTime(RestrictedContext*, uint64_t& val) {
+    static void piperEmbreeGetTime(RestrictedContext*, uint64_t& val) {
         val = EmbreeProfiler::getTime();
     }
 
-    void piperEmbreeTrace(FullContext* context, const RayInfo& ray, const float minT, const float maxT, TraceResult& result) {
+    static void piperEmbreeTrace(FullContext* context, const RayInfo& ray, const float minT, const float maxT,
+                                 TraceResult& result) {
         auto* ctx = reinterpret_cast<KernelArgument*>(context);
         const auto begin = EmbreeProfiler::getTime();
 
@@ -389,7 +380,7 @@ namespace Piper {
         ctx->profiler->addTime(ctx->profileIntersectTime, end - begin);
     }
 
-    void piperEmbreeOcclude(FullContext* context, const RayInfo& ray, const float minT, const float maxT, bool& result) {
+    static bool piperEmbreeOcclude(FullContext* context, const RayInfo& ray, const float minT, const float maxT) {
         const auto* ctx = reinterpret_cast<KernelArgument*>(context);
         const auto begin = EmbreeProfiler::getTime();
         IntersectContext intersectCtx;
@@ -415,74 +406,97 @@ namespace Piper {
         // TODO:Coroutine+SIMD?
         rtcOccluded1(ctx->scene, &intersectCtx.ctx, &rayInfo);
 
-        result = (rayInfo.tfar < 0.0f);
+        const auto result = (rayInfo.tfar < 0.0f);
         ctx->profiler->addBool(ctx->profileOccludeHit, result);
         const auto end = EmbreeProfiler::getTime();
         ctx->profiler->addTime(ctx->profileOccludeTime, end - begin);
+        return result;
     }
 
-    void piperEmbreeSurfaceInit(FullContext* context, const uint64_t instance, const float t, const Vector2<float>& texCoord,
-                                const Normal<float, FOR::Shading>& Ng, const Face face, const TransportMode mode,
-                                SurfaceStorage& storage, bool& noSpecular) {
+    using RandomEngine = std::mt19937_64;
+
+    struct PerSampleContext final {
+        KernelArgument argument;
+        RandomEngine eng;
+        uint32_t currentDimension;
+        uint64_t sampleIndex;
+    };
+
+    static float piperEmbreeSample(FullContext* context) {
+        auto* ctx = reinterpret_cast<PerSampleContext*>(context);
+        if(ctx->currentDimension < ctx->argument.maxDimension) {
+            float res;
+            ctx->argument.generate(ctx->argument.SAPayload, ctx->sampleIndex, ctx->currentDimension++, res);
+            return res;
+        }
+        return std::generate_canonical<float, -1>(ctx->eng);
+    }
+
+    static void piperEmbreeSurfaceInit(FullContext* context, const uint64_t instance, const float t,
+                                       const Vector2<float>& texCoord, const Normal<float, FOR::Shading>& Ng, const Face face,
+                                       const TransportMode mode, SurfaceStorage& storage, bool& noSpecular) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
         func->init(decay(context), func->SFPayload, t, texCoord, Ng, face, mode, &storage, noSpecular);
     }
-    void piperEmbreeSurfaceSample(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
-                                  const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng, BxDFPart require,
-                                  SurfaceSample& sample) {
+    static void piperEmbreeSurfaceSample(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
+                                         const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng,
+                                         const BxDFPart require, SurfaceSample& sample) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
-        func->sample(decay(context), func->SFPayload, &storage, wo, Ng, require, sample);
+        func->sample(decay(context), func->SFPayload, &storage, wo, Ng, require, piperEmbreeSample(context),
+                     piperEmbreeSample(context), sample);
     }
-    void piperEmbreeSurfaceEvaluate(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
-                                    const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
-                                    const Normal<float, FOR::Shading>& Ng, BxDFPart require, Spectrum<Dimensionless<float>>& f) {
+    static void piperEmbreeSurfaceEvaluate(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
+                                           const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
+                                           const Normal<float, FOR::Shading>& Ng, const BxDFPart require,
+                                           Spectrum<Dimensionless<float>>& f) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
         func->evaluate(decay(context), func->SFPayload, &storage, wo, wi, Ng, require, f);
     }
-    void piperEmbreeSurfacePdf(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
-                               const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
-                               const Normal<float, FOR::Shading>& Ng, BxDFPart require, Dimensionless<float>& pdf) {
+    static void piperEmbreeSurfacePdf(FullContext* context, const uint64_t instance, const SurfaceStorage& storage,
+                                      const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
+                                      const Normal<float, FOR::Shading>& Ng, const BxDFPart require, Dimensionless<float>& pdf) {
         const auto* func = reinterpret_cast<const InstanceUserData*>(instance);
         func->pdf(decay(context), func->SFPayload, &storage, wo, wi, Ng, require, pdf);
     }
-    void piperEmbreeLightSelect(FullContext* context, LightSelectResult& select) {
+    static void piperEmbreeLightSelect(FullContext* context, LightSelectResult& select) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        ctx->lightSample(decay(context), ctx->LSPayload, select);
+        ctx->lightSample(decay(context), ctx->LSPayload, piperEmbreeSample(context), select);
         select.light = reinterpret_cast<uint64_t>(ctx->lights + select.light);
     }
-    void piperEmbreeLightInit(FullContext* context, const uint64_t light, const float t, LightStorage& storage) {
+    static void piperEmbreeLightInit(FullContext* context, const uint64_t light, const float t, LightStorage& storage) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
         func->init(decay(context), func->LIPayload, t, &storage);
     }
-    void piperEmbreeLightSample(FullContext* context, const uint64_t light, const LightStorage& storage,
-                                const Point<Distance, FOR::World>& hit, LightSample& sample) {
+    static void piperEmbreeLightSample(FullContext* context, const uint64_t light, const LightStorage& storage,
+                                       const Point<Distance, FOR::World>& hit, LightSample& sample) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
-        func->sample(decay(context), func->LIPayload, &storage, hit, sample);
+        func->sample(decay(context), func->LIPayload, &storage, hit, piperEmbreeSample(context), piperEmbreeSample(context),
+                     sample);
     }
-    void piperEmbreeLightEvaluate(FullContext* context, const uint64_t light, const LightStorage& storage,
-                                  const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
-                                  Spectrum<Radiance>& rad) {
+    static void piperEmbreeLightEvaluate(FullContext* context, const uint64_t light, const LightStorage& storage,
+                                         const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
+                                         Spectrum<Radiance>& rad) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
         func->evaluate(decay(context), func->LIPayload, &storage, lightSourceHit, dir, rad);
     }
-    void piperEmbreeLightPdf(FullContext* context, uint64_t light, const LightStorage& storage,
-                             const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
-                             Dimensionless<float>& pdf) {
+    static void piperEmbreeLightPdf(FullContext* context, uint64_t light, const LightStorage& storage,
+                                    const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
+                                    Dimensionless<float>& pdf) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
         func->pdf(decay(context), func->LIPayload, &storage, lightSourceHit, dir, pdf);
     }
 
-    void piperEmbreeQueryCall(RestrictedContext* context, const uint32_t id, CallInfo& info) {
+    static void piperEmbreeQueryCall(RestrictedContext* context, const uint32_t id, CallInfo& info) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         info = ctx->callInfo[id];
     }
 
     // TODO:more option
-    void piperEmbreePrintFloat(RestrictedContext*, const char* msg, const float ref) {
+    static void piperEmbreePrintFloat(RestrictedContext*, const char* msg, const float ref) {
         printf("%s:%lf\n", msg, static_cast<double>(ref));
     }
 
@@ -490,39 +504,28 @@ namespace Piper {
         const KernelArgument* SBT;
     };
 
-    using RandomEngine = std::mt19937_64;
-
-    struct PerSampleContext final {
-        KernelArgument argument;
-        RandomEngine eng;
-        uint32_t sampleIdx;
-        float* samples;
-    };
-
     // make compiler happy
-    extern void piperMain(const uint32_t idx, const MainArgument* arg);
+    extern void piperMain(uint32_t idx, const MainArgument* arg);
     static void piperEmbreeMain(const uint32_t idx, const MainArgument* arg) {
         const auto* SBT = arg->SBT;
         const auto x = SBT->rect.left + idx % SBT->rect.width;
         const auto y = SBT->rect.top + idx / SBT->rect.width;
-        const auto sampleIdx = x + y * SBT->rect.width;
-        PerSampleContext context{ *arg->SBT, RandomEngine{ sampleIdx * SBT->rect.height + SBT->sample }, 0,
-                                  SBT->samples + sampleIdx * SBT->maxDimension * sizeof(float) };
-        SBT->generate(SBT->SAPayload, x, y, SBT->sample, context.samples);
-        RayInfo ray;
+        PerSampleContext context{ *arg->SBT, RandomEngine{ (x + y * SBT->rect.width) * SBT->rect.height + SBT->sample }, 2, 0 };
         Vector2<float> point;
-        SBT->rayGen(reinterpret_cast<RestrictedContext*>(&context), SBT->RGPayload, x, y, SBT->rect.width, SBT->rect.height,
-                    SBT->transform, ray, point);
+        SBT->start(SBT->SAPayload, x, y, SBT->sample, context.sampleIndex, point);
+
+        const auto& transform = SBT->transform;
+        const auto NDC = Vector2<float>{ transform.ox + transform.sx * point.x / static_cast<float>(SBT->rect.width),
+                                         transform.oy + transform.sy * point.y / static_cast<float>(SBT->rect.height) };
+        RayInfo ray;
+        Dimensionless<float> weight;
+        SBT->rayGen(reinterpret_cast<RestrictedContext*>(&context), SBT->RGPayload, NDC,
+                    piperEmbreeSample(reinterpret_cast<FullContext*>(&context)),
+                    piperEmbreeSample(reinterpret_cast<FullContext*>(&context)), ray, weight);
+
         Spectrum<Radiance> sample;
         SBT->trace(reinterpret_cast<FullContext*>(&context), SBT->TRPayload, ray, sample);
-        SBT->accumulate(reinterpret_cast<RestrictedContext*>(&context), SBT->ACPayload, point, sample);
-    }
-
-    float piperEmbreeSample(RestrictedContext* context) {
-        auto* ctx = reinterpret_cast<PerSampleContext*>(context);
-        if(ctx->sampleIdx < ctx->argument.maxDimension)
-            return ctx->samples[ctx->sampleIdx++];
-        return std::generate_canonical<float, -1>(ctx->eng);
+        SBT->accumulate(reinterpret_cast<RestrictedContext*>(&context), SBT->ACPayload, point, sample * weight);
     }
 
     static LinkableProgram prepareKernelNative(PiperContext& context, const bool debug) {
@@ -802,6 +805,7 @@ namespace Piper {
         ResourceHolder mHolder;
         SharedPtr<EmbreeNode> mScene;
         EmbreeProfiler mProfiler;
+        uint32_t mSamplesPerPixel;
 
         void* upload(const SBTPayload& payload) {
             if(payload.empty())
@@ -824,7 +828,7 @@ namespace Piper {
 
             const MaterializeContext materialize{
                 tracer, mHolder, CallSiteRegister{ [&](const SharedPtr<RTProgram>& program, const SBTPayload& payload) {
-                    const auto id = static_cast<size_t>(call.size());
+                    const auto id = static_cast<uint32_t>(call.size());
                     const auto* prog = dynamic_cast<EmbreeRTProgram*>(program.get());
                     modules.emplace_back(prog->program);
                     call.emplace_back(prog->symbol, upload(payload));
@@ -939,17 +943,16 @@ namespace Piper {
             modules.push_back(TRRTP.program);
             mArg.TRPayload = upload(TRP.payload);
 
-            String sampleSymbol;
-            if(sampler) {
-                auto SAP = sampler->materialize(materialize);
-                auto& SARTP = dynamic_cast<EmbreeRTProgram&>(*SAP.sample);
-                modules.push_back(SARTP.program);
-                mArg.SAPayload = upload(SAP.payload);
-                mArg.maxDimension = SAP.maxDimension;
-                mArg.samples = mArena.alloc<float>(width * height * SAP.maxDimension);
-                sampleSymbol = SARTP.symbol;
-            } else
-                mArg.maxDimension = 0;
+            // TODO:pass image size or real rendering window size?
+            auto SAP = sampler->materialize(materialize, width, height);
+            auto& start = dynamic_cast<EmbreeRTProgram&>(*SAP.start);
+            auto& generate = dynamic_cast<EmbreeRTProgram&>(*SAP.generate);
+            modules.push_back(start.program);
+            modules.push_back(generate.program);
+
+            mArg.SAPayload = upload(SAP.payload);
+            mArg.maxDimension = SAP.maxDimension;
+            mSamplesPerPixel = SAP.samplesPerPixel;
 
             auto& accelerator = tracer.getAccelerator();
             auto kernel = accelerator.compileKernel(Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
@@ -1006,8 +1009,8 @@ namespace Piper {
             mArg.rayGen = static_cast<SensorFunc>(mKernel->lookup(RGRTP.symbol));
             mArg.trace = static_cast<IntegratorFunc>(mKernel->lookup(TRRTP.symbol));
 
-            mArg.generate = (sampler ? static_cast<SampleFunc>(mKernel->lookup(sampleSymbol)) :
-                                       ([](const void*, uint32_t, uint32_t, uint32_t, float*) {}));
+            mArg.start = static_cast<SampleStartFunc>(mKernel->lookup(start.symbol));
+            mArg.generate = static_cast<SampleGenerateFunc>(mKernel->lookup(generate.symbol));
 
             static char p1, p2, p3, p4;
             mArg.profileIntersectHit = mProfiler.registerDesc("Tracer", "Intersect Hit", &p1, StatisticsType::Bool);
@@ -1037,6 +1040,9 @@ namespace Piper {
         }
         String generateStatisticsReport() const override {
             return mProfiler.generateReport();
+        }
+        uint32_t getSamplesPerPixel() const noexcept override {
+            return mSamplesPerPixel;
         }
     };
 

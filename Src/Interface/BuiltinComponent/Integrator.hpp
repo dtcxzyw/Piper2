@@ -28,6 +28,6 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Integrator, Object)
         virtual ~Integrator() = default;
 
-        virtual IntegratorProgram materialize(const MaterializeContext& ctx) const = 0;
+        [[nodiscard]] virtual IntegratorProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

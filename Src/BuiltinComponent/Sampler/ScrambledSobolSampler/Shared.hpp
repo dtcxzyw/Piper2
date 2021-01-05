@@ -18,6 +18,12 @@
 #include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct ConstantData final {
+    constexpr uint32_t numSobolDimensions = 1024;
+    constexpr uint32_t sobolMatrixSize = 52;
+
+    struct SobolData final {
+        uint32_t resolution;
+        uint32_t log2Resolution;
+        uint32_t scramble;
     };
 }  // namespace Piper

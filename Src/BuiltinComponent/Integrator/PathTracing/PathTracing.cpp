@@ -43,11 +43,11 @@ namespace Piper {
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
                 "trace");
             static char p1, p2, p3;
-            res.payload =
-                packSBTPayload(context().getAllocator(),
-                               Data{ mMaxDepth, ctx.profiler.registerDesc("Integrator", "Trace Depth", &p1, StatisticsType::UInt),
-                                     ctx.profiler.registerDesc("Integrator", "Time Per Path", &p2, StatisticsType::Time),
-                                     ctx.profiler.registerDesc("Integrator", "Valid Rays", &p3, StatisticsType::Bool) });
+            res.payload = packSBTPayload(
+                context().getAllocator(),
+                Data{ mMaxDepth, ctx.profiler.registerDesc("Integrator", "Trace Depth", &p1, StatisticsType::UInt, mMaxDepth + 1),
+                      ctx.profiler.registerDesc("Integrator", "Time Per Path", &p2, StatisticsType::Time),
+                      ctx.profiler.registerDesc("Integrator", "Valid Rays", &p3, StatisticsType::Bool) });
             return res;
         }
     };  // namespace Piper

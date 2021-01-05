@@ -28,13 +28,10 @@ namespace Piper {
     class FixedSampler final : public RenderDriver {
     private:
         String mKernelPath;
-        uint32_t mSample;
 
     public:
-        FixedSampler(PiperContext& context, const String& path, const SharedPtr<Config>& config)
-            : RenderDriver(context), mKernelPath(path + "/Kernel.bc") {
-            mSample = static_cast<uint32_t>(config->at("SPP")->get<uintmax_t>());
-        }
+        FixedSampler(PiperContext& context, const String& path, const SharedPtr<Config>&)
+            : RenderDriver(context), mKernelPath(path + "/Kernel.bc") {}
         void renderFrame(DynamicArray<Spectrum<Radiance>>& res, const uint32_t width, const uint32_t height,
                          const RenderRECT& rect, const SensorNDCAffineTransform& transform, Tracer& tracer,
                          Pipeline& pipeline) override {
@@ -47,9 +44,10 @@ namespace Piper {
             // buffer->reset();
             payload.res = res.data();
 
-            for(uint32_t i = 0; i < mSample; ++i) {
+            const auto spp = pipeline.getSamplesPerPixel();
+            for(uint32_t i = 0; i < spp; ++i) {
                 auto stage = context().getErrorHandler().enterStage("progress " + toString(context().getAllocator(), i + 1) +
-                                                                        "/" + toString(context().getAllocator(), mSample),
+                                                                        "/" + toString(context().getAllocator(), spp),
                                                                     PIPER_SOURCE_LOCATION());
                 tracer.trace(pipeline, rect, packSBTPayload(context().getAllocator(), payload), transform, i);
             }
@@ -57,12 +55,11 @@ namespace Piper {
             // auto bufferCPU = buffer->download();
             // bufferCPU.wait();
             // memcpy(res.data(),bufferCPU->data(), bufferCPU->size());
-            for(auto&& pixel : res) {
-                pixel = pixel / Dimensionless<float>{ static_cast<float>(mSample) };
-                // printf("%f %f %f\n", pixel.r.val, pixel.g.val, pixel.b.val);
-            }
+            for(auto&& pixel : res)
+                pixel = pixel / Dimensionless<float>{ static_cast<float>(spp) };
         }
-        RenderDriverProgram materialize(const MaterializeContext& ctx) const override {
+
+        [[nodiscard]] RenderDriverProgram materialize(const MaterializeContext& ctx) const override {
             RenderDriverProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.accumulate = ctx.tracer.buildProgram(

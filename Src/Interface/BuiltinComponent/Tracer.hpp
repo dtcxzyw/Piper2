@@ -35,7 +35,8 @@ namespace Piper {
     class Pipeline : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Pipeline, Object)
-        virtual String generateStatisticsReport() const = 0;
+        [[nodiscard]] virtual String generateStatisticsReport() const = 0;
+        [[nodiscard]] virtual uint32_t getSamplesPerPixel() const noexcept = 0;
         virtual ~Pipeline() = default;
     };
 

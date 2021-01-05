@@ -15,7 +15,6 @@
 */
 
 #pragma once
-#include "../PiperAPI.hpp"
 #include "PhysicalQuantitySI.hpp"
 #include "Transform.hpp"
 #include <cstdint>
@@ -130,8 +129,8 @@ namespace Piper {
         float ox, oy, sx, sy;
     };
 
-    using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
-                                const SensorNDCAffineTransform& transform, RayInfo& ray, Vector2<float>& point);
+    using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& NDC, float u1, float u2,
+                                RayInfo& ray, Dimensionless<float>& weight);
 
     enum class BxDFPart : uint8_t { Reflection = 1, Transmission = 2, Diffuse = 4, Specular = 8, Glossy = 16, All = 31 };
     enum class TransportMode : uint8_t { Radiance, Importance };
@@ -159,9 +158,10 @@ namespace Piper {
     using SurfaceInitFunc = void (*)(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
                                      const Normal<float, FOR::Shading>& Ng, Face face, TransportMode mode, void* storage,
                                      bool& noSpecular);
+    // TODO:provide 4 dimensions? (consider MDL)
     using SurfaceSampleFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
                                        const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng,
-                                       BxDFPart require, SurfaceSample& sample);
+                                       BxDFPart require, float u1, float u2, SurfaceSample& sample);
     using SurfaceEvaluateFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
                                          const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                                          const Normal<float, FOR::Shading>& Ng, BxDFPart require,
@@ -189,10 +189,10 @@ namespace Piper {
         bool delta;
     };
     // TODO:spatial select?
-    using LightSelectFunc = void (*)(RestrictedContext* context, const void* SBTData, LightSelectResult& select);
+    using LightSelectFunc = void (*)(RestrictedContext* context, const void* SBTData, float u, LightSelectResult& select);
     using LightInitFunc = void (*)(RestrictedContext* context, const void* SBTData, float t, void* storage);
     using LightSampleFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
-                                     const Point<Distance, FOR::World>& hit, LightSample& sample);
+                                     const Point<Distance, FOR::World>& hit, float u1, float u2, LightSample& sample);
     using LightEvaluateFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
                                        const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
                                        Spectrum<Radiance>& rad);
@@ -200,7 +200,9 @@ namespace Piper {
                                   const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
                                   Dimensionless<float>& pdf);
 
-    using SampleFunc = void (*)(const void* SBTData, uint32_t x, uint32_t y, uint32_t s, float* samples);
+    using SampleStartFunc = void (*)(const void* SBTData, uint32_t x, uint32_t y, uint32_t sample, uint64_t& idx,
+                                     Vector2<float>& pos);
+    using SampleGenerateFunc = void (*)(const void* SBTData, uint64_t idx, uint32_t dim, float& val);
 
     enum class TextureWrap : uint32_t { Repeat, Mirror };
     using TextureSampleFunc = void (*)(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
@@ -251,10 +253,10 @@ namespace Piper {
                        const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf);
 
     void piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result);
-    void piperOcclude(FullContext* context, const RayInfo& ray, float minT, float maxT, bool& result);
+    bool piperOcclude(FullContext* context, const RayInfo& ray, float minT, float maxT);
     // TODO:terminate/ignore intersection
-    // TODO:need FullContext
-    float piperSample(RestrictedContext* context);
+
+    float piperSample(FullContext* context);
 
     void piperStatisticsUInt(RestrictedContext* context, uint32_t id, uint32_t val);
     void piperStatisticsBool(RestrictedContext* context, uint32_t id, bool val);

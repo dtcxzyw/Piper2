@@ -23,27 +23,50 @@
 #include "Shared.hpp"
 
 // https://web.maths.unsw.edu.au/~fkuo/sobol/
+// based on recommended new-joe-kuo-6.21201 data
+// TODO: Optimization of the Direction Numbers of the Sobol Sequences.
+// TODO: Enumerating Quasi-Monte Carlo Point Sequences in Elementary Intervals
+// TODO: tiled-rendering
 namespace Piper {
-    class ScrambledSobolSampler final : public Sampler {
+    class SobolSampler final : public Sampler {
     private:
         String mKernelPath;
+        uint32_t mSamplesPerPixel;
+        uint32_t mScramble;
 
     public:
-        ScrambledSobolSampler(PiperContext& context, const String& path, const SharedPtr<Config>& config)
-            : Sampler(context), mKernelPath(path + "/Kernel.bc") {
-            context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+        SobolSampler(PiperContext& context, const String& path, const SharedPtr<Config>& config)
+            : Sampler(context), mKernelPath(path + "/Kernel.bc"),
+              mSamplesPerPixel(static_cast<uint32_t>(config->at("SamplesPerPixel")->get<uintmax_t>())),
+              mScramble(static_cast<uint32_t>(config->at("Scramble")->get<uintmax_t>())) {
+            if((mSamplesPerPixel & -mSamplesPerPixel) != mSamplesPerPixel) {
+                mSamplesPerPixel = 1U << static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(mSamplesPerPixel))));
+                if(context.getLogger().allow(LogLevel::Warning))
+                    context.getLogger().record(LogLevel::Warning,
+                                               "The samples per pixel is not the power of 2. It was rounded up to " +
+                                                   toString(context.getAllocator(), mSamplesPerPixel),
+                                               PIPER_SOURCE_LOCATION());
+            }
         }
-        SamplerProgram materialize(const MaterializeContext& ctx) const override {
+
+        [[nodiscard]] SamplerProgram materialize(const MaterializeContext& ctx, uint32_t width, uint32_t height) const override {
             SamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            res.sample = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
-                "generate");
-            // res.payload = ;
-            // res.maxDimension = ;
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+            res.start = ctx.tracer.buildProgram(linkable, "sobolStart");
+            res.generate = ctx.tracer.buildProgram(linkable, "sobolGenerate");
+            SobolData data;
+            data.log2Resolution = static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(std::max(width, height)))));
+            data.resolution = 1 << data.log2Resolution;
+            data.scramble = mScramble;
+            res.payload = packSBTPayload(context().getAllocator(), data);
+            res.maxDimension = numSobolDimensions;
+            res.samplesPerPixel = mSamplesPerPixel;
             return res;
         }
     };
+
     class ModuleImpl final : public Module {
     private:
         String mPath;
@@ -55,7 +78,7 @@ namespace Piper {
                                               const Future<void>& module) override {
             if(classID == "Sampler") {
                 return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<ScrambledSobolSampler>(context(), mPath, config)));
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<SobolSampler>(context(), mPath, config)));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
