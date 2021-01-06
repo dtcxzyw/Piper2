@@ -34,8 +34,7 @@ namespace Piper {
 
     class Pipeline : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Pipeline, Object)
-        [[nodiscard]] virtual String generateStatisticsReport() const = 0;
+        PIPER_INTERFACE_CONSTRUCT(Pipeline, Object) [[nodiscard]] virtual String generateStatisticsReport() const = 0;
         [[nodiscard]] virtual uint32_t getSamplesPerPixel() const noexcept = 0;
         virtual ~Pipeline() = default;
     };
@@ -53,7 +52,6 @@ namespace Piper {
     };
 
     struct TriangleIndexedGeometryDesc final {
-        Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
         uint32_t vertCount, triCount;
         Ptr vertices;
         Ptr index;
@@ -64,11 +62,18 @@ namespace Piper {
         Ptr tangent;
     };
 
-    enum class PrimitiveShapeType { TriangleIndexed };
+    struct CustomGeometryDesc final {
+        uint32_t count;
+        Ptr bounds;
+    };
+
+    enum class PrimitiveShapeType { TriangleIndexed, Custom };
     struct GeometryDesc final {
         PrimitiveShapeType type;
+        Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
         union {
             TriangleIndexedGeometryDesc triangleIndexed;
+            CustomGeometryDesc custom;
         };
     };
 
@@ -101,6 +106,7 @@ namespace Piper {
     struct MaterializeContext final {
         Tracer& tracer;
         ResourceHolder& holder;
+        MemoryArena& arena;
         const CallSiteRegister registerCall;
         Profiler& profiler;
         const TextureLoader loadTexture;

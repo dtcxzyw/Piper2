@@ -21,7 +21,7 @@
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #pragma warning(push, 0)
-//NOTE: assimp -> Irrlicht.dll->opengl32 will cause memory leak.
+// NOTE: assimp -> Irrlicht.dll->opengl32 will cause memory leak.
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
@@ -43,11 +43,10 @@ namespace Piper {
                     [path = mPath, &tracer, ctx = &context()]() -> SharedPtr<AccelerationStructure> {
                         // TODO:filesystem
                         Assimp::Importer importer;
-                        const auto* scene =
-                            importer.ReadFile(path.c_str(),
-                                              aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType |
-                                                  aiProcess_GenSmoothNormals  |
-                                                  aiProcess_FixInfacingNormals | aiProcess_ImproveCacheLocality);
+                        const auto* scene = importer.ReadFile(path.c_str(),
+                                                              aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
+                                                                  aiProcess_SortByPType | aiProcess_GenSmoothNormals |
+                                                                  aiProcess_FixInfacingNormals | aiProcess_ImproveCacheLocality);
 
                         auto& errorHandler = ctx->getErrorHandler();
 
@@ -67,7 +66,6 @@ namespace Piper {
                         }
 
                         desc.index = reinterpret_cast<Ptr>(index.data());
-                        desc.transform.reset();
                         desc.triCount = mesh->mNumFaces;
                         desc.vertCount = mesh->mNumVertices;
                         desc.vertices = reinterpret_cast<Ptr>(mesh->mVertices);
@@ -88,7 +86,8 @@ namespace Piper {
                         // TODO:normal and tangent
                         desc.normal = desc.tangent = 0;
 
-                        auto res = tracer.buildAcceleration({ PrimitiveShapeType::TriangleIndexed, { desc } });
+                        // TODO:use buffer of accelerator
+                        auto res = tracer.buildAcceleration({ PrimitiveShapeType::TriangleIndexed, eastl::nullopt, { desc } });
                         // TODO:RAII
                         importer.FreeScene();
                         return std::move(res);

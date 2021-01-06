@@ -15,22 +15,17 @@
 */
 
 #pragma once
-#include "Tracer.hpp"
+#include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct GeometryProgram final {
-        SBTPayload payload;
-
-        SharedPtr<RTProgram> intersect;
-        SharedPtr<RTProgram> occlude;
-        SharedPtr<RTProgram> surface;
+    struct PerPlaneData final {
+        Point<Distance, FOR::Local> origin;
+        Vector<Distance, FOR::Local> u, v;
+        Normal<float, FOR::Local> normal;
+        Normal<float, FOR::Local> tangent;
+        uint32_t maxDetComp;
     };
-
-    class Geometry : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Geometry, Object);
-        virtual ~Geometry() = default;
-        virtual AccelerationStructure& getAcceleration(Tracer& tracer) const = 0;
-        virtual GeometryProgram materialize(const MaterializeContext& ctx) const = 0;
+    struct PlaneData final {
+        const PerPlaneData* primitives;
     };
 }  // namespace Piper

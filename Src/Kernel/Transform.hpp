@@ -190,6 +190,11 @@ namespace Piper {
     }
 
     template <typename Float, FOR ref>
+    Vector<Float, ref> cross(Vector<Float, ref> a, Vector<Float, ref> b) noexcept {
+        return Vector<Float, ref>{ dot(a.y, b.z) - dot(a.z, b.y), dot(a.z, b.x) - dot(a.x, b.z), dot(a.x, b.y) - dot(a.y, b.x) };
+    }
+
+    template <typename Float, FOR ref>
     struct Point final {
         Float x, y, z;
         Point operator+(Vector<Float, ref> rhs) const noexcept {

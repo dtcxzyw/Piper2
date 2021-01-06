@@ -74,5 +74,9 @@
   {
     "Name": "Piper.BuiltinComponent.ProceduralTexture",
     "Path": "BuiltinComponent/Texture/ProceduralTexture/ProceduralTexture"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.BasicShapes",
+    "Path": "BuiltinComponent/Geometry/BasicShapes/BasicShapes"
   }
 ]

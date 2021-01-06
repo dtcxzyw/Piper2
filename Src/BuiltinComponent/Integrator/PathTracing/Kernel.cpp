@@ -44,7 +44,7 @@ namespace Piper {
                 Spectrum<Dimensionless<float>> f;
                 piperSurfaceEvaluate(context, surface.instance, surfaceStorage, wo, wi, Ng, noSpecular, f);
                 if(f.valid()) {
-                    const RayInfo shadowRay{ hit, light.dir, t };
+                    const RayInfo<FOR::World> shadowRay{ hit, light.dir, t };
                     if(!piperOcclude(context, shadowRay, 1e-3f, 1e5f)) {
                         auto w = abs(wi.z) / light.pdf;
                         if(!select.delta) {
@@ -78,7 +78,7 @@ namespace Piper {
             }
 
             TraceResult traceResult;
-            piperTrace(context, RayInfo{ hit, dir, t }, 0.001f, 1e5f, traceResult);
+            piperTrace(context, RayInfo<FOR::World>{ hit, dir, t }, 0.001f, 1e5f, traceResult);
             Spectrum<Radiance> rad;
             if(traceResult.kind == TraceKind::Surface) {
                 // hit selected area light
@@ -98,7 +98,7 @@ namespace Piper {
         const auto partB = sampleBSDF();
         return (partA + partB) / select.pdf;
     }
-    extern "C" void trace(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample) {
+    extern "C" void trace(FullContext* context, const void* SBTData, RayInfo<FOR::World>& ray, Spectrum<Radiance>& sample) {
         const auto* data = static_cast<const Data*>(SBTData);
         TimeProfiler profiler{ decay(context), data->profilePathTime };
         Spectrum<Dimensionless<float>> pf{ { 1.0f }, { 1.0f }, { 1.0f } };

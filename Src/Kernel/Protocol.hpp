@@ -23,9 +23,10 @@ namespace Piper {
     // TODO:alignment
     using Distance = Length<float>;
     // TODO:medium info
+    template <FOR ref>
     struct RayInfo final {
-        Point<Distance, FOR::World> origin;
-        Normal<float, FOR::World> direction;
+        Point<Distance, ref> origin;
+        Normal<float, ref> direction;
         float t;
     };
 
@@ -38,22 +39,8 @@ namespace Piper {
         const Vector<float, FOR::Local>* Ts;
     };
 
-    struct BuiltinHitInfo final {
-        Normal<float, FOR::Local> Ng;
-        Vector2<float> barycentric;
-        uint32_t index;
-        Face face;
-    };
-
-    struct CustomHitInfo final {
-        unsigned char data[sizeof(BuiltinHitInfo)];
-    };
-
-    struct HitInfo final {
-        union {
-            BuiltinHitInfo builtin;
-            CustomHitInfo custom;
-        };
+    struct GeometryStorage final {
+        std::byte data[32];
     };
 
     struct SurfaceIntersectionInfo final {
@@ -130,7 +117,7 @@ namespace Piper {
     };
 
     using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& NDC, float u1, float u2,
-                                RayInfo& ray, Dimensionless<float>& weight);
+                                RayInfo<FOR::World>& ray, Dimensionless<float>& weight);
 
     enum class BxDFPart : uint8_t { Reflection = 1, Transmission = 2, Diffuse = 4, Specular = 8, Glossy = 16, All = 31 };
     enum class TransportMode : uint8_t { Radiance, Importance };
@@ -155,6 +142,7 @@ namespace Piper {
     };
 
     // TODO:simplify interface
+    // TODO:handle thin surface
     using SurfaceInitFunc = void (*)(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
                                      const Normal<float, FOR::Shading>& Ng, Face face, TransportMode mode, void* storage,
                                      bool& noSpecular);
@@ -170,11 +158,17 @@ namespace Piper {
                                     const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                                     const Normal<float, FOR::Shading>& Ng, BxDFPart require, Dimensionless<float>& pdf);
 
-    using GeometryFunc = void (*)(RestrictedContext* context, const void* SBTData, const HitInfo& hit, float t,
-                                  SurfaceIntersectionInfo& info);
+    using GeometryIntersectFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t primitiveID,
+                                           const RayInfo<FOR::Local>& ray, float tNear, float& tFar, void* storage);
+    using GeometryOccludeFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t primitiveID,
+                                         const RayInfo<FOR::Local>& ray, float tNear, float tFar, bool& hit);
+    using GeometryPostProcessFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage, float t,
+                                             SurfaceIntersectionInfo& info);
+
     using RenderDriverFunc = void (*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& point,
                                       const Spectrum<Radiance>& sample);
-    using IntegratorFunc = void (*)(FullContext* context, const void* SBTData, RayInfo& ray, Spectrum<Radiance>& sample);
+    using IntegratorFunc = void (*)(FullContext* context, const void* SBTData, RayInfo<FOR::World>& ray,
+                                    Spectrum<Radiance>& sample);
     struct LightStorage final {
         std::byte data[32];
     };
@@ -252,8 +246,8 @@ namespace Piper {
     void piperLightPdf(FullContext* context, uint64_t light, const LightStorage& storage, const Point<Distance, FOR::World>& hit,
                        const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf);
 
-    void piperTrace(FullContext* context, const RayInfo& ray, float minT, float maxT, TraceResult& result);
-    bool piperOcclude(FullContext* context, const RayInfo& ray, float minT, float maxT);
+    void piperTrace(FullContext* context, const RayInfo<FOR::World>& ray, float minT, float maxT, TraceResult& result);
+    bool piperOcclude(FullContext* context, const RayInfo<FOR::World>& ray, float minT, float maxT);
     // TODO:terminate/ignore intersection
 
     float piperSample(FullContext* context);

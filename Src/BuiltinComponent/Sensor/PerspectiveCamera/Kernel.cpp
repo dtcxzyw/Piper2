@@ -19,7 +19,7 @@
 
 namespace Piper {
     extern "C" void rayGen(RestrictedContext*, const void* SBTData, const Vector2<float>& NDC, const float u1, const float u2,
-                           RayInfo& ray, Dimensionless<float>& weight) {
+                           RayInfo<FOR::World>& ray, Dimensionless<float>& weight) {
         const auto* data = static_cast<const PCData*>(SBTData);
         const auto filmHit =
             data->anchor + data->offX * Dimensionless<float>{ 1.0f - NDC.x } + data->offY * Dimensionless<float>{ 1.0f - NDC.y };

@@ -273,13 +273,15 @@ namespace Piper {
 
         const void* SFPayload;
         // TODO:medium
-        GeometryFunc calcSurface;
+        GeometryPostProcessFunc calcSurface;
         const void* GEPayload;
     };
 
     struct IntersectContext final {
         RTCIntersectContext ctx;
         // extend information
+        RestrictedContext* context;
+        GeometryStorage* storage;
     };
     // static void intersect() {}
 
@@ -303,13 +305,24 @@ namespace Piper {
         val = EmbreeProfiler::getTime();
     }
 
-    static void piperEmbreeTrace(FullContext* context, const RayInfo& ray, const float minT, const float maxT,
+    struct BuiltinHitInfo final {
+        Normal<float, FOR::Local> Ng;
+        Vector2<float> barycentric;
+        uint32_t index;
+        Face face;
+    };
+    static_assert(sizeof(BuiltinHitInfo) <= sizeof(GeometryStorage));
+
+    static void piperEmbreeTrace(FullContext* context, const RayInfo<FOR::World>& ray, const float minT, const float maxT,
                                  TraceResult& result) {
         auto* ctx = reinterpret_cast<KernelArgument*>(context);
         const auto begin = EmbreeProfiler::getTime();
 
+        GeometryStorage storage;
         IntersectContext intersectCtx;
         rtcInitIntersectContext(&intersectCtx.ctx);
+        intersectCtx.context = decay(context);
+        intersectCtx.storage = &storage;
         // TODO:context flags
         intersectCtx.ctx.flags = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
 
@@ -332,7 +345,7 @@ namespace Piper {
         hit.hit.geomID = hit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 
         // TODO:Coroutine+SIMD?
-        rtcIntersect1(ctx->scene, &intersectCtx.ctx, &hit);
+        rtcIntersect1(ctx->scene, reinterpret_cast<RTCIntersectContext*>(&intersectCtx), &hit);
 
         if(hit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
             // TODO:surface intersect filter?
@@ -353,20 +366,17 @@ namespace Piper {
             calcInverse(result.surface.transform.A2B, result.surface.transform.B2A);
             const auto* data = static_cast<const InstanceUserData*>(rtcGetGeometryUserData(geo));
 
-            HitInfo hitInfo;
             if(data->kind == HitKind::Builtin) {
-                hitInfo.builtin.Ng = result.surface.transform(Normal<float, FOR::World>{ Vector<Dimensionless<float>, FOR::World>{
+                auto& builtin = *reinterpret_cast<BuiltinHitInfo*>(&storage);
+                builtin.Ng = result.surface.transform(Normal<float, FOR::World>{ Vector<Dimensionless<float>, FOR::World>{
                     Dimensionless<float>{ hit.hit.Ng_x }, Dimensionless<float>{ hit.hit.Ng_y },
                     Dimensionless<float>{ hit.hit.Ng_z } } });
-                hitInfo.builtin.index = hit.hit.primID;
-                hitInfo.builtin.barycentric = { hit.hit.u, hit.hit.v };
-                hitInfo.builtin.face =
-                    (dot(result.surface.transform(ray.direction), hitInfo.builtin.Ng).val < 0.0f ? Face::Front : Face::Back);
-            } else {
-                // TODO:custom
+                builtin.index = hit.hit.primID;
+                builtin.barycentric = { hit.hit.u, hit.hit.v };
+                builtin.face = (dot(result.surface.transform(ray.direction), builtin.Ng).val < 0.0f ? Face::Front : Face::Back);
             }
 
-            data->calcSurface(reinterpret_cast<RestrictedContext*>(context), data->GEPayload, hitInfo, ray.t,
+            data->calcSurface(reinterpret_cast<RestrictedContext*>(context), data->GEPayload, &storage, ray.t,
                               result.surface.intersect);
 
             static_assert(sizeof(void*) == 8);
@@ -380,11 +390,12 @@ namespace Piper {
         ctx->profiler->addTime(ctx->profileIntersectTime, end - begin);
     }
 
-    static bool piperEmbreeOcclude(FullContext* context, const RayInfo& ray, const float minT, const float maxT) {
+    static bool piperEmbreeOcclude(FullContext* context, const RayInfo<FOR::World>& ray, const float minT, const float maxT) {
         const auto* ctx = reinterpret_cast<KernelArgument*>(context);
         const auto begin = EmbreeProfiler::getTime();
         IntersectContext intersectCtx;
         rtcInitIntersectContext(&intersectCtx.ctx);
+        intersectCtx.context = decay(context);
         // TODO:context flags
         intersectCtx.ctx.flags = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
 
@@ -404,7 +415,7 @@ namespace Piper {
         };
 
         // TODO:Coroutine+SIMD?
-        rtcOccluded1(ctx->scene, &intersectCtx.ctx, &rayInfo);
+        rtcOccluded1(ctx->scene, reinterpret_cast<RTCIntersectContext*>(&intersectCtx), &rayInfo);
 
         const auto result = (rayInfo.tfar < 0.0f);
         ctx->profiler->addBool(ctx->profileOccludeHit, result);
@@ -517,7 +528,7 @@ namespace Piper {
         const auto& transform = SBT->transform;
         const auto NDC = Vector2<float>{ transform.ox + transform.sx * point.x / static_cast<float>(SBT->rect.width),
                                          transform.oy + transform.sy * point.y / static_cast<float>(SBT->rect.height) };
-        RayInfo ray;
+        RayInfo<FOR::World> ray;
         Dimensionless<float> weight;
         SBT->rayGen(reinterpret_cast<RestrictedContext*>(&context), SBT->RGPayload, NDC,
                     piperEmbreeSample(reinterpret_cast<FullContext*>(&context)),
@@ -593,15 +604,15 @@ namespace Piper {
     using SceneHandle = UniquePtr<RTCSceneTy, SceneDeleter>;
 
     // TODO:per-vertex TBN
-    static void calcTriangleMeshSurface(RestrictedContext*, const void* payload, const HitInfo& hit, float t,
+    static void calcTriangleMeshSurface(RestrictedContext*, const void* payload, const void* hitInfo, float t,
                                         SurfaceIntersectionInfo& info) {
+        const auto& hit = *static_cast<const BuiltinHitInfo*>(hitInfo);
         const auto* buffer = static_cast<const BuiltinTriangleBuffer*>(payload);
-        info.N = info.Ng = (hit.builtin.face == Face::Front ? hit.builtin.Ng : -hit.builtin.Ng);
+        info.N = info.Ng = (hit.face == Face::Front ? hit.Ng : -hit.Ng);
 
-        const auto pu = buffer->index[hit.builtin.index * 3 + 1], pv = buffer->index[hit.builtin.index * 3 + 2],
-                   pw = buffer->index[hit.builtin.index * 3];
-        const auto u = hit.builtin.barycentric.x, v = hit.builtin.barycentric.y,
-                   w = 1.0f - hit.builtin.barycentric.x - hit.builtin.barycentric.y;
+        const auto pu = buffer->index[hit.index * 3 + 1], pv = buffer->index[hit.index * 3 + 2],
+                   pw = buffer->index[hit.index * 3];
+        const auto u = hit.barycentric.x, v = hit.barycentric.y, w = 1.0f - u - v;
 
         const Normal<float, FOR::Local> u1{ { { 1.0f }, { 0.0f }, { 0.0f } }, Unsafe{} };
         const Normal<float, FOR::Local> u2{ { { 0.0f }, { 1.0f }, { 0.0f } }, Unsafe{} };
@@ -614,24 +625,29 @@ namespace Piper {
             info.texCoord = buffer->texCoord[pu] * u + buffer->texCoord[pv] * v + buffer->texCoord[pw] * w;
         else
             info.texCoord = { 0.0f, 0.0f };
-        info.face = hit.builtin.face;
+        info.face = hit.face;
     }
-    static_assert(std::is_same_v<decltype(&calcTriangleMeshSurface), GeometryFunc>);
+    static_assert(std::is_same_v<decltype(&calcTriangleMeshSurface), GeometryPostProcessFunc>);
 
+    struct CustomBuffer final {
+        const void* payload;
+        GeometryIntersectFunc intersect;
+        GeometryOccludeFunc occlude;
+    };
+
+    // TODO:sub class
     class EmbreeAcceleration final : public AccelerationStructure {
     private:
         GeometryHandle mGeometry;
         SceneHandle mScene;
-        GeometryFunc mBuiltin;
         BuiltinTriangleBuffer mBuffer;
+        CustomBuffer mCustomBuffer;
 
     public:
         EmbreeAcceleration(PiperContext& context, RTCDevice device, const GeometryDesc& desc)
             : AccelerationStructure(context), mBuffer{} {
             switch(desc.type) {
                 case PrimitiveShapeType::TriangleIndexed: {
-                    mBuiltin = calcTriangleMeshSurface;
-
                     mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE));
                     auto&& triDesc = desc.triangleIndexed;
                     auto* const vert = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3,
@@ -643,9 +659,6 @@ namespace Piper {
                     mBuffer.index = static_cast<const uint32_t*>(index);
 
                     // rtcSetGeometryTimeStepCount(mGeometry.get(), 1);
-                    rtcSetGeometryMask(mGeometry.get(), 1);
-                    if(triDesc.transform.has_value())
-                        rtcSetGeometryTransform(mGeometry.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, triDesc.transform.value().A2B);
 
                     rtcSetGeometryVertexAttributeCount(
                         mGeometry.get(), (triDesc.texCoords ? 1 : 0) + (triDesc.normal ? 1 : 0) + (triDesc.tangent ? 1 : 0));
@@ -671,15 +684,93 @@ namespace Piper {
                         memcpy(tangent, reinterpret_cast<void*>(triDesc.tangent), 3 * sizeof(float) * triDesc.vertCount);
                         mBuffer.texCoord = static_cast<const Vector2<float>*>(tangent);
                     }
+                } break;
+                case PrimitiveShapeType::Custom: {
+                    mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER));
+                    const auto& custom = desc.custom;
+                    rtcSetGeometryUserPrimitiveCount(mGeometry.get(), custom.count);
+                    rtcSetGeometryUserData(mGeometry.get(), reinterpret_cast<void*>(custom.bounds));  // for acceleration build
+                    rtcSetGeometryBoundsFunction(
+                        mGeometry.get(),
+                        [](const RTCBoundsFunctionArguments* args) {
+                            const auto* const bounds = static_cast<const float*>(args->geometryUserPtr) + args->primID * 6;
+                            memcpy(&args->bounds_o->lower_x, bounds, 3 * sizeof(float));
+                            memcpy(&args->bounds_o->upper_x, bounds + 3, 3 * sizeof(float));
+                        },
+                        nullptr);  // NOTICE:The userPtr is not used.
+                    rtcSetGeometryIntersectFunction(mGeometry.get(), [](const RTCIntersectFunctionNArguments* args) {
+                        const auto* const sbt = static_cast<const CustomBuffer*>(args->geometryUserPtr);
+                        // TODO:allow SIMD?
+                        auto* rayInfo = RTCRayHitN_RayN(args->rayhit, args->N);
+                        auto* hitInfo = RTCRayHitN_HitN(args->rayhit, args->N);
+                        for(uint32_t i = 0; i < args->N; ++i) {
+                            if(args->valid[i] != -1)
+                                continue;
+                            RayInfo<FOR::Local> ray{ Point<Distance, FOR::Local>{ { RTCRayN_org_x(rayInfo, args->N, i) },
+                                                                                  { RTCRayN_org_y(rayInfo, args->N, i) },
+                                                                                  { RTCRayN_org_z(rayInfo, args->N, i) } },
+                                                     Normal<float, FOR::Local>{ Vector<Dimensionless<float>, FOR::Local>{
+                                                         { RTCRayN_dir_x(rayInfo, args->N, i) },
+                                                         { RTCRayN_dir_y(rayInfo, args->N, i) },
+                                                         { RTCRayN_dir_z(rayInfo, args->N, i) } } },  // TODO:Unsafe?
+                                                     RTCRayN_time(rayInfo, args->N, i) };
 
-                    rtcCommitGeometry(mGeometry.get());
+                            auto& tFar = RTCRayN_tfar(rayInfo, args->N, i);
+                            const auto oldTime = tFar;
+                            sbt->intersect(reinterpret_cast<IntersectContext*>(args->context)->context, sbt->payload,
+                                           args->primID, ray, RTCRayN_tnear(rayInfo, args->N, i), tFar,
+                                           reinterpret_cast<IntersectContext*>(args->context)->storage);
+                            if(tFar < oldTime) {
+                                RTCHitN_geomID(hitInfo, args->N, i) = args->geomID;
+                                for(uint32_t l = 0; l < RTC_MAX_INSTANCE_LEVEL_COUNT; ++l)
+                                    RTCHitN_instID(hitInfo, args->N, i, l) = args->context->instID[l];
+                            }
+                        }
+                    });
+                    rtcSetGeometryOccludedFunction(mGeometry.get(), [](const RTCOccludedFunctionNArguments* args) {
+                        const auto* const sbt = static_cast<const CustomBuffer*>(args->geometryUserPtr);
+                        // TODO:allow SIMD?
+                        for(uint32_t i = 0; i < args->N; ++i) {
+                            if(args->valid[i] != -1)
+                                continue;
+                            RayInfo<FOR::Local> ray{ Point<Distance, FOR::Local>{ { RTCRayN_org_x(args->ray, args->N, i) },
+                                                                                  { RTCRayN_org_y(args->ray, args->N, i) },
+                                                                                  { RTCRayN_org_z(args->ray, args->N, i) } },
+                                                     Normal<float, FOR::Local>{ Vector<Dimensionless<float>, FOR::Local>{
+                                                         { RTCRayN_dir_x(args->ray, args->N, i) },
+                                                         { RTCRayN_dir_y(args->ray, args->N, i) },
+                                                         { RTCRayN_dir_z(args->ray, args->N, i) } } },  // TODO:Unsafe?
+                                                     RTCRayN_time(args->ray, args->N, i) };
+
+                            auto& tFar = RTCRayN_tfar(args->ray, args->N, i);
+                            bool hit;
+                            sbt->occlude(reinterpret_cast<IntersectContext*>(args->context)->context, sbt->payload, args->primID,
+                                         ray, RTCRayN_tnear(args->ray, args->N, i), tFar, hit);
+                            if(hit)
+                                tFar = -std::numeric_limits<float>::infinity();
+                        }
+                    });
+                    // TODO:intersect filter
                 } break;
                 default:
                     context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             }
+            rtcSetGeometryMask(mGeometry.get(), 1);
+            if(desc.transform.has_value())
+                rtcSetGeometryTransform(mGeometry.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, desc.transform.value().B2A);
+            rtcCommitGeometry(mGeometry.get());
         }
-        [[nodiscard]] Pair<GeometryFunc, BuiltinTriangleBuffer> getBuiltinFunc() const noexcept {
-            return { mBuiltin, mBuffer };
+        void setCustomFunc(const void* payload, MemoryArena& arena, const GeometryIntersectFunc intersect,
+                           const GeometryOccludeFunc occlude) {
+            mCustomBuffer.payload = payload;
+            mCustomBuffer.intersect = intersect;
+            mCustomBuffer.occlude = occlude;
+            auto* const data = arena.alloc<CustomBuffer>();
+            *data = mCustomBuffer;
+            rtcSetGeometryUserData(mGeometry.get(), data);
+        }
+        [[nodiscard]] Pair<GeometryPostProcessFunc, BuiltinTriangleBuffer> getBuiltin() const noexcept {
+            return { calcTriangleMeshSurface, mBuffer };
         }
         [[nodiscard]] RTCGeometry getGeometry() const noexcept {
             return mGeometry.get();
@@ -702,7 +793,7 @@ namespace Piper {
         rtcSetGeometryInstancedScene(geo.get(), src);
         // rtcSetGeometryTimeStepCount(geo.get(), 1);
         if(transform.has_value())
-            rtcSetGeometryTransform(geo.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transform.value().A2B);
+            rtcSetGeometryTransform(geo.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transform.value().B2A);
         rtcSetGeometryMask(geo.get(), 1);
         rtcSetGeometryUserData(geo.get(), userData);
 
@@ -827,14 +918,18 @@ namespace Piper {
             DynamicArray<Pair<String, void*>> call(context.getAllocator());
 
             const MaterializeContext materialize{
-                tracer, mHolder, CallSiteRegister{ [&](const SharedPtr<RTProgram>& program, const SBTPayload& payload) {
+                tracer,
+                mHolder,
+                mArena,
+                CallSiteRegister{ [&](const SharedPtr<RTProgram>& program, const SBTPayload& payload) {
                     const auto id = static_cast<uint32_t>(call.size());
                     const auto* prog = dynamic_cast<EmbreeRTProgram*>(program.get());
                     modules.emplace_back(prog->program);
                     call.emplace_back(prog->symbol, upload(payload));
                     return id;
                 } },
-                mProfiler, TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> uint32_t {
+                mProfiler,
+                TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> uint32_t {
                     const auto texture = tracer.generateTexture(desc, channel);
                     auto [SBT, prog] = texture->materialize(materialize);
                     return materialize.registerCall(prog, SBT);
@@ -860,44 +955,44 @@ namespace Piper {
             UMap<Surface*, SurfaceInfo> surfaceProg(context.getAllocator());
             struct GeometryInfo final {
                 void* payload;
-                String calcSurfaceFunc;
-                GeometryFunc calcSurface;
+                String calcSurfaceFunc, intersectFunc, occludeFunc, boundsFunc;
+                GeometryPostProcessFunc calcSurface;
                 HitKind kind;
+                EmbreeAcceleration* acceleration;
             };
             UMap<Geometry*, GeometryInfo> geometryProg(context.getAllocator());
 
-            // TODO:shared RTProgram
+            const auto registerProgram = [&](const SharedPtr<RTProgram>& prog) {
+                auto& rtp = dynamic_cast<EmbreeRTProgram&>(*prog);
+                modules.push_back(rtp.program);
+                return rtp.symbol;
+            };
+
             for(auto&& [_, prog] : nodeProg) {
                 if(!surfaceProg.count(prog.surface.get())) {
                     auto sp = prog.surface->materialize(materialize);
                     auto& info = surfaceProg[prog.surface.get()];
                     info.payload = upload(sp.payload);
-                    auto& init = dynamic_cast<EmbreeRTProgram&>(*sp.init);
-                    auto& sample = dynamic_cast<EmbreeRTProgram&>(*sp.sample);
-                    auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*sp.evaluate);
-                    auto& pdf = dynamic_cast<EmbreeRTProgram&>(*sp.pdf);
-                    modules.push_back(init.program);
-                    modules.push_back(sample.program);
-                    modules.push_back(evaluate.program);
-                    modules.push_back(pdf.program);
-                    info.initFunc = init.symbol;
-                    info.sampleFunc = sample.symbol;
-                    info.evaluateFunc = evaluate.symbol;
-                    info.pdfFunc = pdf.symbol;
+                    info.initFunc = registerProgram(sp.init);
+                    info.sampleFunc = registerProgram(sp.sample);
+                    info.evaluateFunc = registerProgram(sp.evaluate);
+                    info.pdfFunc = registerProgram(sp.pdf);
                 }
+
                 if(!geometryProg.count(prog.geometry.get())) {
                     auto gp = prog.geometry->materialize(materialize);
                     auto& info = geometryProg[prog.geometry.get()];
+                    auto& accel = dynamic_cast<EmbreeAcceleration&>(prog.geometry->getAcceleration(tracer));
+                    info.acceleration = &accel;
 
                     if(gp.surface) {
                         info.kind = HitKind::Custom;
                         info.payload = upload(gp.payload);
-                        auto& surface = dynamic_cast<EmbreeRTProgram&>(*gp.surface);
-                        info.calcSurfaceFunc = surface.symbol;
-                        modules.push_back(surface.program);
+                        info.calcSurfaceFunc = registerProgram(gp.surface);
+                        info.intersectFunc = registerProgram(gp.intersect);
+                        info.occludeFunc = registerProgram(gp.occlude);
                     } else {
-                        auto& accel = dynamic_cast<EmbreeAcceleration&>(prog.geometry->getAcceleration(tracer));
-                        auto [func, payload] = accel.getBuiltinFunc();
+                        auto [func, payload] = accel.getBuiltin();
                         info.calcSurface = func;
                         info.payload = upload(packSBTPayload(context.getAllocator(), payload));
                         info.kind = HitKind::Builtin;
@@ -966,8 +1061,12 @@ namespace Piper {
             }
 
             for(auto& [_, prog] : geometryProg) {
-                if(prog.kind != HitKind::Builtin)
-                    prog.calcSurface = static_cast<GeometryFunc>(mKernel->lookup(prog.calcSurfaceFunc));
+                if(prog.kind == HitKind::Builtin)
+                    continue;
+                prog.calcSurface = static_cast<GeometryPostProcessFunc>(mKernel->lookup(prog.calcSurfaceFunc));
+                prog.acceleration->setCustomFunc(prog.payload, mArena,
+                                                 static_cast<GeometryIntersectFunc>(mKernel->lookup(prog.intersectFunc)),
+                                                 static_cast<GeometryOccludeFunc>(mKernel->lookup(prog.occludeFunc)));
             }
             for(auto& [_, prog] : surfaceProg) {
                 prog.init = static_cast<SurfaceInitFunc>(mKernel->lookup(prog.initFunc));

@@ -49,7 +49,7 @@ namespace Piper {
             }
         }
 
-        [[nodiscard]] SamplerProgram materialize(const MaterializeContext& ctx, uint32_t width, uint32_t height) const override {
+        [[nodiscard]] SamplerProgram materialize(const MaterializeContext& ctx, const uint32_t width, const uint32_t height) const override {
             SamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
