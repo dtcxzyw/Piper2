@@ -42,22 +42,22 @@ namespace Piper {
         return baseColor * factor;
     }
     */
-    extern "C" void blackBodyInit(RestrictedContext*, const void*, float, const Vector2<float>&,
-                                  const Normal<float, FOR::Shading>&, Face, TransportMode, void*, bool& noSpecular) {
+    extern "C" void blackBodyInit(RestrictedContext, const void*, const Vector2<float>&, const Normal<float, FOR::Shading>&, Face,
+                                  TransportMode, void*, bool& noSpecular) {
         noSpecular = false;
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&blackBodyInit)>);
-    extern "C" void blackBodySample(RestrictedContext*, const void*, const void*, const Vec&, const Normal<float, FOR::Shading>&,
+    extern "C" void blackBodySample(RestrictedContext, const void*, const void*, const Vec&, const Normal<float, FOR::Shading>&,
                                     BxDFPart, float, float, SurfaceSample& sample) {
         sample.pdf = Dimensionless<float>{ 0.0f };
     }
     static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&blackBodySample)>);
-    extern "C" void blackBodyEvaluate(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
+    extern "C" void blackBodyEvaluate(RestrictedContext, const void*, const void*, const Vec&, const Vec&,
                                       const Normal<float, FOR::Shading>&, BxDFPart, BxDFValue& f) {
         f = Spectrum<Dimensionless<float>>{ { 0.0f }, { 0.0f }, { 0.0f } };
     }
     static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&blackBodyEvaluate)>);
-    extern "C" void blackBodyPdf(RestrictedContext*, const void*, const void*, const Vec&, const Vec&,
+    extern "C" void blackBodyPdf(RestrictedContext, const void*, const void*, const Vec&, const Vec&,
                                  const Normal<float, FOR::Shading>&, BxDFPart, Dimensionless<float>& pdf) {
         pdf = Dimensionless<float>{ 0.0f };
     }
@@ -205,35 +205,35 @@ namespace Piper {
             sample.pdf = sample.pdf / Dimensionless<float>{ static_cast<float>(count) };
     }
 
-#define KERNEL_FUNCTION_GROUP(PREFIX, BSDF, ...)                                                                         \
-    extern "C" void PREFIX##Sample(RestrictedContext* context, const void*, const void* storage, const Vec& wo,          \
-                                   const Normal<float, FOR::Shading>& Ng, const BxDFPart require, const float u1,        \
-                                   const float u2, SurfaceSample& sample) {                                              \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                            \
-        Piper::sample(bsdf->mask, u1, u2, wo, Ng, require, sample, __VA_ARGS__);                                         \
-    }                                                                                                                    \
-    static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&PREFIX##Sample)>);                                         \
-                                                                                                                         \
-    extern "C" void PREFIX##Evaluate(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi, \
-                                     const Normal<float, FOR::Shading>& Ng, const BxDFPart require, BxDFValue& f) {      \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                            \
-        const auto addition = ((dot(wo, Ng) * dot(wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Transmission);  \
-        f = {};                                                                                                          \
-        evaluateN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, addition, f, __VA_ARGS__);          \
-    }                                                                                                                    \
-    static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&PREFIX##Evaluate)>);                                     \
-                                                                                                                         \
-    extern "C" void PREFIX##Pdf(RestrictedContext*, const void*, const void* storage, const Vec& wo, const Vec& wi,      \
-                                const Normal<float, FOR::Shading>&, const BxDFPart require, PDFValue& pdf) {             \
-        const auto* bsdf = static_cast<const BSDF*>(storage);                                                            \
-        pdf = Dimensionless<float>{ 0.0f };                                                                              \
-        const auto count = countN(bsdf->mask, require, __VA_ARGS__);                                                     \
-        if(count == 0)                                                                                                   \
-            return;                                                                                                      \
-        pdfN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, __VA_ARGS__);                       \
-        if(count > 1)                                                                                                    \
-            pdf = pdf / Dimensionless<float>{ static_cast<float>(count) };                                               \
-    }                                                                                                                    \
+#define KERNEL_FUNCTION_GROUP(PREFIX, BSDF, ...)                                                                        \
+    extern "C" void PREFIX##Sample(RestrictedContext context, const void*, const void* storage, const Vec& wo,          \
+                                   const Normal<float, FOR::Shading>& Ng, const BxDFPart require, const float u1,       \
+                                   const float u2, SurfaceSample& sample) {                                             \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                           \
+        Piper::sample(bsdf->mask, u1, u2, wo, Ng, require, sample, __VA_ARGS__);                                        \
+    }                                                                                                                   \
+    static_assert(std::is_same_v<SurfaceSampleFunc, decltype(&PREFIX##Sample)>);                                        \
+                                                                                                                        \
+    extern "C" void PREFIX##Evaluate(RestrictedContext, const void*, const void* storage, const Vec& wo, const Vec& wi, \
+                                     const Normal<float, FOR::Shading>& Ng, const BxDFPart require, BxDFValue& f) {     \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                           \
+        const auto addition = ((dot(wo, Ng) * dot(wi, Ng)).val > 0.0f ? BxDFPart::Reflection : BxDFPart::Transmission); \
+        f = {};                                                                                                         \
+        evaluateN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, addition, f, __VA_ARGS__);         \
+    }                                                                                                                   \
+    static_assert(std::is_same_v<SurfaceEvaluateFunc, decltype(&PREFIX##Evaluate)>);                                    \
+                                                                                                                        \
+    extern "C" void PREFIX##Pdf(RestrictedContext, const void*, const void* storage, const Vec& wo, const Vec& wi,      \
+                                const Normal<float, FOR::Shading>&, const BxDFPart require, PDFValue& pdf) {            \
+        const auto* bsdf = static_cast<const BSDF*>(storage);                                                           \
+        pdf = Dimensionless<float>{ 0.0f };                                                                             \
+        const auto count = countN(bsdf->mask, require, __VA_ARGS__);                                                    \
+        if(count == 0)                                                                                                  \
+            return;                                                                                                     \
+        pdfN(bsdf->mask, std::numeric_limits<uint32_t>::max(), wo, wi, require, pdf, __VA_ARGS__);                      \
+        if(count > 1)                                                                                                   \
+            pdf = pdf / Dimensionless<float>{ static_cast<float>(count) };                                              \
+    }                                                                                                                   \
     static_assert(std::is_same_v<SurfacePdfFunc, decltype(&PREFIX##Pdf)>);
 
     struct MatteBSDF final {
@@ -246,16 +246,16 @@ namespace Piper {
 
     KERNEL_FUNCTION_GROUP(matte, MatteBSDF, bsdf->orenNayar, bsdf->lambertian)
 
-    extern "C" void matteInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+    extern "C" void matteInit(const RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                               const Normal<float, FOR::Shading>&, Face, TransportMode, void* storage, bool& noSpecular) {
         const auto* data = static_cast<const MatteData*>(SBTData);
         auto* bsdf = static_cast<MatteBSDF*>(storage);
         static_assert(sizeof(MatteBSDF) <= sizeof(SurfaceStorage));
         Dimensionless<float> diffuse[4];
-        piperCall<TextureSampleFunc>(context, data->diffuseTexture, t, texCoord, diffuse);
+        piperCall<TextureSampleFunc>(context, data->diffuseTexture, texCoord, diffuse);
         const auto reflection = Spectrum<Dimensionless<float>>{ diffuse };
         Dimensionless<float> roughness;
-        piperCall<TextureSampleFunc>(context, data->roughnessTexture, t, texCoord, &roughness);
+        piperCall<TextureSampleFunc>(context, data->roughnessTexture, texCoord, &roughness);
 
         if(roughness.val > 0.0f) {
             bsdf->mask = 0b01;
@@ -290,7 +290,7 @@ namespace Piper {
     private:
         Dimensionless<float> mAlphaX, mAlphaY;
 
-        [[nodiscard]] Vector2<Dimensionless<float>> sample11(Dimensionless<float> cosTheta, const float u1,
+        [[nodiscard]] Vector2<Dimensionless<float>> sample11(const Dimensionless<float> cosTheta, const float u1,
                                                              const float u2) const {
             if(cosTheta.val > 1.0f - 1e-5f) {
                 const auto r = Dimensionless<float>{ sqrt(u1 / (1 - u1)) };
@@ -438,7 +438,7 @@ namespace Piper {
         Mask mask;
     };
 
-    extern "C" void plasticInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+    extern "C" void plasticInit(const RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                                 const Normal<float, FOR::Shading>&, const Face face, TransportMode, void* storage,
                                 bool& noSpecular) {
         const auto* data = static_cast<const PlasticData*>(SBTData);
@@ -446,19 +446,19 @@ namespace Piper {
         static_assert(sizeof(PlasticBSDF) <= sizeof(SurfaceStorage));
         bsdf->mask = 0;
         Dimensionless<float> diffuse[4];
-        piperCall<TextureSampleFunc>(context, data->diffuseTexture, t, texCoord, diffuse);
+        piperCall<TextureSampleFunc>(context, data->diffuseTexture, texCoord, diffuse);
         const auto diffuseReflection = BxDFValue{ diffuse };
         if(diffuseReflection.valid()) {
             bsdf->mask |= 0b01;
             bsdf->diffuse = LambertianReflection{ diffuseReflection };
         }
         Dimensionless<float> specular[4];
-        piperCall<TextureSampleFunc>(context, data->specularTexture, t, texCoord, specular);
+        piperCall<TextureSampleFunc>(context, data->specularTexture, texCoord, specular);
         const auto specularReflection = BxDFValue{ specular };
         if(specularReflection.valid()) {
             bsdf->mask |= 0b10;
             Dimensionless<float> roughness;
-            piperCall<TextureSampleFunc>(context, data->roughnessTexture, t, texCoord, &roughness);
+            piperCall<TextureSampleFunc>(context, data->roughnessTexture, texCoord, &roughness);
             roughness = MicrofacetDistribution::remapRoughness(roughness);
             // TODO:acquire eta from medium
             const Dimensionless<float> etaI = { face == Face::Front ? 1.0f : 1.46f };
@@ -610,7 +610,7 @@ namespace Piper {
         Mask mask;
     };
 
-    extern "C" void glassInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+    extern "C" void glassInit(const RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                               const Normal<float, FOR::Shading>&, const Face face, const TransportMode mode, void* storage,
                               bool& noSpecular) {
         const auto* data = static_cast<const GlassData*>(SBTData);
@@ -618,8 +618,8 @@ namespace Piper {
         static_assert(sizeof(GlassBSDF) <= sizeof(SurfaceStorage));
 
         Dimensionless<float> reflectionPart[4], transmissionPart[4];
-        piperCall<TextureSampleFunc>(context, data->reflection, t, texCoord, reflectionPart);
-        piperCall<TextureSampleFunc>(context, data->transmission, t, texCoord, transmissionPart);
+        piperCall<TextureSampleFunc>(context, data->reflection, texCoord, reflectionPart);
+        piperCall<TextureSampleFunc>(context, data->transmission, texCoord, transmissionPart);
         const BxDFValue reflection{ reflectionPart }, transmission{ transmissionPart };
 
         if(!reflection.valid() && !transmission.valid()) {
@@ -628,8 +628,8 @@ namespace Piper {
         }
 
         Dimensionless<float> roughnessX, roughnessY;
-        piperCall<TextureSampleFunc>(context, data->roughnessX, t, texCoord, &roughnessX);
-        piperCall<TextureSampleFunc>(context, data->roughnessY, t, texCoord, &roughnessY);
+        piperCall<TextureSampleFunc>(context, data->roughnessX, texCoord, &roughnessX);
+        piperCall<TextureSampleFunc>(context, data->roughnessY, texCoord, &roughnessY);
 
         const Dimensionless<float> etaI = { face == Face::Front ? 1.0f : 1.5f };
         const Dimensionless<float> etaT = { face == Face::Front ? 1.5f : 1.0f };
@@ -665,19 +665,19 @@ namespace Piper {
         BxDFValue reflection;
     };
 
-    extern "C" void mirrorInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+    extern "C" void mirrorInit(const RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                                const Normal<float, FOR::Shading>&, Face, TransportMode, void* storage, bool& noSpecular) {
         const auto* data = static_cast<const MirrorData*>(SBTData);
         auto* bsdf = static_cast<MirrorBSDF*>(storage);
         static_assert(sizeof(MirrorBSDF) <= sizeof(SurfaceStorage));
         Dimensionless<float> reflection[4];
-        piperCall<TextureSampleFunc>(context, data->reflectionTexture, t, texCoord, reflection);
+        piperCall<TextureSampleFunc>(context, data->reflectionTexture, texCoord, reflection);
         bsdf->reflection = BxDFValue{ reflection };
         noSpecular = false;
     }
     static_assert(std::is_same_v<SurfaceInitFunc, decltype(&mirrorInit)>);
 
-    extern "C" void mirrorSample(RestrictedContext*, const void*, const void* storage, const Vec& wo,
+    extern "C" void mirrorSample(RestrictedContext, const void*, const void* storage, const Vec& wo,
                                  const Normal<float, FOR::Shading>&, const BxDFPart require, float, float,
                                  SurfaceSample& sample) {
         const auto* bsdf = static_cast<const MirrorBSDF*>(storage);
@@ -752,24 +752,23 @@ namespace Piper {
         Mask mask;
     };
 
-    extern "C" void substrateInit(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
-                                  const Normal<float, FOR::Shading>&, Face face, TransportMode mode, void* storage,
-                                  bool& noSpecular) {
+    extern "C" void substrateInit(const RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
+                                  const Normal<float, FOR::Shading>&, Face, TransportMode, void* storage, bool& noSpecular) {
         const auto* data = static_cast<const SubstrateData*>(SBTData);
         auto* bsdf = static_cast<SubstrateBSDF*>(storage);
         static_assert(sizeof(SubstrateBSDF) <= sizeof(SurfaceStorage));
 
         Dimensionless<float> diffusePart[4], specularPart[4];
-        piperCall<TextureSampleFunc>(context, data->diffuse, t, texCoord, diffusePart);
-        piperCall<TextureSampleFunc>(context, data->specular, t, texCoord, specularPart);
+        piperCall<TextureSampleFunc>(context, data->diffuse, texCoord, diffusePart);
+        piperCall<TextureSampleFunc>(context, data->specular, texCoord, specularPart);
         const BxDFValue diffuse{ diffusePart }, specular{ specularPart };
 
         if(!diffuse.valid() && !specular.valid())
             return;
 
         Dimensionless<float> roughnessX, roughnessY;
-        piperCall<TextureSampleFunc>(context, data->roughnessX, t, texCoord, &roughnessX);
-        piperCall<TextureSampleFunc>(context, data->roughnessY, t, texCoord, &roughnessY);
+        piperCall<TextureSampleFunc>(context, data->roughnessX, texCoord, &roughnessX);
+        piperCall<TextureSampleFunc>(context, data->roughnessY, texCoord, &roughnessY);
         const MicrofacetDistribution distribution{ MicrofacetDistribution::remapRoughness(roughnessX),
                                                    MicrofacetDistribution::remapRoughness(roughnessY) };
 

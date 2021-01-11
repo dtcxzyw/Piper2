@@ -17,15 +17,14 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void constantTexture(RestrictedContext*, const void* SBTData, float, const Vector2<float>&,
-                                    Dimensionless<float>* sample) {
+    extern "C" void constantTexture(RestrictedContext, const void* SBTData, const Vector2<float>&, Dimensionless<float>* sample) {
         const auto* data = static_cast<const ConstantData*>(SBTData);
         for(uint32_t i = 0; i < data->channel; ++i)
             sample[i] = data->value[i];
     }
     static_assert(std::is_same_v<TextureSampleFunc, decltype(&constantTexture)>);
 
-    extern "C" void checkBoard(RestrictedContext*, const void* SBTData, float, const Vector2<float>& texCoord,
+    extern "C" void checkBoard(RestrictedContext, const void* SBTData, const Vector2<float>& texCoord,
                                Dimensionless<float>* sample) {
         const auto* data = static_cast<const CheckBoardData*>(SBTData);
         auto mod = [scale = data->scale](const float x) {

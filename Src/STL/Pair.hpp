@@ -22,7 +22,7 @@ namespace Piper {
     using Pair = eastl::pair<T1, T2>;
 
     template <typename T1, typename T2>
-    constexpr inline auto makePair(T1&& a, T2&& b) {
+    constexpr auto makePair(T1&& a, T2&& b) {
         using T1Type = typename eastl::remove_reference_wrapper<typename eastl::decay<T1>::type>::type;
         using T2Type = typename eastl::remove_reference_wrapper<typename eastl::decay<T2>::type>::type;
 

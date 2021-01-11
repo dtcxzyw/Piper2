@@ -55,7 +55,7 @@ namespace Piper {
         return 0.5f + std::floor(u + 0.5f) - u;
     }
 
-    extern "C" void sampleTexture(RestrictedContext* context, const void* SBTData, float, const Vector2<float>& texCoord,
+    extern "C" void sampleTexture(const RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                                   Dimensionless<float>* sample) {
         const auto* data = static_cast<const Data*>(SBTData);
         TimeProfiler profiler{ context, data->profileSample };

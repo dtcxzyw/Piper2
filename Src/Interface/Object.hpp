@@ -35,6 +35,11 @@ namespace Piper {
     class Unmovable {
     public:
         Unmovable() = default;
+        Unmovable(const Unmovable& rhs) = delete;
+        Unmovable(Unmovable&& rhs) = delete;
+        Unmovable& operator=(const Unmovable& rhs) = delete;
+        Unmovable& operator=(Unmovable&& rhs) = delete;
+        ~Unmovable() = default;
     };
 
     class PiperContext;

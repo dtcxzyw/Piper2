@@ -28,7 +28,7 @@ namespace Piper {
         virtual ~LightSampler() = default;
         // TODO:state less
         virtual void preprocess(const Span<const SharedPtr<Light>>& lights) = 0;
-        virtual LightSamplerProgram materialize(const MaterializeContext& context) const = 0;
+        [[nodiscard]] virtual LightSamplerProgram materialize(const MaterializeContext& context) const = 0;
     };
     struct LightProgram final {
         SharedPtr<RTProgram> init;
@@ -37,12 +37,23 @@ namespace Piper {
         SharedPtr<RTProgram> pdf;
         SBTPayload payload;
     };
-    // TODO:Light Instance?
+
+    enum class LightAttributes : uint32_t { Delta = 1, Infinite = 2, Area = 4 };
+    constexpr bool match(LightAttributes provide, LightAttributes require) {
+        return (static_cast<uint32_t>(provide) & static_cast<uint32_t>(require)) == static_cast<uint32_t>(provide);
+    }
+    constexpr LightAttributes operator|(LightAttributes a, LightAttributes b) {
+        return static_cast<LightAttributes>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    }
+
     class Light : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Light, Object)
         virtual ~Light() = default;
-        virtual LightProgram materialize(const MaterializeContext& ctx) const = 0;
-        virtual bool isDelta() const noexcept = 0;
+        [[nodiscard]] virtual LightProgram materialize(TraversalHandle traversal, const MaterializeContext& ctx) const = 0;
+        [[nodiscard]] virtual AccelerationStructure* getAcceleration(Tracer& tracer) const {
+            return nullptr;
+        }
+        [[nodiscard]] virtual LightAttributes attributes() const noexcept = 0;
     };
 }  // namespace Piper

@@ -293,6 +293,14 @@ namespace Piper {
         // explicit Transform(Uninitialized) {}
         Transform() = default;
 
+        [[nodiscard]] Point<Float, refA> originRefA() const noexcept {
+            return Point<Float, refA>{ Float{ B2A[0][3].val }, Float{ B2A[1][3].val }, Float{ B2A[2][3].val } };
+        }
+
+        [[nodiscard]] Point<Float, refB> originRefB() const noexcept {
+            return Point<Float, refB>{ Float{ A2B[0][3].val }, Float{ A2B[1][3].val }, Float{ A2B[2][3].val } };
+        }
+
         Vector<Float, refB> operator()(Vector<Float, refA> v) const noexcept {
             return { A2B[0][0] * v.x + A2B[0][1] * v.y + A2B[0][2] * v.z, A2B[1][0] * v.x + A2B[1][1] * v.y + A2B[1][2] * v.z,
                      A2B[2][0] * v.x + A2B[2][1] * v.y + A2B[2][2] * v.z };
@@ -350,6 +358,32 @@ namespace Piper {
         B2A[0][3] = -(B2A[0][0] * A2B[0][3] + B2A[0][1] * A2B[1][3] + B2A[0][2] * A2B[2][3]);
         B2A[1][3] = -(B2A[1][0] * A2B[0][3] + B2A[1][1] * A2B[1][3] + B2A[1][2] * A2B[2][3]);
         B2A[2][3] = -(B2A[2][0] * A2B[0][3] + B2A[2][1] * A2B[1][3] + B2A[2][2] * A2B[2][3]);
+    }
+
+    // TODO:optimize
+    template <typename Float>
+    void mergeL(Float A2B[3][4], const Float B2C[3][4]) {
+        // extend a row [0 0 0 1]
+        for(auto r = 0; r < 3; ++r) {
+            Float x = A2B[r][0], y = A2B[r][1], z = A2B[r][2];
+            A2B[r][0] = x * B2C[0][0] + y * B2C[1][0] + z * B2C[2][0];
+            A2B[r][1] = x * B2C[0][1] + y * B2C[1][1] + z * B2C[2][1];
+            A2B[r][2] = x * B2C[0][2] + y * B2C[1][2] + z * B2C[2][2];
+            A2B[r][3] = A2B[r][3] + x * B2C[0][3] + y * B2C[1][3] + z * B2C[2][3];
+        }
+    }
+
+    template <typename Float>
+    void mergeR(const Float A2B[3][4], Float B2C[3][4]) {
+        // extend a row [0 0 0 1]
+        for(auto c = 0; c < 4; ++c) {
+            Float x = B2C[0][c], y = B2C[1][c], z = B2C[2][c];
+            B2C[0][c] = x * A2B[0][0] + y * A2B[0][1] + z * A2B[0][2];
+            B2C[1][c] = x * A2B[1][0] + y * A2B[1][1] + z * A2B[1][2];
+            B2C[2][c] = x * A2B[2][0] + y * A2B[2][1] + z * A2B[2][2];
+        }
+        for(auto r = 0; r < 3; ++r)
+            B2C[r][3] = B2C[r][3] + A2B[r][3];
     }
 
     template <typename Float, FOR ref>

@@ -28,8 +28,8 @@ namespace Piper {
     extern "C" Vector2<float> calcTexCoord(const Vector<Distance, FOR::Local>& pos, const PerPlaneData& data) {
         // ignore round-off error
         // u*x+v*y=hitPos
-        Square<Inverse<Distance>> invDet;
-        Square<Distance> x, y;
+        Inverse<Area<float>> invDet;
+        Area<float> x, y;
         switch(data.maxDetComp) {
             case 0: {
                 // YZ
@@ -54,7 +54,7 @@ namespace Piper {
     }
 
     // TODO:handle degeneracy
-    extern "C" void planeIntersect(RestrictedContext* context, const void* SBTData, const uint32_t primitiveID,
+    extern "C" void planeIntersect(RestrictedContext, const void* SBTData, const uint32_t primitiveID,
                                    const RayInfo<FOR::Local>& ray, const float tNear, float& tFar, void* storage) {
         const auto& data = static_cast<const PlaneData*>(SBTData)->primitives[primitiveID];
         // dot(ray.origin + ray.direction * t - plane.origin, plane.normal) = 0 -> kt=b
@@ -74,7 +74,7 @@ namespace Piper {
     }
     static_assert(std::is_same_v<GeometryIntersectFunc, decltype(&planeIntersect)>);
 
-    extern "C" void planeOcclude(RestrictedContext*, const void* SBTData, const uint32_t primitiveID,
+    extern "C" void planeOcclude(RestrictedContext, const void* SBTData, const uint32_t primitiveID,
                                  const RayInfo<FOR::Local>& ray, const float tNear, const float tFar, bool& hit) {
         const auto& data = static_cast<const PlaneData*>(SBTData)->primitives[primitiveID];
         // dot(ray.origin + ray.direction * t - plane.origin, plane.normal) = 0 -> kt=b
@@ -92,7 +92,7 @@ namespace Piper {
     }
     static_assert(std::is_same_v<GeometryOccludeFunc, decltype(&planeOcclude)>);
 
-    extern "C" void planeSurface(RestrictedContext* context, const void* SBTData, const void* storage, float t,
+    extern "C" void planeSurface(RestrictedContext, const void*, const void* storage,
                                  SurfaceIntersectionInfo& info) {
         const auto& data = *static_cast<const PlaneStorage*>(storage);
         info.face = data.face;

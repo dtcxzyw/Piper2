@@ -346,6 +346,17 @@ namespace Piper {
     public:
         explicit ModuleLoaderImpl(PiperContextImpl& context);
         Future<void> loadModule(const SharedPtr<Config>& moduleDesc, const String& descPath) override;
+        Future<SharedPtr<Object>> newInstance(const StringView& classID) override {
+            return newInstance(makeSharedObject<Config>(
+                context(),
+                UMap<String, SharedPtr<Config>>{
+                    { { String{ "ClassID", context().getAllocator() },
+                        makeSharedObject<Config>(context(), String{ classID, context().getAllocator() }) } },
+                    0,
+                    {},
+                    {},
+                    context().getAllocator() }));
+        }
         Future<SharedPtr<Object>> newInstance(const String& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             // TODO:asynchronous module loading
@@ -556,7 +567,7 @@ namespace Piper {
         [[nodiscard]] void enterStageImpl(Variant<CString, String> stage, const SourceLocation& loc) override {
             auto&& logger = context().getLogger();
             if(logger.allow(LogLevel::Debug)) {
-                auto msg = "(Stage Layer " + toString(context().getAllocator(), locate().size()) + ") ";
+                auto msg = "(layer " + toString(context().getAllocator(), locate().size()) + ") ";
                 if(stage.index())
                     msg += eastl::get<String>(stage);
                 else

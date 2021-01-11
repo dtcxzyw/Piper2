@@ -35,6 +35,8 @@
 #pragma warning(pop)
 
 namespace Piper {
+    // TODO:instancing of lights and geometries
+
     enum class FitMode { Fill, OverScan };
     FitMode str2FitMode(PiperContext& context, const String& mode) {
         if(mode == "Fill")
@@ -108,52 +110,84 @@ namespace Piper {
             return context().getModuleLoader().newInstanceT<T>(config).getSync();
         }
 
-        SharedPtr<Node> buildScene(Tracer& tracer, const SharedPtr<Config>& config) {
-
+        // TODO:redirect of nodes
+        // TODO:redirect of scenes
+        SharedPtr<Node> buildSceneImpl(Tracer& tracer, const SharedPtr<Config>& config,
+                                       UMap<String, SharedPtr<Node>>& namedNodes) {
             const auto type = config->at("Type")->get<String>();
             if(type == "Instance") {
-                GSMInstanceDesc desc;
-                desc.surface = syncLoad<Surface>(config->at("Surface"));
-                desc.geometry = syncLoad<Geometry>(config->at("Geometry"));
                 const auto& attr = config->viewAsObject();
-                const auto iter = attr.find(String{ "Transform", context().getAllocator() });
-                if(iter != attr.cend())
-                    desc.transform = parseTransform(iter->second);
-                return tracer.buildNode(std::move(desc));
+                if(attr.count(String{ "ClassID" }))
+                    return tracer.buildNode(syncLoad<Object>(config));
+
+                auto geometry = syncLoad<Geometry>(config->at("Geometry"));
+                auto surface = syncLoad<Surface>(config->at("Surface"));
+                // TODO:medium
+                return tracer.buildNode(tracer.buildGSMInstance(std::move(geometry), std::move(surface), nullptr));
             }
+
             if(type == "Group") {
                 const auto& sub = config->at("Children")->viewAsArray();
-                GroupDesc desc;
-                desc.nodes.set_allocator(context().getAllocator());
-                for(auto&& inst : sub)
-                    desc.nodes.emplace_back(buildScene(tracer, inst));
-
-                auto&& attr = config->viewAsObject();
-                const auto iter = attr.find(String{ "Transform", context().getAllocator() });
-                if(iter != attr.cend())
-                    desc.transform = parseTransform(iter->second);
-                return tracer.buildNode(std::move(desc));
+                DynamicArray<Pair<TransformInfo, SharedPtr<Node>>> nodes{ context().getAllocator() };
+                for(auto&& inst : sub) {
+                    TransformInfo transform{ context().getAllocator() };
+                    const auto& attr = inst->viewAsObject();
+                    const auto iter = attr.find(String{ "Transform", context().getAllocator() });
+                    // TODO:motion blur
+                    if(iter != attr.cend())
+                        transform.push_back(makePair(Time<float>{ 0.0f }, parseTransform(iter->second)));
+                    nodes.emplace_back(makePair(std::move(transform), buildScene(tracer, inst, namedNodes)));
+                }
+                return tracer.buildNode(nodes);
             }
 
             context().getErrorHandler().raiseException("Invalid scene node.", PIPER_SOURCE_LOCATION());
         }
 
+        SharedPtr<Node> buildScene(Tracer& tracer, const SharedPtr<Config>& config, UMap<String, SharedPtr<Node>>& namedNodes) {
+            auto attr = config->viewAsObject();
+            const auto name = attr.find(String{ "ID", context().getAllocator() });
+            auto node = buildSceneImpl(tracer, config, namedNodes);
+            if(name != attr.cend())
+                namedNodes.insert(makePair(name->second->get<String>(), node));
+            return node;
+        }
+
+        template <typename T, typename U>
+        SharedPtr<T> requireObject(const UMap<String, SharedPtr<U>>& objects, const String& key) {
+            const auto iter = objects.find(key);
+            if(iter == objects.cend())
+                context().getErrorHandler().raiseException("Failed to find object named \"" + key + "\".",
+                                                           PIPER_SOURCE_LOCATION());
+            if constexpr(std::is_same_v<T, U>)
+                return iter->second;
+            else
+                return eastl::dynamic_shared_pointer_cast<T>(iter->second);
+        }
+
         UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
                                              const uint32_t width, const uint32_t height, float& ratio) {
-            // TODO:asset
-            const auto sensor = syncLoad<Sensor>(config->at("Sensor"));
-            ratio = sensor->getAspectRatio();
+            auto stage = context().getErrorHandler().enterStage("initialize objects", PIPER_SOURCE_LOCATION());
+            // TODO:redirect context
+            // TODO:concurrency
+            UMap<String, SharedPtr<Object>> objects{ context().getAllocator() };
+            for(auto&& obj : config->at("Objects")->viewAsArray()) {
+                objects.emplace(obj->at("ID")->get<String>(), context().getModuleLoader().newInstance(obj).getSync());
+            }
+            stage.next("build scene hierarchy", PIPER_SOURCE_LOCATION());
+            UMap<String, SharedPtr<Node>> namedNodes{ context().getAllocator() };
+
+            auto scene = buildScene(tracer, config->at("Scene"), namedNodes);
+
+            stage.next("parse frames", PIPER_SOURCE_LOCATION());
+            // TODO:animation
+            const auto frames = config->at("Frames");
+            const auto sensor = requireObject<Node>(namedNodes, frames->at("ActiveSensor")->get<String>());
             const auto lightSampler = syncLoad<LightSampler>(config->at("LightSampler"));
-            DynamicArray<SharedPtr<Light>> lights(context().getAllocator());
-            lights.push_back(syncLoad<Light>(config->at("Environment")));
-            for(auto&& light : config->at("Lights")->viewAsArray())
-                lights.push_back(syncLoad<Light>(light));
-            lightSampler->preprocess({ lights.cbegin(), lights.cend() });
             const auto integrator = syncLoad<Integrator>(config->at("Integrator"));
-            const auto node = buildScene(tracer, config->at("Scene"));
             const auto sampler = syncLoad<Sampler>(config->at("Sampler"));
-            return tracer.buildPipeline(node, *sensor, *integrator, renderDriver, *lightSampler, lights, sampler.get(), width,
-                                        height);
+
+            return tracer.buildPipeline(scene, sensor, *integrator, renderDriver, *lightSampler, *sampler, width, height, ratio);
         }
         void saveToFile(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, const uint32_t width,
                         const uint32_t height) const {
@@ -176,36 +210,13 @@ namespace Piper {
             out.writePixels(height);
         }
 
-    public:
-        explicit Render(PiperContext& context) : Operator(context) {}
-        // TODO:scene module desc
-        void execute(const SharedPtr<Config>& opt) override {
-            auto stage = context().getErrorHandler().enterStage("parse option", PIPER_SOURCE_LOCATION());
-            // TODO:set workspace
-            auto sizeDesc = opt->at("ImageSize")->viewAsArray();
-            if(sizeDesc.size() != 2)
-                context().getErrorHandler().raiseException("Invalid ImageSize.", PIPER_SOURCE_LOCATION());
-            // TODO:directly get DynamicArray from Config
-            auto width = static_cast<uint32_t>(sizeDesc[0]->get<uintmax_t>());
-            auto height = static_cast<uint32_t>(sizeDesc[1]->get<uintmax_t>());
-            auto scenePath = opt->at("SceneDesc")->get<String>();
-            auto parserID = opt->at("SceneParser")->get<String>();
-            auto fitMode = str2FitMode(context(), opt->at("FitMode")->get<String>());
-
-            auto parser = context().getModuleLoader().newInstanceT<ConfigSerializer>(parserID);
-
-            auto scene = parser.getSync()->deserialize(scenePath);
-            stage.next("initialize pipeline", PIPER_SOURCE_LOCATION());
-            auto tracer = syncLoad<Tracer>(opt->at("Tracer"));
-            auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));
-
-            auto deviceAspectRatio = -1.0f;
-            auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height, deviceAspectRatio);
-
-            RenderRECT rect{};
-            SensorNDCAffineTransform transform{};
-            auto imageAspectRatio = static_cast<float>(width) / static_cast<float>(height);
-            auto iiar = 1.0f / imageAspectRatio, idar = 1.0f / deviceAspectRatio;
+        [[nodiscard]] Pair<SensorNDCAffineTransform, RenderRECT>
+        calcRenderRECT(const uint32_t width, const uint32_t height, const float deviceAspectRatio, const FitMode fitMode) const {
+            RenderRECT rect;
+            SensorNDCAffineTransform transform;
+            const auto imageAspectRatio = static_cast<float>(width) / static_cast<float>(height);
+            const auto iiar = 1.0f / imageAspectRatio;
+            const auto idar = 1.0f / deviceAspectRatio;
             if(fitMode == FitMode::Fill) {
                 rect = { 0, 0, width, height };
                 if(imageAspectRatio > deviceAspectRatio) {
@@ -234,6 +245,36 @@ namespace Piper {
                     rect.height -= rect.top;
                 }
             }
+            return { transform, rect };
+        }
+
+    public:
+        explicit Render(PiperContext& context) : Operator(context) {}
+        // TODO:scene module desc
+        void execute(const SharedPtr<Config>& opt) override {
+            auto stage = context().getErrorHandler().enterStage("parse option", PIPER_SOURCE_LOCATION());
+            // TODO:set workspace
+            auto sizeDesc = opt->at("ImageSize")->viewAsArray();
+            if(sizeDesc.size() != 2)
+                context().getErrorHandler().raiseException("Invalid ImageSize.", PIPER_SOURCE_LOCATION());
+            // TODO:directly get DynamicArray from Config
+            const auto width = static_cast<uint32_t>(sizeDesc[0]->get<uintmax_t>());
+            const auto height = static_cast<uint32_t>(sizeDesc[1]->get<uintmax_t>());
+            const auto scenePath = opt->at("SceneDesc")->get<String>();
+            auto parserID = opt->at("SceneParser")->get<String>();
+            const auto fitMode = str2FitMode(context(), opt->at("FitMode")->get<String>());
+
+            auto parser = context().getModuleLoader().newInstanceT<ConfigSerializer>(parserID);
+
+            auto scene = parser.getSync()->deserialize(scenePath);
+            stage.next("initialize pipeline", PIPER_SOURCE_LOCATION());
+            const auto tracer = syncLoad<Tracer>(opt->at("Tracer"));
+            auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));
+
+            auto deviceAspectRatio = -1.0f;
+            const auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height, deviceAspectRatio);
+
+            const auto [transform, rect] = calcRenderRECT(width, height, deviceAspectRatio, fitMode);
 
             stage.next("start rendering", PIPER_SOURCE_LOCATION());
             DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
@@ -243,11 +284,11 @@ namespace Piper {
                 context().getLogger().record(LogLevel::Info, pipeline->generateStatisticsReport(), PIPER_SOURCE_LOCATION());
 
             stage.next("write image to disk", PIPER_SOURCE_LOCATION());
-            auto output = opt->at("OutputFile")->get<String>();
+            const auto output = opt->at("OutputFile")->get<String>();
             // TODO:move OpenEXR to ImageIO
             saveToFile(output, res, width, height);
         }
-    };  // namespace Piper
+    };
     class ModuleImpl final : public Module {
     private:
         String mPath;

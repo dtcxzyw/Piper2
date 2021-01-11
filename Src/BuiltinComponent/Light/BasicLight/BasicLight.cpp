@@ -27,15 +27,13 @@ namespace Piper {
     class SampledEnvironment final : public Light {
     private:
         String mKernelPath;
-        SampledEnvironmentData mData;
+        Spectrum<Radiance> mRadiance;
 
     public:
         SampledEnvironment(PiperContext& context, String path, const SharedPtr<Config>& config)
-            : Light(context), mKernelPath(std::move(path)) {
-            mData.texture = parseSpectrum<Radiance>(config->at("Radiance"));
-        }
+            : Light(context), mKernelPath(std::move(path)), mRadiance(parseSpectrum<Radiance>(config->at("Radiance"))) {}
 
-        [[nodiscard]] LightProgram materialize(const MaterializeContext& ctx) const override {
+        [[nodiscard]] LightProgram materialize(const TraversalHandle traversal, const MaterializeContext& ctx) const override {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =
@@ -44,30 +42,25 @@ namespace Piper {
             res.sample = ctx.tracer.buildProgram(program, "SESample");
             res.evaluate = ctx.tracer.buildProgram(program, "SEEvaluate");
             res.pdf = ctx.tracer.buildProgram(program, "SEPdf");
-            res.payload = packSBTPayload(context().getAllocator(), mData);
+            res.payload = packSBTPayload(context().getAllocator(), SampledEnvironmentData{ traversal, mRadiance });
             return res;
         }
 
-        [[nodiscard]] bool isDelta() const noexcept override {
-            return false;
+        [[nodiscard]] LightAttributes attributes() const noexcept override {
+            return LightAttributes::Infinite;
         }
     };
 
     class PointLight final : public Light {
     private:
         String mKernelPath;
-        PointLightData mData;
+        Spectrum<Intensity> mIntensity;
 
     public:
         PointLight(PiperContext& context, String path, const SharedPtr<Config>& config)
-            : Light(context), mKernelPath(std::move(path)) {
-            // TODO:use UnitManager
-            // TODO:transform
-            mData.pos = parsePoint<Distance, FOR::World>(config->at("Position"));
-            mData.intensity = parseSpectrum<Intensity>(config->at("Intensity"));
-        }
+            : Light(context), mKernelPath(std::move(path)), mIntensity(parseSpectrum<Intensity>(config->at("Intensity"))) {}
 
-        [[nodiscard]] LightProgram materialize(const MaterializeContext& ctx) const override {
+        [[nodiscard]] LightProgram materialize(const TraversalHandle traversal, const MaterializeContext& ctx) const override {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =
@@ -76,12 +69,12 @@ namespace Piper {
             res.sample = ctx.tracer.buildProgram(program, "pointSample");
             res.evaluate = ctx.tracer.buildProgram(program, "deltaEvaluate");
             res.pdf = ctx.tracer.buildProgram(program, "deltaPdf");
-            res.payload = packSBTPayload(context().getAllocator(), mData);
+            res.payload = packSBTPayload(context().getAllocator(), PointLightData{ traversal, mIntensity });
             return res;
         }
 
-        [[nodiscard]] bool isDelta() const noexcept override {
-            return true;
+        [[nodiscard]] LightAttributes attributes() const noexcept override {
+            return LightAttributes::Delta;
         }
     };
     class UniformLightSampler final : public LightSampler {
@@ -97,7 +90,7 @@ namespace Piper {
                 context().getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InterfaceArgument, "Need environment",
                                                          PIPER_SOURCE_LOCATION());
             for(auto&& light : lights)
-                mFlags.push_back(light->isDelta());
+                mFlags.push_back(match(light->attributes(), LightAttributes::Delta));
         }
 
         [[nodiscard]] LightSamplerProgram materialize(const MaterializeContext& ctx) const override {

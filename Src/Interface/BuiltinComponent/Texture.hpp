@@ -40,4 +40,6 @@ namespace Piper {
         virtual ~TextureSampler() = default;
         [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, TextureWrap wrap) const = 0;
     };
+    // TODO:texCoord modifier
+
 }  // namespace Piper

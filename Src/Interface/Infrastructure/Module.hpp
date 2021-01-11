@@ -37,18 +37,7 @@ namespace Piper {
         virtual Future<SharedPtr<Object>> newInstance(const String& classID, const SharedPtr<Config>& config,
                                                       const Future<void>& module) = 0;
         virtual Future<SharedPtr<Object>> newInstance(const SharedPtr<Config>& config) = 0;
-
-        Future<SharedPtr<Object>> newInstance(const StringView& classID) {
-            return newInstance(makeSharedObject<Config>(
-                context(),
-                UMap<String, SharedPtr<Config>>{
-                    { { String{ "ClassID", context().getAllocator() },
-                        makeSharedObject<Config>(context(), String{ classID, context().getAllocator() }) } },
-                    0,
-                    {},
-                    {},
-                    context().getAllocator() }));
-        }
+        virtual Future<SharedPtr<Object>> newInstance(const StringView& classID) = 0;
 
         template <typename T, typename... Args>
         Future<SharedPtr<T>> newInstanceT(Args&&... args) {

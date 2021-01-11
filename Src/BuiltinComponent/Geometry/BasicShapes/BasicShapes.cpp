@@ -48,16 +48,18 @@ namespace Piper {
         return bounds;
     }
 
+    // TODO: use 2D parameters
     class Plane final : public Geometry {
     private:
         String mKernelPath;
         DynamicArray<PerPlaneData> mPlanes;
         DynamicArray<Bounds> mBounds;
+        Area<float> mArea;
 
     public:
         Plane(PiperContext& context, const SharedPtr<Config>& config, String kernel)
             : Geometry(context), mKernelPath(std::move(kernel)), mPlanes(context.getAllocator()),
-              mBounds(context.getAllocator()) {
+              mBounds(context.getAllocator()), mArea{ 0.0f } {
             const auto& planes = config->at("Primitives")->viewAsArray();
             mPlanes.reserve(planes.size());
             mBounds.reserve(planes.size());
@@ -71,8 +73,12 @@ namespace Piper {
                 const auto u = parseVector<Distance, FOR::Local>(plane->at("U"));
                 const auto v = parseVector<Distance, FOR::Local>(plane->at("V"));
                 const auto det3 = cross(u, v);
+                const auto area = length(det3);
+                // TODO:fix unit
+                mArea = mArea + Area<float>{ area.val };
                 mPlanes.push_back({ parsePoint<Distance, FOR::Local>(plane->at("Origin")), u, v,
-                                    Normal<float, FOR::Local>{ det3 }, Normal<float, FOR::Local>{ u }, select(det3) });
+                                    Normal<float, FOR::Local>{ det3 / area, Unsafe{} }, Normal<float, FOR::Local>{ u },
+                                    select(det3) });
                 // TODO:use accelerator
                 mBounds.push_back(calcPlaneBounds(mPlanes.back()));
             }
@@ -88,7 +94,7 @@ namespace Piper {
                                                              return tracer.buildAcceleration(desc);
                                                          } });
         }
-        [[nodiscard]] GeometryProgram materialize(const MaterializeContext& ctx) const override {
+        [[nodiscard]] GeometryProgram materialize(TraversalHandle, const MaterializeContext& ctx) const override {
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
@@ -101,6 +107,10 @@ namespace Piper {
             prog.intersect = ctx.tracer.buildProgram(linkable, "planeIntersect");
             prog.occlude = ctx.tracer.buildProgram(linkable, "planeOcclude");
             return prog;
+        }
+
+        [[nodiscard]] Area<float> area() const override {
+            return mArea;
         }
     };
     class ModuleImpl final : public Module {

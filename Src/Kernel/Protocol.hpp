@@ -27,7 +27,6 @@ namespace Piper {
     struct RayInfo final {
         Point<Distance, ref> origin;
         Normal<float, ref> direction;
-        float t;
     };
 
     enum class Face { Front, Back };
@@ -61,13 +60,6 @@ namespace Piper {
                                               Unsafe{} };
         }
     };
-
-    struct FullContext;
-    struct RestrictedContext;
-
-    inline RestrictedContext* decay(FullContext* context) {
-        return reinterpret_cast<RestrictedContext*>(context);
-    }
 
     // TODO:Sampled Spectrum
     template <typename Float>
@@ -116,7 +108,29 @@ namespace Piper {
         float ox, oy, sx, sy;
     };
 
-    using SensorFunc = void (*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& NDC, float u1, float u2,
+    // type-safe
+    class FullContextReserved;
+    class RestrictedContextReserved;
+    using FullContext = FullContextReserved*;
+    using RestrictedContext = RestrictedContextReserved*;
+    inline RestrictedContext decay(const FullContext context) {
+        return reinterpret_cast<RestrictedContext>(context);
+    }
+    class SurfaceHandleReserved;
+    using SurfaceHandle = const SurfaceHandleReserved*;
+    class LightHandleReserved;
+    using LightHandle = const LightHandleReserved*;
+    class TraversalHandleReserved;
+    using TraversalHandle = const TraversalHandleReserved*;
+    class CallHandleReserved;
+    using CallHandle = const CallHandleReserved*;
+    class StatisticsHandleReserved;
+    using StatisticsHandle = const StatisticsHandleReserved*;
+
+    static_assert(sizeof(ptrdiff_t) == sizeof(uint64_t));
+    constexpr LightHandle environment = nullptr;
+
+    using SensorFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& NDC, float u1, float u2,
                                 RayInfo<FOR::World>& ray, Dimensionless<float>& weight);
 
     enum class BxDFPart : uint8_t { Reflection = 1, Transmission = 2, Diffuse = 4, Specular = 8, Glossy = 16, All = 31 };
@@ -143,31 +157,31 @@ namespace Piper {
 
     // TODO:simplify interface
     // TODO:handle thin surface
-    using SurfaceInitFunc = void (*)(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+    using SurfaceInitFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                                      const Normal<float, FOR::Shading>& Ng, Face face, TransportMode mode, void* storage,
                                      bool& noSpecular);
     // TODO:provide 4 dimensions? (consider MDL)
-    using SurfaceSampleFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
+    using SurfaceSampleFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                        const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng,
                                        BxDFPart require, float u1, float u2, SurfaceSample& sample);
-    using SurfaceEvaluateFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
+    using SurfaceEvaluateFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                          const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                                          const Normal<float, FOR::Shading>& Ng, BxDFPart require,
                                          Spectrum<Dimensionless<float>>& f);
-    using SurfacePdfFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
+    using SurfacePdfFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                     const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                                     const Normal<float, FOR::Shading>& Ng, BxDFPart require, Dimensionless<float>& pdf);
 
-    using GeometryIntersectFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t primitiveID,
+    using GeometryIntersectFunc = void (*)(RestrictedContext context, const void* SBTData, uint32_t primitiveID,
                                            const RayInfo<FOR::Local>& ray, float tNear, float& tFar, void* storage);
-    using GeometryOccludeFunc = void (*)(RestrictedContext* context, const void* SBTData, uint32_t primitiveID,
+    using GeometryOccludeFunc = void (*)(RestrictedContext context, const void* SBTData, uint32_t primitiveID,
                                          const RayInfo<FOR::Local>& ray, float tNear, float tFar, bool& hit);
-    using GeometryPostProcessFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage, float t,
+    using GeometryPostProcessFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                              SurfaceIntersectionInfo& info);
 
-    using RenderDriverFunc = void (*)(RestrictedContext* context, const void* SBTData, const Vector2<float>& point,
+    using RenderDriverFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& point,
                                       const Spectrum<Radiance>& sample);
-    using IntegratorFunc = void (*)(FullContext* context, const void* SBTData, RayInfo<FOR::World>& ray,
+    using IntegratorFunc = void (*)(FullContext context, const void* SBTData, RayInfo<FOR::World>& ray,
                                     Spectrum<Radiance>& sample);
     struct LightStorage final {
         std::byte data[32];
@@ -178,19 +192,19 @@ namespace Piper {
         Dimensionless<float> pdf;
     };
     struct LightSelectResult final {
-        uint64_t light;
+        LightHandle light;
         Dimensionless<float> pdf;
         bool delta;
     };
     // TODO:spatial select?
-    using LightSelectFunc = void (*)(RestrictedContext* context, const void* SBTData, float u, LightSelectResult& select);
-    using LightInitFunc = void (*)(RestrictedContext* context, const void* SBTData, float t, void* storage);
-    using LightSampleFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
+    using LightSelectFunc = void (*)(RestrictedContext context, const void* SBTData, float u, LightSelectResult& select);
+    using LightInitFunc = void (*)(RestrictedContext context, const void* SBTData, void* storage);
+    using LightSampleFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                      const Point<Distance, FOR::World>& hit, float u1, float u2, LightSample& sample);
-    using LightEvaluateFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
+    using LightEvaluateFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                        const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
                                        Spectrum<Radiance>& rad);
-    using LightPdfFunc = void (*)(RestrictedContext* context, const void* SBTData, const void* storage,
+    using LightPdfFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                   const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
                                   Dimensionless<float>& pdf);
 
@@ -199,14 +213,14 @@ namespace Piper {
     using SampleGenerateFunc = void (*)(const void* SBTData, uint64_t idx, uint32_t dim, float& val);
 
     enum class TextureWrap : uint32_t { Repeat, Mirror };
-    using TextureSampleFunc = void (*)(RestrictedContext* context, const void* SBTData, float t, const Vector2<float>& texCoord,
+    using TextureSampleFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                                        Dimensionless<float>* sample);
 
     enum class TraceKind : unsigned char { Surface, Missing };
     struct TraceSurface final {
         SurfaceIntersectionInfo intersect;
         Transform<Distance, FOR::World, FOR::Local> transform;
-        uint64_t instance;
+        SurfaceHandle surface;
         Distance t;
     };
     struct TraceResult final {
@@ -221,72 +235,75 @@ namespace Piper {
         const void* SBTData;
     };
 
-    // TODO:replace uint64_t with unsigned<ptrdiff_t>
     extern "C" {
-    void piperSurfaceInit(FullContext* context, uint64_t instance, float t, const Vector2<float>& texCoord,
+    void piperSurfaceInit(FullContext context, SurfaceHandle surface, const Vector2<float>& texCoord,
                           const Normal<float, FOR::Shading>& Ng, Face face, TransportMode mode, SurfaceStorage& storage,
                           bool& noSpecular);
-    void piperSurfaceSample(FullContext* context, uint64_t instance, const SurfaceStorage& storage,
+    void piperSurfaceSample(FullContext context, SurfaceHandle surface, const SurfaceStorage& storage,
                             const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng, BxDFPart require,
                             SurfaceSample& sample);
-    void piperSurfaceEvaluate(FullContext* context, uint64_t instance, const SurfaceStorage& storage,
+    void piperSurfaceEvaluate(FullContext context, SurfaceHandle surface, const SurfaceStorage& storage,
                               const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                               const Normal<float, FOR::Shading>& Ng, BxDFPart require, Spectrum<Dimensionless<float>>& f);
-    void piperSurfacePdf(FullContext* context, uint64_t instance, const SurfaceStorage& storage,
+    void piperSurfacePdf(FullContext context, SurfaceHandle surface, const SurfaceStorage& storage,
                          const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                          const Normal<float, FOR::Shading>& Ng, BxDFPart require, Dimensionless<float>& pdf);
 
-    void piperLightSelect(FullContext* context, LightSelectResult& select);
-    void piperLightInit(FullContext* context, uint64_t light, float t, LightStorage& storage);
-    void piperLightSample(FullContext* context, uint64_t light, const LightStorage& storage,
+    void piperLightSelect(FullContext context, LightSelectResult& select);
+    void piperLightInit(FullContext context, LightHandle light, LightStorage& storage);
+    void piperLightSample(FullContext context, LightHandle light, const LightStorage& storage,
                           const Point<Distance, FOR::World>& hit, LightSample& sample);
-    void piperLightEvaluate(FullContext* context, uint64_t light, const LightStorage& storage,
+    void piperLightEvaluate(FullContext context, LightHandle light, const LightStorage& storage,
                             const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
                             Spectrum<Radiance>& rad);
-    void piperLightPdf(FullContext* context, uint64_t light, const LightStorage& storage, const Point<Distance, FOR::World>& hit,
-                       const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf);
+    void piperLightPdf(FullContext context, LightHandle light, const LightStorage& storage,
+                       const Point<Distance, FOR::World>& hit, const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf);
 
-    void piperTrace(FullContext* context, const RayInfo<FOR::World>& ray, float minT, float maxT, TraceResult& result);
-    bool piperOcclude(FullContext* context, const RayInfo<FOR::World>& ray, float minT, float maxT);
+    void piperTrace(FullContext context, const RayInfo<FOR::World>& ray, float minT, float maxT, TraceResult& result);
+    bool piperOcclude(FullContext context, const RayInfo<FOR::World>& ray, float minT, float maxT);
     // TODO:terminate/ignore intersection
 
-    float piperSample(FullContext* context);
+    float piperSample(FullContext context);
 
-    void piperStatisticsUInt(RestrictedContext* context, uint32_t id, uint32_t val);
-    void piperStatisticsBool(RestrictedContext* context, uint32_t id, bool val);
-    void piperStatisticsFloat(RestrictedContext* context, uint32_t id, float val);
-    void piperStatisticsTime(RestrictedContext* context, uint32_t id, uint64_t interval);
-    void piperGetTime(RestrictedContext* context, uint64_t& val);
+    void piperStatisticsUInt(RestrictedContext context, StatisticsHandle statistics, uint32_t val);
+    void piperStatisticsBool(RestrictedContext context, StatisticsHandle statistics, bool val);
+    void piperStatisticsFloat(RestrictedContext context, StatisticsHandle statistics, float val);
+    void piperStatisticsTime(RestrictedContext context, StatisticsHandle statistics, uint64_t interval);
+    void piperGetTime(RestrictedContext context, uint64_t& val);
 
-    void piperQueryCall(RestrictedContext* context, uint32_t id, CallInfo& info);
+    void piperQueryCall(RestrictedContext context, CallHandle call, CallInfo& info);
+    void piperQueryTransform(RestrictedContext context, TraversalHandle traversal,
+                             Transform<Distance, FOR::Local, FOR::World>& transform);
+    Time<float> piperQueryTime(RestrictedContext context);
 
     // TODO:better interface
     // only for debug
     // TODO:context
-    void piperPrintFloat(RestrictedContext* context, const char* name, float val);
+    void piperPrintFloat(RestrictedContext context, const char* name, float val);
     }
     // TODO:better interface? consider optix
     template <typename Func, typename... Args>
-    void piperCall(RestrictedContext* context, const uint32_t id, Args&&... args) {
-        CallInfo call;
-        piperQueryCall(context, id, call);
-        reinterpret_cast<Func>(call.address)(context, call.SBTData, std::forward<Args>(args)...);
+    void piperCall(RestrictedContext context, const CallHandle call, Args&&... args) {
+        CallInfo info;
+        piperQueryCall(context, call, info);
+        reinterpret_cast<Func>(info.address)(context, info.SBTData, std::forward<Args>(args)...);
     }
 
     class TimeProfiler final {
     private:
-        RestrictedContext* mContext;
-        uint32_t mID;
+        RestrictedContext mContext;
+        StatisticsHandle mStatistics;
         uint64_t mBegin;
 
     public:
-        TimeProfiler(RestrictedContext* context, const uint32_t id) : mContext(context), mID(id) {
+        TimeProfiler(const RestrictedContext context, const StatisticsHandle statistics)
+            : mContext(context), mStatistics(statistics) {
             piperGetTime(mContext, mBegin);
         }
         ~TimeProfiler() {
             uint64_t end;
             piperGetTime(mContext, end);
-            piperStatisticsTime(mContext, mID, end - mBegin);
+            piperStatisticsTime(mContext, mStatistics, end - mBegin);
         }
     };
 }  // namespace Piper

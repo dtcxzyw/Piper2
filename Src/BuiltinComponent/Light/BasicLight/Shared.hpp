@@ -19,10 +19,11 @@
 
 namespace Piper {
     struct SampledEnvironmentData final {
+        TraversalHandle traversal;
         Spectrum<Radiance> texture;
     };
     struct PointLightData final {
-        Point<Distance, FOR::World> pos;
+        TraversalHandle traversal;
         Spectrum<Intensity> intensity;
     };
 }  // namespace Piper

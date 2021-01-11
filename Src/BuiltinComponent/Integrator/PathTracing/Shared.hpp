@@ -21,8 +21,8 @@ namespace Piper {
     struct Data final {
         uint32_t maxDepth;
 
-        uint32_t profileDepth;
-        uint32_t profilePathTime;
-        uint32_t profileValidRay;
+        StatisticsHandle profileDepth;
+        StatisticsHandle profilePathTime;
+        StatisticsHandle profileValidRay;
     };
 }  // namespace Piper

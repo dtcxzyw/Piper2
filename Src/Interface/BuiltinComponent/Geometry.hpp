@@ -24,13 +24,15 @@ namespace Piper {
         SharedPtr<RTProgram> intersect;
         SharedPtr<RTProgram> occlude;
         SharedPtr<RTProgram> surface;
+        SharedPtr<RTProgram> sample;
     };
 
     class Geometry : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Geometry, Object);
         virtual ~Geometry() = default;
-        virtual AccelerationStructure& getAcceleration(Tracer& tracer) const = 0;
-        virtual GeometryProgram materialize(const MaterializeContext& ctx) const = 0;
+        [[nodiscard]] virtual Area<float> area() const = 0;
+        [[nodiscard]] virtual AccelerationStructure& getAcceleration(Tracer& tracer) const = 0;
+        [[nodiscard]] virtual GeometryProgram materialize(TraversalHandle traversal, const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

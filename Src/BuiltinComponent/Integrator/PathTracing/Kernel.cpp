@@ -19,8 +19,8 @@
 namespace Piper {
     constexpr auto noSpecular =
         static_cast<BxDFPart>(static_cast<uint32_t>(BxDFPart::All) ^ static_cast<uint32_t>(BxDFPart::Specular));
-    static Spectrum<Radiance> multipleImportanceSampling(FullContext* context, const Point<Distance, FOR::World>& hit,
-                                                         const float t, uint64_t instance, const SurfaceStorage& surfaceStorage,
+    static Spectrum<Radiance> multipleImportanceSampling(FullContext context, const Point<Distance, FOR::World>& hit,
+                                                         const SurfaceStorage& surfaceStorage,
                                                          const Normal<float, FOR::Shading>& wo, const TraceSurface& surface,
                                                          const Normal<float, FOR::Shading>& Ng) {
         auto heuristic = [](const Dimensionless<float> lightPdf, const Dimensionless<float> BSDFPdf) {
@@ -34,7 +34,7 @@ namespace Piper {
         if(select.pdf.val <= 0.0f)
             return Spectrum<Radiance>{};
         LightStorage lightStorage;
-        piperLightInit(context, select.light, t, lightStorage);
+        piperLightInit(context, select.light, lightStorage);
 
         auto sampleLightSource = [&] {
             LightSample light;
@@ -42,14 +42,14 @@ namespace Piper {
             if(light.pdf.val > 0.0f && light.rad.valid()) {
                 const auto wi = surface.intersect.local2Shading(surface.transform(light.dir));
                 Spectrum<Dimensionless<float>> f;
-                piperSurfaceEvaluate(context, surface.instance, surfaceStorage, wo, wi, Ng, noSpecular, f);
+                piperSurfaceEvaluate(context, surface.surface, surfaceStorage, wo, wi, Ng, noSpecular, f);
                 if(f.valid()) {
-                    const RayInfo<FOR::World> shadowRay{ hit, light.dir, t };
+                    const RayInfo<FOR::World> shadowRay{ hit, light.dir };
                     if(!piperOcclude(context, shadowRay, 1e-3f, 1e5f)) {
                         auto w = abs(wi.z) / light.pdf;
                         if(!select.delta) {
                             Dimensionless<float> pdf;
-                            piperSurfacePdf(context, instance, surfaceStorage, wo, wi, Ng, noSpecular, pdf);
+                            piperSurfacePdf(context, surface.surface, surfaceStorage, wo, wi, Ng, noSpecular, pdf);
                             w = w * heuristic(light.pdf, pdf);
                         }
                         return f * light.rad * w;
@@ -62,7 +62,7 @@ namespace Piper {
             if(select.delta)
                 return Spectrum<Radiance>{};
             SurfaceSample sample;
-            piperSurfaceSample(context, instance, surfaceStorage, wo, Ng, noSpecular, sample);
+            piperSurfaceSample(context, surface.surface, surfaceStorage, wo, Ng, noSpecular, sample);
 
             if(sample.pdf.val <= 0.0f || !sample.f.valid())
                 return Spectrum<Radiance>{};
@@ -78,7 +78,7 @@ namespace Piper {
             }
 
             TraceResult traceResult;
-            piperTrace(context, RayInfo<FOR::World>{ hit, dir, t }, 0.001f, 1e5f, traceResult);
+            piperTrace(context, RayInfo<FOR::World>{ hit, dir }, 0.001f, 1e5f, traceResult);
             Spectrum<Radiance> rad;
             if(traceResult.kind == TraceKind::Surface) {
                 // hit selected area light
@@ -86,9 +86,9 @@ namespace Piper {
                 // piperLightEvaluate(context, select.light, lightStorage, hit + dir * traceResult.surface.t, dir, rad);
                 rad = {};
             } else {
-                piperLightInit(context, 0, t, lightStorage);
+                piperLightInit(context, environment, lightStorage);
                 piperLightEvaluate(
-                    context, 0, lightStorage,
+                    context, environment, lightStorage,
                     *static_cast<const Point<Distance, FOR::World>*>(nullptr),  // NOLINT(clang-diagnostic-null-dereference)
                     dir, rad);
             }
@@ -98,7 +98,7 @@ namespace Piper {
         const auto partB = sampleBSDF();
         return (partA + partB) / select.pdf;
     }
-    extern "C" void trace(FullContext* context, const void* SBTData, RayInfo<FOR::World>& ray, Spectrum<Radiance>& sample) {
+    extern "C" void trace(FullContext context, const void* SBTData, RayInfo<FOR::World>& ray, Spectrum<Radiance>& sample) {
         const auto* data = static_cast<const Data*>(SBTData);
         TimeProfiler profiler{ decay(context), data->profilePathTime };
         Spectrum<Dimensionless<float>> pf{ { 1.0f }, { 1.0f }, { 1.0f } };
@@ -117,9 +117,9 @@ namespace Piper {
                     rad = {};
                 } else {
                     // environment
-                    piperLightInit(context, 0, ray.t, storage);
+                    piperLightInit(context, environment, storage);
                     piperLightEvaluate(
-                        context, 0, storage,
+                        context, environment, storage,
                         *static_cast<const Point<Distance, FOR::World>*>(nullptr),  // NOLINT(clang-diagnostic-null-dereference)
                         ray.direction, rad);
                 }
@@ -136,15 +136,15 @@ namespace Piper {
             SurfaceStorage storage;
             const auto Ng = surface.intersect.local2Shading(surface.intersect.Ng);
             bool earlyCheck;
-            piperSurfaceInit(context, surface.instance, ray.t, surface.intersect.texCoord, Ng, res.surface.intersect.face,
+            piperSurfaceInit(context, surface.surface, surface.intersect.texCoord, Ng, res.surface.intersect.face,
                              TransportMode::Radiance, storage, earlyCheck);
 
             const auto hit = ray.origin + ray.direction * surface.t;
 
             if(earlyCheck)
-                sample += pf * multipleImportanceSampling(context, hit, ray.t, surface.instance, storage, wo, surface, Ng);
+                sample += pf * multipleImportanceSampling(context, hit, storage, wo, surface, Ng);
             SurfaceSample ss;
-            piperSurfaceSample(context, surface.instance, storage, wo, Ng, BxDFPart::All, ss);
+            piperSurfaceSample(context, surface.surface, storage, wo, Ng, BxDFPart::All, ss);
             const auto valid = ss.pdf.val > 0.0f && ss.f.valid();
             piperStatisticsBool(decay(context), data->profileValidRay, valid);
             if(!valid)

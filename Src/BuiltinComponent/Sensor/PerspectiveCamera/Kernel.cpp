@@ -18,18 +18,34 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    extern "C" void rayGen(RestrictedContext*, const void* SBTData, const Vector2<float>& NDC, const float u1, const float u2,
-                           RayInfo<FOR::World>& ray, Dimensionless<float>& weight) {
+    extern "C" void rayGen(RestrictedContext context, const void* SBTData, const Vector2<float>& NDC, const float u1,
+                           const float u2, RayInfo<FOR::World>& ray, Dimensionless<float>& weight) {
         const auto* data = static_cast<const PCData*>(SBTData);
-        const auto filmHit =
-            data->anchor + data->offX * Dimensionless<float>{ 1.0f - NDC.x } + data->offY * Dimensionless<float>{ 1.0f - NDC.y };
+
+        Transform<Distance, FOR::Local, FOR::World> transform;
+        piperQueryTransform(context, data->traversal, transform);
+        // TODO:consider rotate/scale?
+        const auto base = transform.originRefB();
+        const auto forward = Normal<float, FOR::World>{ data->lookAt - base };
+        const auto right = cross(forward, data->upRef);
+        const auto up = cross(right, forward);
+        const auto anchor = base + up * Distance{ data->size.x * 0.5f } - right * Distance{ data->size.y * 0.5f };  // left-top
+        // TODO:AF/MF mode support
+        const auto focalDistance = dot(data->lookAt - base, forward);
+        const auto filmDistance = inverse(inverse(data->focalLength) - inverse(focalDistance));
+        const auto lensCenter = base + forward * filmDistance;
+        const auto offX = right * Distance{ data->size.x };
+        const auto offY = up * Distance{ -data->size.y };
+        const auto apertureX = right * data->apertureRadius;
+        const auto apertureY = up * data->apertureRadius;
+
+        const auto filmHit = anchor + offX * Dimensionless<float>{ 1.0f - NDC.x } + offY * Dimensionless<float>{ 1.0f - NDC.y };
         const auto lensOffset = sampleUniformDisk(u1, u2);
-        const auto lensHit = data->lensCenter + data->apertureX * lensOffset.x + data->apertureY * lensOffset.y;
-        const auto dir = data->lensCenter - filmHit;
-        const auto planeOfFocusHit = data->lensCenter + dir * (data->focalDistance / dot(dir, data->forward));
+        const auto lensHit = lensCenter + apertureX * lensOffset.x + apertureY * lensOffset.y;
+        const auto dir = lensCenter - filmHit;
+        const auto planeOfFocusHit = lensCenter + dir * (focalDistance / dot(dir, forward));
         ray.origin = lensHit;
         ray.direction = normalize(planeOfFocusHit - ray.origin);
-        ray.t = 0.0f;  // TODO:motion blur
         weight = { 1.0f };
     }
     static_assert(std::is_same_v<SensorFunc, decltype(&rayGen)>);

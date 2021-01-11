@@ -18,6 +18,7 @@
 #include "../../Kernel/Protocol.hpp"
 #include "../../STL/Function.hpp"
 #include "../../STL/Optional.hpp"
+#include "../../STL/Pair.hpp"
 #include "../../STL/Variant.hpp"
 #include "../Infrastructure/Allocator.hpp"
 #include "../Infrastructure/Concurrency.hpp"
@@ -77,18 +78,13 @@ namespace Piper {
         };
     };
 
-    struct GSMInstanceDesc final {
-        SharedPtr<Geometry> geometry;
-        SharedPtr<Surface> surface;
-        SharedPtr<Medium> medium;
-        Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
-    };
-    struct GroupDesc final {
-        DynamicArray<SharedPtr<Node>> nodes;
-        Optional<Transform<Distance, FOR::Local, FOR::World>> transform;
+    class GSMInstance : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(GSMInstance, Object);
+        virtual ~GSMInstance() = default;
     };
 
-    using NodeDesc = Variant<GroupDesc, GSMInstanceDesc>;
+    using TransformInfo = DynamicArray<Pair<Time<float>, Transform<Distance, FOR::Local, FOR::World>>>;
 
     using SBTPayload = DynamicArray<std::byte>;
     template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
@@ -101,8 +97,8 @@ namespace Piper {
         uint32_t left, top, width, height;
     };
 
-    using CallSiteRegister = Function<uint32_t, const SharedPtr<RTProgram>&, const SBTPayload&>;
-    using TextureLoader = Function<uint32_t, const SharedPtr<Config>&, uint32_t>;
+    using CallSiteRegister = Function<CallHandle, const SharedPtr<RTProgram>&, const SBTPayload&>;
+    using TextureLoader = Function<CallHandle, const SharedPtr<Config>&, uint32_t>;
     struct MaterializeContext final {
         Tracer& tracer;
         ResourceHolder& holder;
@@ -120,14 +116,16 @@ namespace Piper {
         virtual ~Tracer() = default;
         // TODO:update structure
         virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
-        virtual SharedPtr<Node> buildNode(const NodeDesc& desc) = 0;
+        virtual SharedPtr<GSMInstance> buildGSMInstance(SharedPtr<Geometry> geometry, SharedPtr<Surface> surface,
+                                                        SharedPtr<Medium> medium) = 0;
+        virtual SharedPtr<Node> buildNode(const SharedPtr<Object>& object) = 0;
+        virtual SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) = 0;
         // TODO:callee
         virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
         // TODO:better interface
-        virtual UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, Sensor& sensor, Integrator& integrator,
-                                                     RenderDriver& renderDriver, const LightSampler& lightSampler,
-                                                     const Span<SharedPtr<Light>>& lights, Sampler* sampler, uint32_t width,
-                                                     uint32_t height) = 0;
+        virtual UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, SharedPtr<Node> sensor, Integrator& integrator,
+                                                     RenderDriver& renderDriver, LightSampler& lightSampler, Sampler& sampler,
+                                                     uint32_t width, uint32_t height, float& ratio) = 0;
         virtual Accelerator& getAccelerator() = 0;
         virtual ResourceCacheManager& getCacheManager() = 0;
         virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,

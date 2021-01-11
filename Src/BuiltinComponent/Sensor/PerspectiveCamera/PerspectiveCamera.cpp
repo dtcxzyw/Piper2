@@ -23,6 +23,7 @@
 #include "Shared.hpp"
 
 namespace Piper {
+    // TODO:aperture mask texture
     class PerspectiveCamera final : public Sensor {
     private:
         String mKernelPath;
@@ -32,41 +33,29 @@ namespace Piper {
     public:
         PerspectiveCamera(PiperContext& context, const String& path, const SharedPtr<Config>& config)
             : Sensor(context), mKernelPath(path + "/Kernel.bc") {
-            // TODO:aperture mask texture
-            const auto base = parsePoint<Distance, FOR::World>(config->at("Position"));
-            const auto lookAt = parsePoint<Distance, FOR::World>(config->at("LookAt"));
-            const auto size = parseVector2<float>(config->at("SensorSize")) * 1e-3f;
-            const auto upRef = parseVector<Distance, FOR::World>(config->at("Up"));
-            // TODO:FOV
-            // TODO:mm unit
-            const auto focalLength = Distance{ static_cast<float>(config->at("FocalLength")->get<double>()) * 1e-3f };
-            const auto apertureRadius =
-                focalLength / Dimensionless<float>{ 2.0f * static_cast<float>(config->at("FStop")->get<double>()) };
-            const auto forward = Normal<float, FOR::World>{ lookAt - base };
-            const auto right = cross(forward, Normal<float, FOR::World>(upRef));
-            const auto up = cross(right, forward);
-            mData.anchor = base + up * Distance{ size.x * 0.5f } - right * Distance{ size.y * 0.5f };
-            // TODO:AF/MF mode support
-            mData.focalDistance = dot(lookAt - base, forward);
-            const auto filmDistance = inverse(inverse(focalLength) - inverse(mData.focalDistance));
-            mData.lensCenter = base + forward * filmDistance;
-            mData.offX = right * Distance{ size.x };
-            mData.offY = up * Distance{ -size.y };
-            mData.apertureX = right * apertureRadius;
-            mData.apertureY = up * apertureRadius;
-            mData.forward = forward;
-            mAspectRatio = size.x / size.y;
+            // const auto base = parsePoint<Distance, FOR::World>(config->at("Position"));
+            // TODO:look at a scene node
+            mData.lookAt = parsePoint<Distance, FOR::World>(config->at("LookAt"));
+            mData.size = parseVector2<float>(config->at("SensorSize")) * 1e-3f;
+            mData.upRef = Normal<float, FOR::World>{ parseVector<Distance, FOR::World>(config->at("Up")) };
+            mData.focalLength = Distance{ static_cast<float>(config->at("FocalLength")->get<double>()) * 1e-3f };
+            mData.apertureRadius =
+                mData.focalLength / Dimensionless<float>{ 2.0f * static_cast<float>(config->at("FStop")->get<double>()) };
+            mAspectRatio = mData.size.x / mData.size.y;
         }
-        [[nodiscard]] float getAspectRatio() const noexcept override {
+        [[nodiscard]] float aspectRatio() const noexcept override {
             return mAspectRatio;
         }
-        SensorProgram materialize(const MaterializeContext& ctx) const override {
+
+        [[nodiscard]] SensorProgram materialize(const TraversalHandle id, const MaterializeContext& ctx) const override {
             SensorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.rayGen = ctx.tracer.buildProgram(
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
                 "rayGen");
-            res.payload = packSBTPayload(context().getAllocator(), mData);
+            auto data = mData;
+            data.traversal = id;
+            res.payload = packSBTPayload(context().getAllocator(), data);
             return res;
         }
     };
