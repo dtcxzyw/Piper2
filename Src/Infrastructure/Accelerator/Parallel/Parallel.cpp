@@ -458,7 +458,7 @@ namespace Piper {
                             PIPER_LIBC_FUNC(fminf), PIPER_LIBC_FUNC(sqrtf), PIPER_LIBC_FUNC(cbrtf), PIPER_LIBC_FUNC(hypotf),
                             PIPER_LIBC_FUNC(acosf), PIPER_LIBC_FUNC(atan2f), PIPER_LIBC_FUNC(asinf), PIPER_LIBC_FUNC(floorf),
                             PIPER_LIBC_FUNC(ceilf), PIPER_LIBC_FUNC(remainderf), PIPER_LIBC_FUNC(memset), PIPER_LIBC_FUNC(memcpy),
-                            PIPER_LIBC_FUNC(memmove), PIPER_LIBC_FUNC(logf),
+                            PIPER_LIBC_FUNC(memmove), PIPER_LIBC_FUNC(logf), PIPER_LIBC_FUNC(expf),
                             // TODO:cross C library
                             PIPER_LIBC_FUNC(_fdtest)
 #undef PIPER_LIBC_FUNC

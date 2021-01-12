@@ -129,7 +129,7 @@ namespace Piper {
                                                      uint32_t height, float& ratio) = 0;
         virtual Accelerator& getAccelerator() = 0;
         virtual ResourceCacheManager& getCacheManager() = 0;
-        virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
+        virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& launchData,
                            const SensorNDCAffineTransform& transform, uint32_t sample) = 0;
         [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
                                                                  uint32_t channel) const = 0;

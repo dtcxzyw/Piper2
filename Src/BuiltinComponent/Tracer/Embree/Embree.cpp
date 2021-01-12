@@ -418,6 +418,14 @@ namespace Piper {
         printf("%s:%lf\n", msg, static_cast<double>(ref));
     }
 
+    static void piperEmbreeFloatAtomicAdd(float& x, const float y) {
+        // TODO:improve performance
+        auto& atomicX = *reinterpret_cast<std::atomic<float>*>(&x);
+        auto src = x;
+        while(!atomicX.compare_exchange_strong(src, src + y))
+            ;
+    }
+
     struct MainArgument final {
         const KernelArgument* SBT;
     };
@@ -448,7 +456,7 @@ namespace Piper {
 
         Spectrum<Radiance> sample;
         SBT->trace(reinterpret_cast<FullContext>(&context), SBT->TRPayload, ray, sample);
-        SBT->accumulate(reinterpret_cast<RestrictedContext>(&context), SBT->ACPayload, point, sample * weight);
+        SBT->accumulate(reinterpret_cast<RestrictedContext>(&context), SBT->ACPayload, SBT->launchData, point, sample * weight);
     }
 
     static LinkableProgram prepareKernelNative(PiperContext& context, const bool debug) {
@@ -476,6 +484,7 @@ namespace Piper {
         PIPER_APPEND(StatisticsTime);
         PIPER_APPEND(GetTime);
         PIPER_APPEND(QueryTransform);
+        PIPER_APPEND(FloatAtomicAdd);
         if(debug) {
             PIPER_APPEND(PrintFloat);
         }
@@ -1023,7 +1032,7 @@ namespace Piper {
             auto ACP = renderDriver.materialize(materialize);
             auto& ACRTP = dynamic_cast<EmbreeRTProgram&>(*ACP.accumulate);
             modules.push_back(ACRTP.program);
-            mArg.ACPayload = nullptr;
+            mArg.ACPayload = upload(ACP.payload);
 
             LightInstanceProgram* environmentLight = nullptr;
             for(auto&& inst : lights) {
@@ -1175,13 +1184,13 @@ namespace Piper {
             mArg.profiler = &mProfiler;
             mArg.errorHandler = &context.getErrorHandler();
         }
-        void run(const RenderRECT& rect, const SBTPayload& renderDriverPayload, const SensorNDCAffineTransform& transform,
+        void run(const RenderRECT& rect, const SBTPayload& launchData, const SensorNDCAffineTransform& transform,
                  const uint32_t sample) {
             auto stage = context().getErrorHandler().enterStage("prepare payload", PIPER_SOURCE_LOCATION());
             MemoryArena arena(context().getAllocator(), 4096);
             auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
             mArg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
-            mArg.ACPayload = upload(renderDriverPayload);
+            mArg.launchData = upload(launchData);
             mArg.sample = sample;
             mArg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
             buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
@@ -1317,9 +1326,9 @@ namespace Piper {
         Accelerator& getAccelerator() override {
             return *mAccelerator;
         }
-        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,
+        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& launchData,
                    const SensorNDCAffineTransform& transform, const uint32_t sample) override {
-            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, renderDriverPayload, transform, sample);
+            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, launchData, transform, sample);
         }
         SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc, const uint32_t channel) const override {
             auto res = generateTextureImpl(textureDesc);

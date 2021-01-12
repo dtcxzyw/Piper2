@@ -71,6 +71,7 @@ namespace Piper {
         const void* RGPayload;
         RenderDriverFunc accumulate;
         const void* ACPayload;
+        const void* launchData;
         IntegratorFunc trace;
         const void* TRPayload;
         LightFuncGroup* lights;
@@ -102,7 +103,6 @@ namespace Piper {
         RandomEngine eng;
     };
 
-    
     struct BuiltinHitInfo final {
         Normal<float, FOR::Local> Ng;
         Vector2<float> barycentric;

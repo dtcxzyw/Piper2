@@ -18,8 +18,15 @@
 #include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct ConstantData final {
-        Spectrum<Radiance>* res;
+    struct RDData final {
+        CallHandle filter;
+    };
+    struct LaunchData final {
+        RGBW* rgbw;
         uint32_t w, h;
+    };
+    struct GaussianFilterData final {
+        float negAlpha;
+        float sub;
     };
 }  // namespace Piper

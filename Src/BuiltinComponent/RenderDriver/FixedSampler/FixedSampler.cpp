@@ -24,39 +24,74 @@
 #include "Shared.hpp"
 
 namespace Piper {
+    class SimpleFilter final : public Filter {
+    private:
+        String mKernelPath;
+        String mFilterType;
+
+        union Payload {
+            GaussianFilterData gaussian;
+        } mPayload;
+
+    public:
+        SimpleFilter(PiperContext& context, String kernel, const SharedPtr<Config>& config)
+            : Filter(context), mKernelPath(std::move(kernel)), mFilterType(config->at("FilterType")->get<String>()) {
+            if(mFilterType == "gaussian") {
+                const auto alpha = static_cast<float>(config->at("Alpha")->get<double>());
+                mPayload.gaussian.negAlpha = -alpha;
+                mPayload.gaussian.sub = std::exp(-alpha);
+            }
+        }
+
+        [[nodiscard]] FilterProgram materialize(const MaterializeContext& ctx) const override {
+            FilterProgram res;
+            auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            res.weight = ctx.tracer.buildProgram(
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                mFilterType);
+            res.payload = packSBTPayload(context().getAllocator(), mPayload);
+            return res;
+        }
+    };
+    // TODO:MeasuredFilter
+
     // TODO:tiled
     class FixedSampler final : public RenderDriver {
     private:
         String mKernelPath;
+        SharedPtr<Filter> mFilter;
 
     public:
-        FixedSampler(PiperContext& context, const String& path, const SharedPtr<Config>&)
-            : RenderDriver(context), mKernelPath(path + "/Kernel.bc") {}
+        FixedSampler(PiperContext& context, String kernel, const SharedPtr<Config>& config)
+            : RenderDriver(context), mKernelPath(std::move(kernel)),
+              mFilter(context.getModuleLoader().newInstanceT<Filter>(config->at("Filter")).getSync()) {}
         void renderFrame(DynamicArray<Spectrum<Radiance>>& res, const uint32_t width, const uint32_t height,
                          const RenderRECT& rect, const SensorNDCAffineTransform& transform, Tracer& tracer,
                          Pipeline& pipeline) override {
             // TODO:use buffer (pass dependencies to tracer)
             // auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(Spectrum<Radiance>), 128);
-            ConstantData payload;
-            payload.w = width;
-            payload.h = height;
             // payload.res = reinterpret_cast<Spectrum<Radiance>*>(buffer->ref()->getHandle());
             // buffer->reset();
-            payload.res = res.data();
-
+            DynamicArray<RGBW> buffer{ res.size(), context().getAllocator() };
             const auto spp = pipeline.getSamplesPerPixel();
             for(uint32_t i = 0; i < spp; ++i) {
                 auto stage = context().getErrorHandler().enterStage("progress " + toString(context().getAllocator(), i + 1) +
                                                                         "/" + toString(context().getAllocator(), spp),
                                                                     PIPER_SOURCE_LOCATION());
-                tracer.trace(pipeline, rect, packSBTPayload(context().getAllocator(), payload), transform, i);
+                tracer.trace(pipeline, rect, packSBTPayload(context().getAllocator(), LaunchData{ buffer.data(), width, height }),
+                             transform, i);
             }
 
             // auto bufferCPU = buffer->download();
             // bufferCPU.wait();
             // memcpy(res.data(),bufferCPU->data(), bufferCPU->size());
-            for(auto&& pixel : res)
-                pixel = pixel / Dimensionless<float>{ static_cast<float>(spp) };
+            for(size_t idx = 0; idx < res.size(); ++idx) {
+                auto& rgbw = buffer[idx];
+                if(rgbw.weight.val != 0.0f)
+                    res[idx] = rgbw.radiance / rgbw.weight;
+                else
+                    res[idx] = Spectrum<Radiance>{};
+            }
         }
 
         [[nodiscard]] RenderDriverProgram materialize(const MaterializeContext& ctx) const override {
@@ -65,6 +100,8 @@ namespace Piper {
             res.accumulate = ctx.tracer.buildProgram(
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
                 "accumulate");
+            auto [sbt, prog] = mFilter->materialize(ctx);
+            res.payload = packSBTPayload(context().getAllocator(), RDData{ ctx.registerCall(prog, sbt) });
             return res;
         }
     };
@@ -74,12 +111,17 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mPath(path, context.getAllocator()) {}
+        explicit ModuleImpl(PiperContext& context, CString path)
+            : Module(context), mPath{ String{ path, context.getAllocator() } + "/Kernel.bc" } {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "Driver") {
                 return context().getScheduler().value(
                     eastl::static_shared_pointer_cast<Object>(makeSharedObject<FixedSampler>(context(), mPath, config)));
+            }
+            if(classID == "SimpleFilter") {
+                return context().getScheduler().value(
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<SimpleFilter>(context(), mPath, config)));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }

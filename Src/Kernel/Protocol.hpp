@@ -97,15 +97,16 @@ namespace Piper {
             using V = decltype(r * rhs.r);
             return Spectrum<V>{ r * rhs.r, g * rhs.g, b * rhs.b };
         }
-        Spectrum& operator+=(Spectrum rhs) noexcept {
-            r = r + rhs.r, g = g + rhs.g, b = b + rhs.b;
-            return *this;
-        }
     };
     using Flux = Power<float>;
     using Irradiance = Ratio<Flux, Area<float>>;
     using Intensity = Ratio<Flux, SolidAngle<float>>;
     using Radiance = Ratio<Irradiance, SolidAngle<float>>;
+
+    struct RGBW final {
+        Spectrum<Radiance> radiance;
+        Dimensionless<float> weight;
+    };
 
     struct SensorNDCAffineTransform final {
         float ox, oy, sx, sy;
@@ -184,8 +185,9 @@ namespace Piper {
                                         float u1, float u2, Point<Distance, FOR::World>& src, Normal<float, FOR::World>& n,
                                         Dimensionless<float>& pdf);
 
-    using RenderDriverFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& point,
-                                      const Spectrum<Radiance>& sample);
+    using RenderDriverFunc = void (*)(RestrictedContext context, const void* SBTData, const void* launchData,
+                                      const Vector2<float>& point, const Spectrum<Radiance>& sample);
+    using FilterFunc = void (*)(RestrictedContext context, const void* SBTData, float dx, float dy, Dimensionless<float>& weight);
     using IntegratorFunc = void (*)(FullContext context, const void* SBTData, RayInfo<FOR::World>& ray,
                                     Spectrum<Radiance>& sample);
     struct LightStorage final {
@@ -294,6 +296,8 @@ namespace Piper {
     // only for debug
     // TODO:context
     void piperPrintFloat(RestrictedContext context, const char* name, float val);
+
+    void piperFloatAtomicAdd(float& x, float y);
     }
     // TODO:better interface? consider optix
     template <typename Func, typename... Args>

@@ -135,7 +135,7 @@ namespace Piper {
                         ray.direction, rad);
                 }
 
-                sample += pf * rad;
+                sample = sample + pf * rad;
             }
 
             if(res.kind == TraceKind::AreaLight) {
@@ -159,7 +159,7 @@ namespace Piper {
 
             const auto hit = ray.origin + ray.direction * surface.t;
             if(earlyCheck)
-                sample += pf * multipleImportanceSampling(context, hit, storage, wo, surface, Ng);
+                sample = sample + pf * multipleImportanceSampling(context, hit, storage, wo, surface, Ng);
             SurfaceSample ss;
             piperSurfaceSample(context, surface.surface, storage, wo, Ng, BxDFPart::All, ss);
             const auto valid = ss.pdf.val > 0.0f && ss.f.valid();

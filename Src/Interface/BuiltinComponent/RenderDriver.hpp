@@ -19,8 +19,20 @@
 #include "Tracer.hpp"
 
 namespace Piper {
+    struct FilterProgram final {
+        SBTPayload payload;
+        SharedPtr<RTProgram> weight;
+    };
+
+    class Filter : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Filter, Object)
+        virtual ~Filter() = default;
+        [[nodiscard]] virtual FilterProgram materialize(const MaterializeContext& ctx) const = 0;
+    };
 
     struct RenderDriverProgram final {
+        SBTPayload payload;
         SharedPtr<RTProgram> accumulate;
     };
     class RenderDriver : public Object {
@@ -29,6 +41,6 @@ namespace Piper {
         virtual ~RenderDriver() = default;
         virtual void renderFrame(DynamicArray<Spectrum<Radiance>>& res, uint32_t width, uint32_t height, const RenderRECT& rect,
                                  const SensorNDCAffineTransform& transform, Tracer& tracer, Pipeline& pipeline) = 0;
-        virtual RenderDriverProgram materialize(const MaterializeContext& ctx) const = 0;
+        [[nodiscard]] virtual RenderDriverProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper
