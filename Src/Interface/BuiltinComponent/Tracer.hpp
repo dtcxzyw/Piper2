@@ -123,9 +123,10 @@ namespace Piper {
         // TODO:call graph
         virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
         // TODO:better interface
-        virtual UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, SharedPtr<Node> sensor, Integrator& integrator,
-                                                     RenderDriver& renderDriver, LightSampler& lightSampler, Sampler& sampler,
-                                                     uint32_t width, uint32_t height, float& ratio) = 0;
+        virtual UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, const SharedPtr<Node>& sensor,
+                                                     Integrator& integrator, RenderDriver& renderDriver,
+                                                     LightSampler& lightSampler, Sampler& sampler, uint32_t width,
+                                                     uint32_t height, float& ratio) = 0;
         virtual Accelerator& getAccelerator() = 0;
         virtual ResourceCacheManager& getCacheManager() = 0;
         virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& renderDriverPayload,

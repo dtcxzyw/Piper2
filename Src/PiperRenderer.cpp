@@ -177,7 +177,7 @@ namespace Piper {
             stage.next("build scene hierarchy", PIPER_SOURCE_LOCATION());
             UMap<String, SharedPtr<Node>> namedNodes{ context().getAllocator() };
 
-            auto scene = buildScene(tracer, config->at("Scene"), namedNodes);
+            const auto scene = buildScene(tracer, config->at("Scene"), namedNodes);
 
             stage.next("parse frames", PIPER_SOURCE_LOCATION());
             // TODO:animation

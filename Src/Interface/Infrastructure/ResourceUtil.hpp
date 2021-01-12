@@ -21,6 +21,12 @@
 
 namespace Piper {
     // TODO:better interface
+    template <typename T>
+    struct Wrapper final : public Object {
+        PIPER_INTERFACE_CONSTRUCT(Wrapper, Object);
+        T value;
+    };
+
     class PIPER_API ResourceHolder final : public Object {
     private:
         DynamicArray<SharedPtr<Object>> mPool;
