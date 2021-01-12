@@ -53,15 +53,18 @@ namespace Piper {
     private:
         String mKernelPath;
         DynamicArray<PerPlaneData> mPlanes;
+        DynamicArray<Dimensionless<float>> mPDF, mCDF;
         DynamicArray<Bounds> mBounds;
         Area<float> mArea;
 
     public:
         Plane(PiperContext& context, const SharedPtr<Config>& config, String kernel)
-            : Geometry(context), mKernelPath(std::move(kernel)), mPlanes(context.getAllocator()),
-              mBounds(context.getAllocator()), mArea{ 0.0f } {
+            : Geometry(context), mKernelPath(std::move(kernel)), mPlanes{ context.getAllocator() },
+              mPDF{ context.getAllocator() }, mCDF{ context.getAllocator() }, mBounds{ context.getAllocator() }, mArea{ 0.0f } {
             const auto& planes = config->at("Primitives")->viewAsArray();
             mPlanes.reserve(planes.size());
+            mPDF.reserve(planes.size());
+            mCDF.reserve(planes.size());
             mBounds.reserve(planes.size());
             const auto select = [](const Vector<Distance, FOR::Local>& det) -> uint32_t {
                 const float absVal[3] = { std::fabs(det.x.val), std::fabs(det.y.val), std::fabs(det.z.val) };
@@ -81,7 +84,13 @@ namespace Piper {
                                     select(det3) });
                 // TODO:use accelerator
                 mBounds.push_back(calcPlaneBounds(mPlanes.back()));
+                mCDF.push_back({ mArea.val });
+                mPDF.push_back({ area.val });
             }
+            for(auto& cdf : mCDF)
+                cdf = cdf / Dimensionless<float>{ mArea.val };
+            for(auto& pdf : mPDF)
+                pdf = pdf / Dimensionless<float>{ mArea.val };
         }
         AccelerationStructure& getAcceleration(Tracer& tracer) const override {
             return *tracer.getCacheManager().materialize(reinterpret_cast<ResourceID>(this),
@@ -94,18 +103,47 @@ namespace Piper {
                                                              return tracer.buildAcceleration(desc);
                                                          } });
         }
-        [[nodiscard]] GeometryProgram materialize(TraversalHandle, const MaterializeContext& ctx) const override {
+        [[nodiscard]] GeometryProgram materialize(const MaterializeContext& ctx) const override {
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
             // TODO:use buffer of accelerator
             auto* const ptr = ctx.arena.alloc<PerPlaneData>(mPlanes.size());
             memcpy(ptr, mPlanes.data(), sizeof(PerPlaneData) * mPlanes.size());
+
             GeometryProgram prog;
             prog.payload = packSBTPayload(context().getAllocator(), PlaneData{ ptr });
             prog.surface = ctx.tracer.buildProgram(linkable, "planeSurface");
             prog.intersect = ctx.tracer.buildProgram(linkable, "planeIntersect");
             prog.occlude = ctx.tracer.buildProgram(linkable, "planeOcclude");
+
+            return prog;
+        }
+
+        SampledGeometryProgram materialize(const TraversalHandle traversal, const MaterializeContext& ctx) const override {
+            auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            auto linkable =
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+
+            // TODO:reuse buffer by caching
+            auto* const ptr = ctx.arena.alloc<PerPlaneData>(mPlanes.size());
+            memcpy(ptr, mPlanes.data(), sizeof(PerPlaneData) * mPlanes.size());
+            auto* const cdf = ctx.arena.alloc<Dimensionless<float>>(mCDF.size());
+            memcpy(cdf, mCDF.data(), sizeof(Dimensionless<float>) * mCDF.size());
+            auto* const pdf = ctx.arena.alloc<Dimensionless<float>>(mPDF.size());
+            memcpy(pdf, mPDF.data(), sizeof(Dimensionless<float>) * mPDF.size());
+
+            SampledGeometryProgram prog;
+            prog.sample = ctx.tracer.buildProgram(linkable, "planeSample");
+            prog.payload = packSBTPayload(context().getAllocator(),
+                                          CDFData{
+                                              ptr,
+                                              traversal,
+                                              cdf,
+                                              pdf,
+                                              Dimensionless<float>{ 1.0f / mArea.val },
+                                              static_cast<uint32_t>(mCDF.size()),
+                                          });
             return prog;
         }
 

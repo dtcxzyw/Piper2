@@ -15,9 +15,7 @@
 */
 
 #pragma once
-
-#include "PhysicalQuantitySI.hpp"
-#include "Transform.hpp"
+#include "Protocol.hpp"
 
 namespace Piper {
 
@@ -49,4 +47,23 @@ namespace Piper {
         return Normal<T, FOR::Shading>{ Vector<Dimensionless<T>, FOR::Shading>{ coord.x, coord.y, Dimensionless<T>{ z } },
                                         Unsafe{} };
     }
+
+    inline uint32_t select(const Dimensionless<float>* cdf, const Dimensionless<float>* pdf, const uint32_t size, float& u) {
+        uint32_t l = 0, r = size - 1;
+        while(l + 1 < r) {
+            const auto mid = (l + r) >> 1;
+            if(u >= cdf[mid].val)
+                r = mid;
+            else
+                l = mid;
+        }
+        u = (u - cdf[l].val) / pdf[l].val;
+        return l;
+    }
+
+    inline Dimensionless<float> calcGeometrySamplePdf(const Distance distance, const Normal<float, FOR::World>& wi,
+                                                      const Normal<float, FOR::World>& n, const Area<float> area) {
+        return distance * distance / (abs(dot(n, wi)) * area);
+    }
+
 }  // namespace Piper

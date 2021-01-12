@@ -95,12 +95,16 @@ namespace Piper {
             return *res;
         }
 
-        [[nodiscard]] GeometryProgram materialize(TraversalHandle, const MaterializeContext&) const override {
+        [[nodiscard]] GeometryProgram materialize(const MaterializeContext&) const override {
+            return {};
+        }
+        SampledGeometryProgram materialize(TraversalHandle traversal, const MaterializeContext& ctx) const override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return {};
         }
 
         [[nodiscard]] Area<float> area() const override {
-            context().getErrorHandler().raiseException("Sampling triangles is not supported.", PIPER_SOURCE_LOCATION());
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return { 0.0f };
         }
     };

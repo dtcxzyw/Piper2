@@ -307,9 +307,9 @@ namespace Piper {
         }
 
         Point<Float, refB> operator()(Point<Float, refA> p) const noexcept {
-            return { A2B[0][0] * p.x + A2B[0][1] * p.y + A2B[0][2] * p.z + A2B[0][3],
-                     A2B[1][0] * p.x + A2B[1][1] * p.y + A2B[1][2] * p.z + A2B[1][3],
-                     A2B[2][0] * p.x + A2B[2][1] * p.y + A2B[2][2] * p.z + A2B[2][3] };
+            return { A2B[0][0] * p.x + A2B[0][1] * p.y + A2B[0][2] * p.z + Float{ A2B[0][3].val },
+                     A2B[1][0] * p.x + A2B[1][1] * p.y + A2B[1][2] * p.z + Float{ A2B[1][3].val },
+                     A2B[2][0] * p.x + A2B[2][1] * p.y + A2B[2][2] * p.z + Float{ A2B[2][3].val } };
         }
 
         Normal<typename Storage::FT, refB> operator()(Normal<typename Storage::FT, refA> n) const noexcept {

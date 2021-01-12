@@ -78,5 +78,9 @@
   {
     "Name": "Piper.BuiltinComponent.BasicShapes",
     "Path": "BuiltinComponent/Geometry/BasicShapes/BasicShapes"
+  },
+  {
+    "Name": "Piper.BuiltinComponent.AreaLight",
+    "Path": "BuiltinComponent/Light/AreaLight/AreaLight"
   }
 ]

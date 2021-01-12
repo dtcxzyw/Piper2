@@ -14,6 +14,7 @@
    limitations under the License.
 */
 
+#include "../../../Kernel/Sampling.hpp"
 #include "Shared.hpp"
 #include <limits>
 
@@ -92,8 +93,7 @@ namespace Piper {
     }
     static_assert(std::is_same_v<GeometryOccludeFunc, decltype(&planeOcclude)>);
 
-    extern "C" void planeSurface(RestrictedContext, const void*, const void* storage,
-                                 SurfaceIntersectionInfo& info) {
+    extern "C" void planeSurface(RestrictedContext, const void*, const void* storage, SurfaceIntersectionInfo& info) {
         const auto& data = *static_cast<const PlaneStorage*>(storage);
         info.face = data.face;
         info.Ng = data.face == Face::Front ? -data.plane->normal : data.plane->normal;
@@ -104,4 +104,20 @@ namespace Piper {
         info.texCoord = data.uv;
     }
     static_assert(std::is_same_v<GeometryPostProcessFunc, decltype(&planeSurface)>);
+
+    extern "C" void planeSample(const RestrictedContext context, const void* SBTData, const Point<Distance, FOR::World>& hit,
+                                float u1, const float u2, Point<Distance, FOR::World>& src, Normal<float, FOR::World>& n,
+                                Dimensionless<float>& pdf) {
+        const auto* data = static_cast<const CDFData*>(SBTData);
+        const auto idx = select(data->cdf, data->pdf, data->size, u1);
+        const auto& plane = data->primitives[idx];
+        Transform<Distance, FOR::Local, FOR::World> transform;
+        piperQueryTransform(context, data->traversal, transform);
+        src = transform(plane.origin + Dimensionless<float>{ u1 } * plane.u + Dimensionless<float>{ u2 } * plane.v);
+        n = transform(plane.normal);
+        if(dot(hit - src, n).val <= 0.0f)
+            n = -n;
+        pdf = data->inverseArea;
+    }
+    static_assert(std::is_same_v<GeometrySampleFunc, decltype(&planeSample)>);
 }  // namespace Piper

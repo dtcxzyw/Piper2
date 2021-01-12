@@ -20,10 +20,13 @@
 namespace Piper {
     struct GeometryProgram final {
         SBTPayload payload;
-
         SharedPtr<RTProgram> intersect;
         SharedPtr<RTProgram> occlude;
         SharedPtr<RTProgram> surface;
+    };
+
+    struct SampledGeometryProgram final {
+        SBTPayload payload;
         SharedPtr<RTProgram> sample;
     };
 
@@ -33,6 +36,8 @@ namespace Piper {
         virtual ~Geometry() = default;
         [[nodiscard]] virtual Area<float> area() const = 0;
         [[nodiscard]] virtual AccelerationStructure& getAcceleration(Tracer& tracer) const = 0;
-        [[nodiscard]] virtual GeometryProgram materialize(TraversalHandle traversal, const MaterializeContext& ctx) const = 0;
+        [[nodiscard]] virtual GeometryProgram materialize(const MaterializeContext& ctx) const = 0;
+        [[nodiscard]] virtual SampledGeometryProgram materialize(TraversalHandle traversal,
+                                                                 const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

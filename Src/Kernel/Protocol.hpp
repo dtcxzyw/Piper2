@@ -20,6 +20,9 @@
 #include <cstdint>
 
 namespace Piper {
+    // Now only 64-bit platform is supported.
+    static_assert(sizeof(ptrdiff_t) == 8);
+
     // TODO:alignment
     using Distance = Length<float>;
     // TODO:medium info
@@ -127,7 +130,6 @@ namespace Piper {
     class StatisticsHandleReserved;
     using StatisticsHandle = const StatisticsHandleReserved*;
 
-    static_assert(sizeof(ptrdiff_t) == sizeof(uint64_t));
     constexpr LightHandle environment = nullptr;
 
     using SensorFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& NDC, float u1, float u2,
@@ -178,6 +180,9 @@ namespace Piper {
                                          const RayInfo<FOR::Local>& ray, float tNear, float tFar, bool& hit);
     using GeometryPostProcessFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                              SurfaceIntersectionInfo& info);
+    using GeometrySampleFunc = void (*)(RestrictedContext context, const void* SBTData, const Point<Distance, FOR::World>& hit,
+                                        float u1, float u2, Point<Distance, FOR::World>& src, Normal<float, FOR::World>& n,
+                                        Dimensionless<float>& pdf);
 
     using RenderDriverFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& point,
                                       const Spectrum<Radiance>& sample);
@@ -187,9 +192,10 @@ namespace Piper {
         std::byte data[32];
     };
     struct LightSample final {
-        Normal<float, FOR::World> dir;  // light.origin-hit
+        Normal<float, FOR::World> dir;  // src-hit
         Spectrum<Radiance> rad;
         Dimensionless<float> pdf;
+        Distance distance;
     };
     struct LightSelectResult final {
         LightHandle light;
@@ -198,15 +204,17 @@ namespace Piper {
     };
     // TODO:spatial select?
     using LightSelectFunc = void (*)(RestrictedContext context, const void* SBTData, float u, LightSelectResult& select);
+
+    // TODO:sample emission for BDPT and SPPM
     using LightInitFunc = void (*)(RestrictedContext context, const void* SBTData, void* storage);
     using LightSampleFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
                                      const Point<Distance, FOR::World>& hit, float u1, float u2, LightSample& sample);
     using LightEvaluateFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
-                                       const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
-                                       Spectrum<Radiance>& rad);
+                                       const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
+                                       const Normal<float, FOR::World>& dir, Spectrum<Radiance>& rad);
     using LightPdfFunc = void (*)(RestrictedContext context, const void* SBTData, const void* storage,
-                                  const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
-                                  Dimensionless<float>& pdf);
+                                  const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
+                                  const Normal<float, FOR::World>& dir, Distance t, Dimensionless<float>& pdf);
 
     using SampleStartFunc = void (*)(const void* SBTData, uint32_t x, uint32_t y, uint32_t sample, uint64_t& idx,
                                      Vector2<float>& pos);
@@ -216,13 +224,18 @@ namespace Piper {
     using TextureSampleFunc = void (*)(RestrictedContext context, const void* SBTData, const Vector2<float>& texCoord,
                                        Dimensionless<float>* sample);
 
-    enum class TraceKind : unsigned char { Surface, Missing };
+    enum class TraceKind : unsigned char { Surface, AreaLight, Missing };
+
     struct TraceSurface final {
         SurfaceIntersectionInfo intersect;
         Transform<Distance, FOR::World, FOR::Local> transform;
-        SurfaceHandle surface;
+        union {
+            SurfaceHandle surface;
+            LightHandle light;
+        };
         Distance t;
     };
+
     struct TraceResult final {
         union {
             TraceSurface surface;
@@ -231,7 +244,7 @@ namespace Piper {
     };
 
     struct CallInfo final {
-        uint64_t address;
+        ptrdiff_t address;
         const void* SBTData;
     };
 
@@ -254,10 +267,11 @@ namespace Piper {
     void piperLightSample(FullContext context, LightHandle light, const LightStorage& storage,
                           const Point<Distance, FOR::World>& hit, LightSample& sample);
     void piperLightEvaluate(FullContext context, LightHandle light, const LightStorage& storage,
-                            const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
-                            Spectrum<Radiance>& rad);
+                            const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
+                            const Normal<float, FOR::World>& dir, Spectrum<Radiance>& rad);
     void piperLightPdf(FullContext context, LightHandle light, const LightStorage& storage,
-                       const Point<Distance, FOR::World>& hit, const Normal<float, FOR::World>& dir, Dimensionless<float>& pdf);
+                       const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
+                       const Normal<float, FOR::World>& dir, Distance t, Dimensionless<float>& pdf);
 
     void piperTrace(FullContext context, const RayInfo<FOR::World>& ray, float minT, float maxT, TraceResult& result);
     bool piperOcclude(FullContext context, const RayInfo<FOR::World>& ray, float minT, float maxT);

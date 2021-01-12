@@ -15,21 +15,12 @@
 */
 
 #pragma once
-#include "Tracer.hpp"
+#include "../../../Kernel/Protocol.hpp"
 
 namespace Piper {
-    struct SurfaceProgram final {
-        SBTPayload payload;
-        SharedPtr<RTProgram> init;
-        SharedPtr<RTProgram> sample;
-        SharedPtr<RTProgram> evaluate;
-        SharedPtr<RTProgram> pdf;
-    };
-
-    class Surface : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Surface, Object)
-        virtual ~Surface() = default;
-        [[nodiscard]] virtual SurfaceProgram materialize(const MaterializeContext& ctx) const = 0;
+    struct DiffuseAreaLightData final {
+        Spectrum<Radiance> radiance;
+        CallHandle sample;
+        Area<float> area;
     };
 }  // namespace Piper

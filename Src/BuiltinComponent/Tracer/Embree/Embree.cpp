@@ -105,7 +105,7 @@ namespace Piper {
             if(iter != mID.cend())
                 return iter->second.id;
             String sGroup{ group, context().getAllocator() }, sName{ name, context().getAllocator() };
-            const auto* const res = reinterpret_cast<StatisticsHandle>(static_cast<uint64_t>(mStatistics.size()));
+            const auto* const res = reinterpret_cast<StatisticsHandle>(static_cast<ptrdiff_t>(mStatistics.size()));
             mID.insert(makePair(uid, ItemInfo{ std::move(sGroup), std::move(sName), res }));
             auto& record = *static_cast<Record*>(mStatistics.push_back_uninitialized());
             record.type = type;
@@ -129,18 +129,18 @@ namespace Piper {
             return res;
         }
         void addBool(const StatisticsHandle id, const bool val) {
-            auto& [first, second] = mStatistics[reinterpret_cast<uint64_t>(id)].bc;
+            auto& [first, second] = mStatistics[reinterpret_cast<ptrdiff_t>(id)].bc;
             ++(val ? first : second);
         }
         void addFloat(const StatisticsHandle id, const float val) {
-            auto& [first, second] = mStatistics[reinterpret_cast<uint64_t>(id)].fc;
+            auto& [first, second] = mStatistics[reinterpret_cast<ptrdiff_t>(id)].fc;
             double src = first;
             while(!first.compare_exchange_strong(src, src + static_cast<double>(val)))
                 ;
             ++second;
         }
         void addTime(const StatisticsHandle id, const uint64_t val) {
-            auto& [first, second] = mStatistics[reinterpret_cast<uint64_t>(id)].tc;
+            auto& [first, second] = mStatistics[reinterpret_cast<ptrdiff_t>(id)].tc;
             first += val;
             ++second;
         }
@@ -148,7 +148,7 @@ namespace Piper {
             return Clock::now().time_since_epoch().count();
         }
         void addUInt(const StatisticsHandle id, const uint32_t val) {
-            ++mStatistics[reinterpret_cast<uint64_t>(id)].uc[val];
+            ++mStatistics[reinterpret_cast<ptrdiff_t>(id)].uc[val];
         }
         [[nodiscard]] String generateReport() const override {
             std::lock_guard<std::mutex> guard{ mMutex };
@@ -211,7 +211,7 @@ namespace Piper {
                 return remap.emplace(group, Map<String, String>{ context().getAllocator() }).first->second;
             };
             for(auto&& [_, info] : mID)
-                locate(info.group).emplace(info.name, info.name + ": " + report[reinterpret_cast<uint64_t>(info.id)]);
+                locate(info.group).emplace(info.name, info.name + ": " + report[reinterpret_cast<ptrdiff_t>(info.id)]);
             const auto* const line = "\n========================================\n";
             String res{ "\n=============== Pipeline Statistics ===============\n", context().getAllocator() };
             for(auto&& [group, map] : remap) {
@@ -263,10 +263,20 @@ namespace Piper {
         ErrorHandler* errorHandler;
     };
     enum class HitKind { Builtin, Custom };
-    struct GSMInstanceUserData final : public Object {
-        PIPER_INTERFACE_CONSTRUCT(GSMInstanceUserData, Object);
+    enum class GeometryUsage { GSM, AreaLight };
 
+    struct GeometryUserData : public Object {
+        PIPER_INTERFACE_CONSTRUCT(GeometryUserData, Object)
         HitKind kind;
+        GeometryPostProcessFunc calcSurface;
+        const void* GEPayload;
+
+        GeometryUsage usage;
+    };
+
+    struct GSMInstanceUserData final : public GeometryUserData {
+        PIPER_INTERFACE_CONSTRUCT(GSMInstanceUserData, GeometryUserData);
+
         SurfaceInitFunc init;
         SurfaceSampleFunc sample;
         SurfaceEvaluateFunc evaluate;
@@ -274,14 +284,12 @@ namespace Piper {
 
         const void* SFPayload;
         // TODO:medium
-        GeometryPostProcessFunc calcSurface;
-        const void* GEPayload;
     };
 
-    struct AreaLightUserData final : public Object {
-        PIPER_INTERFACE_CONSTRUCT(AreaLightUserData, Object);
+    struct AreaLightUserData final : public GeometryUserData {
+        PIPER_INTERFACE_CONSTRUCT(AreaLightUserData, GeometryUserData);
 
-        const LightFuncGroup* group;
+        LightHandle light;
     };
 
     struct IntersectContext final {
@@ -358,7 +366,7 @@ namespace Piper {
             ray.direction.z.val,
             ctx->time.val,
             maxT,
-            gsmMask | areaLightMask,  // TODO:mask
+            gsmMask | areaLightMask,
             0,
             0  // must set the ray flags to 0
         };
@@ -370,7 +378,6 @@ namespace Piper {
 
         if(hit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
             // TODO:surface intersect filter?
-            result.kind = TraceKind::Surface;
             result.surface.t = Distance{ hit.ray.tfar };
             auto* scene = ctx->argument.scene;
             RTCGeometry geo = nullptr;
@@ -393,7 +400,8 @@ namespace Piper {
             assert(initialized);
 
             calcInverse(result.surface.transform.B2A, result.surface.transform.A2B);
-            const auto* data = static_cast<const GSMInstanceUserData*>(rtcGetGeometryUserData(geo));
+
+            const auto* data = static_cast<const GeometryUserData*>(rtcGetGeometryUserData(geo));
 
             if(data->kind == HitKind::Builtin) {
                 auto& builtin = *reinterpret_cast<BuiltinHitInfo*>(&storage);
@@ -407,7 +415,13 @@ namespace Piper {
 
             data->calcSurface(reinterpret_cast<RestrictedContext>(context), data->GEPayload, &storage, result.surface.intersect);
 
-            result.surface.surface = reinterpret_cast<SurfaceHandle>(data);
+            if(data->usage == GeometryUsage::GSM) {
+                result.kind = TraceKind::Surface;
+                result.surface.surface = reinterpret_cast<SurfaceHandle>(data);
+            } else {
+                result.kind = TraceKind::AreaLight;
+                result.surface.light = reinterpret_cast<const AreaLightUserData*>(data)->light;
+            }
             ctx->argument.profiler->addBool(ctx->argument.profileIntersectHit, true);
         } else {
             result.kind = TraceKind::Missing;
@@ -519,7 +533,7 @@ namespace Piper {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         ctx->lightSample(decay(context), ctx->LSPayload, piperEmbreeSample(context), select);
         // TODO:better interface for light sample
-        select.light = reinterpret_cast<LightHandle>(ctx->lights + reinterpret_cast<uint64_t>(select.light));
+        select.light = reinterpret_cast<LightHandle>(ctx->lights + reinterpret_cast<ptrdiff_t>(select.light));
     }
     static void piperEmbreeLightInit(const FullContext context, const LightHandle light, LightStorage& storage) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
@@ -534,23 +548,23 @@ namespace Piper {
                      sample);
     }
     static void piperEmbreeLightEvaluate(const FullContext context, const LightHandle light, const LightStorage& storage,
-                                         const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
-                                         Spectrum<Radiance>& rad) {
+                                         const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
+                                         const Normal<float, FOR::World>& dir, Spectrum<Radiance>& rad) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
-        func->evaluate(decay(context), func->LIPayload, &storage, lightSourceHit, dir, rad);
+        func->evaluate(decay(context), func->LIPayload, &storage, lightSourceHit, n, dir, rad);
     }
     static void piperEmbreeLightPdf(const FullContext context, const LightHandle light, const LightStorage& storage,
-                                    const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& dir,
-                                    Dimensionless<float>& pdf) {
+                                    const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
+                                    const Normal<float, FOR::World>& dir, const Distance t, Dimensionless<float>& pdf) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
-        func->pdf(decay(context), func->LIPayload, &storage, lightSourceHit, dir, pdf);
+        func->pdf(decay(context), func->LIPayload, &storage, lightSourceHit, n, dir, t, pdf);
     }
 
     static void piperEmbreeQueryCall(const RestrictedContext context, const CallHandle call, CallInfo& info) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        info = ctx->callInfo[reinterpret_cast<uint64_t>(call)];
+        info = ctx->callInfo[reinterpret_cast<ptrdiff_t>(call)];
     }
 
     // TODO:more option
@@ -592,14 +606,13 @@ namespace Piper {
     }
 
     static LinkableProgram prepareKernelNative(PiperContext& context, const bool debug) {
-        static_assert(sizeof(void*) == 8);
         DynamicArray<std::byte> res{ context.getAllocator() };
         constexpr auto header = "Native";
         res.insert(res.cend(), reinterpret_cast<const std::byte*>(header), reinterpret_cast<const std::byte*>(header + 6));
         auto append = [&res](const StringView symbol, auto address) {
             res.insert(res.cend(), reinterpret_cast<const std::byte*>(symbol.data()),
                        reinterpret_cast<const std::byte*>(symbol.data() + symbol.size() + 1));
-            auto func = reinterpret_cast<uint64_t>(address);
+            auto func = reinterpret_cast<ptrdiff_t>(address);
             const auto* beg = reinterpret_cast<const std::byte*>(&func);
             const auto* end = beg + sizeof(func);
             res.insert(res.cend(), beg, end);
@@ -976,17 +989,9 @@ namespace Piper {
                                                  reinterpret_cast<TraversalHandle>(node), this });
         }
 
-        void postMaterialize(const GSMInstanceUserData& data, ResourceHolder& holder) const {
-            // TODO:better ResourceHolder
-            mUserData->GEPayload = data.GEPayload;
-            mUserData->SFPayload = data.SFPayload;
-            mUserData->calcSurface = data.calcSurface;
-            mUserData->init = data.init;
-            mUserData->evaluate = data.evaluate;
-            mUserData->sample = data.sample;
-            mUserData->pdf = data.pdf;
-            mUserData->kind = data.kind;
+        GSMInstanceUserData& postMaterialize(ResourceHolder& holder) const {
             holder.retain(mUserData);
+            return *mUserData;
         }
     };
 
@@ -1000,13 +1005,14 @@ namespace Piper {
     public:
         EmbreeLeafNodeWithLight(PiperContext& context, Tracer& tracer, RTCDevice device, SharedPtr<Light> light)
             : EmbreeNode(context), mLight(std::move(light)) {
-            auto* accel = dynamic_cast<EmbreeAcceleration*>(mLight->getAcceleration(tracer));
-            mGeometry.reset(rtcNewGeometry(device, accel ? RTC_GEOMETRY_TYPE_INSTANCE : RTC_GEOMETRY_TYPE_USER));
-            if(accel) {
-                rtcSetGeometryInstancedScene(mGeometry.get(), accel->getScene(device));
-                rtcSetGeometryUserData(mGeometry.get(), accel->getScene(device));
-                rtcSetGeometryMask(mGeometry.get(), areaLightMask);
+            const auto* geometry = mLight->getGeometry();
+            mGeometry.reset(rtcNewGeometry(device, geometry ? RTC_GEOMETRY_TYPE_INSTANCE : RTC_GEOMETRY_TYPE_USER));
+            if(geometry) {
                 mUserData = makeSharedObject<AreaLightUserData>(context);
+                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer));
+                rtcSetGeometryInstancedScene(mGeometry.get(), accel.getScene(device));
+                rtcSetGeometryUserData(mGeometry.get(), mUserData.get());
+                rtcSetGeometryMask(mGeometry.get(), areaLightMask);
             } else {
                 // dummy node
                 rtcSetGeometryUserPrimitiveCount(mGeometry.get(), 0);
@@ -1032,11 +1038,10 @@ namespace Piper {
             light.push_back(LightInstanceProgram{ mLight, reinterpret_cast<TraversalHandle>(node), this });
         }
 
-        void postMaterialize(const LightFuncGroup* group, ResourceHolder& holder) const {
-            if(mUserData) {
-                mUserData->group = group;
+        AreaLightUserData* postMaterialize(ResourceHolder& holder) const {
+            if(mUserData)
                 holder.retain(mUserData);
-            }
+            return mUserData.get();
         }
     };
 
@@ -1124,7 +1129,7 @@ namespace Piper {
                     const auto* prog = dynamic_cast<EmbreeRTProgram*>(program.get());
                     modules.emplace_back(prog->program);
                     call.emplace_back(prog->symbol, upload(payload));
-                    return reinterpret_cast<CallHandle>(static_cast<uint64_t>(id));
+                    return reinterpret_cast<CallHandle>(static_cast<ptrdiff_t>(id));
                 } },
                 mProfiler,
                 TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> CallHandle {
@@ -1153,7 +1158,7 @@ namespace Piper {
                 SurfaceEvaluateFunc evaluate;
                 SurfacePdfFunc pdf;
             };
-            UMap<Surface*, SurfaceInfo> surfaceProg(context.getAllocator());
+            UMap<const Surface*, SurfaceInfo> surfaceProg(context.getAllocator());
             struct GeometryInfo final {
                 void* payload;
                 String calcSurfaceFunc, intersectFunc, occludeFunc, boundsFunc;
@@ -1161,12 +1166,34 @@ namespace Piper {
                 HitKind kind;
                 EmbreeAcceleration* acceleration;
             };
-            UMap<Geometry*, GeometryInfo> geometryProg(context.getAllocator());
+            UMap<const Geometry*, GeometryInfo> geometryProg(context.getAllocator());
 
             const auto registerProgram = [&](const SharedPtr<RTProgram>& prog) {
                 auto& rtp = dynamic_cast<EmbreeRTProgram&>(*prog);
                 modules.push_back(rtp.program);
                 return rtp.symbol;
+            };
+
+            const auto registerGeometry = [&](const Geometry* geometry) {
+                if(geometryProg.count(geometry))
+                    return;
+                const auto gp = geometry->materialize(materialize);
+                auto& info = geometryProg[geometry];
+                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer));
+                info.acceleration = &accel;
+
+                if(gp.surface) {
+                    info.kind = HitKind::Custom;
+                    info.payload = upload(gp.payload);
+                    info.calcSurfaceFunc = registerProgram(gp.surface);
+                    info.intersectFunc = registerProgram(gp.intersect);
+                    info.occludeFunc = registerProgram(gp.occlude);
+                } else {
+                    auto [func, payload] = accel.getBuiltin();
+                    info.calcSurface = func;
+                    info.payload = upload(packSBTPayload(context.getAllocator(), payload));
+                    info.kind = HitKind::Builtin;
+                }
             };
 
             for(auto&& prog : GSMs) {
@@ -1180,25 +1207,7 @@ namespace Piper {
                     info.pdfFunc = registerProgram(sp.pdf);
                 }
 
-                if(!geometryProg.count(prog.geometry.get())) {
-                    auto gp = prog.geometry->materialize(prog.traversal, materialize);
-                    auto& info = geometryProg[prog.geometry.get()];
-                    auto& accel = dynamic_cast<EmbreeAcceleration&>(prog.geometry->getAcceleration(tracer));
-                    info.acceleration = &accel;
-
-                    if(gp.surface) {
-                        info.kind = HitKind::Custom;
-                        info.payload = upload(gp.payload);
-                        info.calcSurfaceFunc = registerProgram(gp.surface);
-                        info.intersectFunc = registerProgram(gp.intersect);
-                        info.occludeFunc = registerProgram(gp.occlude);
-                    } else {
-                        auto [func, payload] = accel.getBuiltin();
-                        info.calcSurface = func;
-                        info.payload = upload(packSBTPayload(context.getAllocator(), payload));
-                        info.kind = HitKind::Builtin;
-                    }
-                }
+                registerGeometry(prog.geometry.get());
             }
 
             auto ACP = renderDriver.materialize(materialize);
@@ -1236,7 +1245,12 @@ namespace Piper {
                 mArg.lights[idx].LIPayload = upload(LIP.payload);
                 LIPs.emplace_back(std::move(LIP));
                 lightReferences.emplace_back(inst.light);
+
+                const auto* geometry = inst.light->getGeometry();
+                if(geometry)
+                    registerGeometry(geometry);
             }
+
             lightSampler.preprocess({ lightReferences.cbegin(), lightReferences.cend() });
             auto LSP = lightSampler.materialize(materialize);
             auto& LSRTP = dynamic_cast<EmbreeRTProgram&>(*LSP.select);
@@ -1278,7 +1292,7 @@ namespace Piper {
 
             mArg.callInfo = mArena.alloc<CallInfo>(call.size());
             for(size_t idx = 0; idx < call.size(); ++idx) {
-                mArg.callInfo[idx].address = reinterpret_cast<uint64_t>(mKernel->lookup(call[idx].first));
+                mArg.callInfo[idx].address = reinterpret_cast<ptrdiff_t>(mKernel->lookup(call[idx].first));
                 mArg.callInfo[idx].SBTData = call[idx].second;
             }
 
@@ -1297,11 +1311,12 @@ namespace Piper {
                 prog.pdf = static_cast<SurfacePdfFunc>(mKernel->lookup(prog.pdfFunc));
             }
             for(auto& prog : GSMs) {
-                GSMInstanceUserData data(context);
+                auto& data = prog.node->postMaterialize(mHolder);
                 auto& geo = geometryProg[prog.geometry.get()];
                 data.kind = geo.kind;
                 data.calcSurface = geo.calcSurface;
                 data.GEPayload = geo.payload;
+                data.usage = GeometryUsage::GSM;
 
                 auto& surf = surfaceProg[prog.surface.get()];
                 data.init = surf.init;
@@ -1309,7 +1324,6 @@ namespace Piper {
                 data.evaluate = surf.evaluate;
                 data.pdf = surf.pdf;
                 data.SFPayload = surf.payload;
-                prog.node->postMaterialize(data, mHolder);
             }
 
             mArg.accumulate = static_cast<RenderDriverFunc>(mKernel->lookup(ACRTP.symbol));
@@ -1324,6 +1338,15 @@ namespace Piper {
                 mArg.lights[idx].sample = static_cast<LightSampleFunc>(mKernel->lookup(sample.symbol));
                 mArg.lights[idx].evaluate = static_cast<LightEvaluateFunc>(mKernel->lookup(evaluate.symbol));
                 mArg.lights[idx].pdf = static_cast<LightPdfFunc>(mKernel->lookup(pdf.symbol));
+
+                if(auto* data = lights[idx].node->postMaterialize(mHolder)) {
+                    auto& geo = geometryProg[lights[idx].light->getGeometry()];
+                    data->kind = geo.kind;
+                    data->calcSurface = geo.calcSurface;
+                    data->GEPayload = geo.payload;
+                    data->usage = GeometryUsage::AreaLight;
+                    data->light = reinterpret_cast<LightHandle>(mArg.lights + idx);
+                }
             }
 
             mArg.lightSample = static_cast<LightSelectFunc>(mKernel->lookup(LSRTP.symbol));

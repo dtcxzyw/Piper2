@@ -51,7 +51,7 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Light, Object)
         virtual ~Light() = default;
         [[nodiscard]] virtual LightProgram materialize(TraversalHandle traversal, const MaterializeContext& ctx) const = 0;
-        [[nodiscard]] virtual AccelerationStructure* getAcceleration(Tracer& tracer) const {
+        [[nodiscard]] virtual const Geometry* getGeometry() const {
             return nullptr;
         }
         [[nodiscard]] virtual LightAttributes attributes() const noexcept = 0;

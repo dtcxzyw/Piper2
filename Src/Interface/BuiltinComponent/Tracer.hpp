@@ -120,7 +120,7 @@ namespace Piper {
                                                         SharedPtr<Medium> medium) = 0;
         virtual SharedPtr<Node> buildNode(const SharedPtr<Object>& object) = 0;
         virtual SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) = 0;
-        // TODO:callee
+        // TODO:call graph
         virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
         // TODO:better interface
         virtual UniqueObject<Pipeline> buildPipeline(SharedPtr<Node> scene, SharedPtr<Node> sensor, Integrator& integrator,

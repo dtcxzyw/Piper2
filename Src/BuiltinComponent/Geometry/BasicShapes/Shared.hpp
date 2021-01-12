@@ -28,4 +28,12 @@ namespace Piper {
     struct PlaneData final {
         const PerPlaneData* primitives;
     };
+    struct CDFData final {
+        const PerPlaneData* primitives;
+        TraversalHandle traversal;
+        const Dimensionless<float>* cdf;
+        const Dimensionless<float>* pdf;
+        Dimensionless<float> inverseArea;
+        uint32_t size;
+    };
 }  // namespace Piper
