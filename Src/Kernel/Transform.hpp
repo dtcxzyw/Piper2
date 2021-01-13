@@ -252,7 +252,8 @@ namespace Piper {
         Normal operator-() const noexcept {
             return { Vector<Dimensionless<Float>, ref>{ -x, -y, -z }, Unsafe{} };
         }
-        Vector<Dimensionless<Float>, ref> asVector() const noexcept {
+
+        [[nodiscard]] Vector<Dimensionless<Float>, ref> asVector() const noexcept {
             return { x, y, z };
         }
     };
@@ -284,7 +285,6 @@ namespace Piper {
         return Normal<typename T::FT, ref>{ v };
     }
 
-    // TODO:Quaternion
     template <typename Float, FOR refA, FOR refB>
     struct Transform final {
         using Storage = Dimensionless<typename Float::FT>;
@@ -385,6 +385,11 @@ namespace Piper {
         for(auto r = 0; r < 3; ++r)
             B2C[r][3] = B2C[r][3] + A2B[r][3];
     }
+
+    struct alignas(16) TransformSRT final {
+        float scaleX, scaleY, scaleZ, skewXY, skewXZ, skewYZ, shiftX, shiftY, shiftZ, quatW, quatX, quatY, quatZ, transX, transY,
+            transZ;
+    };
 
     template <typename Float, FOR ref>
     Normal<Float, ref> reflect(Normal<Float, ref> wo, Normal<Float, ref> N) noexcept {

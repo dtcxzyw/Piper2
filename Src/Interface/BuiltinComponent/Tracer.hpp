@@ -84,7 +84,7 @@ namespace Piper {
         virtual ~GSMInstance() = default;
     };
 
-    using TransformInfo = DynamicArray<Pair<Time<float>, Transform<Distance, FOR::Local, FOR::World>>>;
+    using TransformInfo = DynamicArray<Pair<Time<float>, TransformSRT>>;  // local to world
 
     using SBTPayload = DynamicArray<std::byte>;
     template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>

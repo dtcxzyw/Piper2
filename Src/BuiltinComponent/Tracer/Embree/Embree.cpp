@@ -494,21 +494,21 @@ namespace Piper {
     }
 
     struct DeviceDeleter {
-        void operator()(RTCDevice device) const {
+        void operator()(const RTCDevice device) const {
             rtcReleaseDevice(device);
         }
     };
     using DeviceHandle = UniquePtr<RTCDeviceTy, DeviceDeleter>;
 
     struct GeometryDeleter {
-        void operator()(RTCGeometry geometry) const {
+        void operator()(const RTCGeometry geometry) const {
             rtcReleaseGeometry(geometry);
         }
     };
     using GeometryHandle = UniquePtr<RTCGeometryTy, GeometryDeleter>;
 
     struct SceneDeleter {
-        void operator()(RTCScene scene) const {
+        void operator()(const RTCScene scene) const {
             rtcReleaseScene(scene);
         }
     };
@@ -718,6 +718,12 @@ namespace Piper {
                              MemoryArena& arena) = 0;
     };
 
+    static void setTransformSRT(const RTCGeometry geometry, const uint32_t step, const TransformSRT& trans) {
+        static_assert(sizeof(RTCQuaternionDecomposition) == sizeof(trans));
+        static_assert(alignof(RTCQuaternionDecomposition) == alignof(TransformSRT));
+        rtcSetGeometryTransformQuaternion(geometry, step, reinterpret_cast<const RTCQuaternionDecomposition*>(&trans));
+    }
+
     // TODO:use rtcJoinCommitScene?
 
     class EmbreeBranchNode final : public EmbreeNode {
@@ -731,7 +737,7 @@ namespace Piper {
         DynamicArray<SubNode> mChildren;
 
     public:
-        EmbreeBranchNode(PiperContext& context, RTCDevice device,
+        EmbreeBranchNode(PiperContext& context, const RTCDevice device,
                          const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children)
             : EmbreeNode(context), mChildren{ context.getAllocator() } {
             mScene.reset(rtcNewScene(device));
@@ -746,10 +752,7 @@ namespace Piper {
                 // TODO:motion blur
                 // rtcSetGeometryTimeStepCount(mGeometry.get(),1);
                 if(!trans.empty()) {
-                    // TODO:use SRT
-                    // rtcSetGeometryTransformQuaternion
-                    rtcSetGeometryTransform(sub.geometry.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
-                                            trans.front().second.A2B);  // local to world
+                    setTransformSRT(sub.geometry.get(), 0, trans.front().second);
                 }
                 rtcAttachGeometry(mScene.get(), sub.geometry.get());
                 rtcCommitGeometry(sub.geometry.get());

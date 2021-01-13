@@ -20,7 +20,6 @@
 #include "Interface/BuiltinComponent/Light.hpp"
 #include "Interface/BuiltinComponent/RenderDriver.hpp"
 #include "Interface/BuiltinComponent/Sampler.hpp"
-#include "Interface/BuiltinComponent/Sensor.hpp"
 #include "Interface/BuiltinComponent/StructureParser.hpp"
 #include "Interface/BuiltinComponent/Surface.hpp"
 #include "Interface/BuiltinComponent/Tracer.hpp"
@@ -48,59 +47,88 @@ namespace Piper {
 
     class Render final : public Operator {
     private:
-        static auto parseTransform(const SharedPtr<Config>& config) {
-            Transform<Distance, FOR::Local, FOR::World> transform{};
+        static TransformSRT parseTransform(const SharedPtr<Config>& config) {
+            TransformSRT transform{};
+
             auto& context = config->context();
             auto reportError = [&context] {
                 context.getErrorHandler().raiseException("Invalid transform", PIPER_SOURCE_LOCATION());
             };
-            if(config->type() == NodeType::Array) {
-                const auto& arr = config->viewAsArray();
-                if(arr.size() != 3)
-                    reportError();
-                for(uint32_t i = 0; i < 3; ++i) {
-                    if(arr[i]->type() != NodeType::Array)
-                        reportError();
-                    const auto& row = arr[i]->viewAsArray();
-                    if(row.size() != 4)
-                        reportError();
-                    for(uint32_t j = 0; j < 4; ++j) {
-                        transform.A2B[i][j].val = static_cast<float>(row[j]->get<double>());
-                    }
-                }
-            } else if(config->type() == NodeType::Object) {
-                // SRT
-                const auto& attrs = config->viewAsObject();
-                const auto translation = attrs.find(String{ "Translation", context.getAllocator() });
-                if(translation != attrs.cend()) {
-                    const auto offset = parseVector<Dimensionless<float>, FOR::World>(translation->second);
-                    transform.A2B[0][3] = offset.x;
-                    transform.A2B[1][3] = offset.y;
-                    transform.A2B[2][3] = offset.z;
-                }
-                const auto scale = attrs.find(String{ "Scale", context.getAllocator() });
-                if(scale != attrs.cend()) {
-                    const auto mode = scale->second->type();
-                    if(mode == NodeType::FloatingPoint) {
-                        transform.A2B[0][0] = transform.A2B[1][1] = transform.A2B[2][2] =
-                            Dimensionless<float>{ static_cast<float>(scale->second->get<double>()) };
-                    } else if(mode == NodeType::Array) {
-                        const auto factor = parseVector<Dimensionless<float>, FOR::World>(scale->second);
-                        transform.A2B[0][0] = factor.x;
-                        transform.A2B[1][1] = factor.y;
-                        transform.A2B[2][2] = factor.z;
-                    } else
-                        reportError();
-                } else {
-                    transform.A2B[0][0] = transform.A2B[1][1] = transform.A2B[2][2] = Dimensionless<float>{ 1.0f };
-                }
-                const auto rotation = attrs.find(String{ "Rotation", context.getAllocator() });
-                if(rotation != attrs.cend()) {
-                    context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
-                }
+            // SRT
+            const auto& attrs = config->viewAsObject();
+            const auto translation = attrs.find(String{ "Translation", context.getAllocator() });
+            if(translation != attrs.cend()) {
+                const auto offset = parseVector<float, FOR::World>(translation->second);
+                transform.transX = offset.x;
+                transform.transY = offset.y;
+                transform.transZ = offset.z;
             } else
-                reportError();
-            calcInverse(transform.A2B, transform.B2A);
+                transform.transX = transform.transY = transform.transZ = 0.0f;
+
+            const auto scale = attrs.find(String{ "Scale", context.getAllocator() });
+            transform.skewXY = transform.skewXZ = transform.skewYZ = 0.0f;
+            transform.shiftX = transform.shiftY = 0.0f, transform.shiftZ = 0.0f;
+            if(scale != attrs.cend()) {
+                const auto& desc = scale->second;
+                switch(desc->type()) {
+                    case NodeType::FloatingPoint: {
+                        transform.scaleX = transform.scaleY = transform.scaleZ = static_cast<float>(desc->get<double>());
+                    } break;
+                    case NodeType::Array: {
+                        const auto factor = parseVector<float, FOR::World>(desc);
+                        transform.scaleX = factor.x;
+                        transform.scaleY = factor.y;
+                        transform.scaleZ = factor.z;
+                    } break;
+                    case NodeType::Object: {
+                        const auto factor = parseVector<float, FOR::World>(desc->at("Scale"));
+                        transform.scaleX = factor.x;
+                        transform.scaleY = factor.y;
+                        transform.scaleZ = factor.z;
+                        const auto skew = parseVector<float, FOR::World>(desc->at("Skew"));
+                        transform.skewXY = skew.x;
+                        transform.skewXZ = skew.y;
+                        transform.skewYZ = skew.z;
+                        const auto shift = parseVector<float, FOR::World>(desc->at("Shift"));
+                        transform.shiftX = shift.x;
+                        transform.shiftY = shift.y;
+                        transform.shiftZ = shift.z;
+                    } break;
+                    default:
+                        reportError();
+                }
+            } else {
+                transform.scaleX = transform.scaleY = transform.scaleZ = 1.0f;
+            }
+            const auto rotation = attrs.find(String{ "Rotation", context.getAllocator() });
+            if(rotation != attrs.cend()) {
+                const auto& arr = rotation->second->viewAsArray();
+                if(arr.size() == 3) {
+                    // euler angle
+                    const auto halfRoll = 0.5f * static_cast<float>(arr[0]->get<double>());
+                    const auto chRoll = std::cos(halfRoll), shRoll = std::sin(halfRoll);
+
+                    const auto halfPitch = 0.5f * static_cast<float>(arr[1]->get<double>());
+                    const auto chPitch = std::cos(halfPitch), shPitch = std::sin(halfPitch);
+
+                    const auto halfYaw = 0.5f * static_cast<float>(arr[2]->get<double>());
+                    const auto chYaw = std::cos(halfYaw), shYaw = std::sin(halfYaw);
+
+                    transform.quatW = chRoll * chPitch * chYaw + shRoll * shPitch * shYaw;
+                    transform.quatX = chRoll * shPitch * chYaw + shRoll * chPitch * shYaw;
+                    transform.quatY = chRoll * chPitch * shYaw - shRoll * shPitch * chYaw;
+                    transform.quatZ = shRoll * chPitch * chYaw - chRoll * shPitch * shYaw;
+                } else if(arr.size() == 4) {
+                    transform.quatW = static_cast<float>(arr[0]->get<double>());
+                    transform.quatX = static_cast<float>(arr[1]->get<double>());
+                    transform.quatY = static_cast<float>(arr[2]->get<double>());
+                    transform.quatZ = static_cast<float>(arr[3]->get<double>());
+                } else
+                    reportError();
+            } else {
+                transform.quatW = 1.0f;
+                transform.quatX = transform.quatY = transform.quatZ = 0.0f;
+            }
             return transform;
         }
 
