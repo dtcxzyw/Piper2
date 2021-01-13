@@ -49,16 +49,16 @@ namespace Piper {
     }
 
     inline uint32_t select(const Dimensionless<float>* cdf, const Dimensionless<float>* pdf, const uint32_t size, float& u) {
-        uint32_t l = 0, r = size - 1;
-        while(l + 1 < r) {
+        uint32_t l = 0, r = size;  //[l,r)
+        while(l < r) {
             const auto mid = (l + r) >> 1;
-            if(u >= cdf[mid].val)
+            if(u >= cdf[mid].val) {
+                l = mid + 1;
+            } else
                 r = mid;
-            else
-                l = mid;
         }
-        u = (u - cdf[l].val) / pdf[l].val;
-        return l;
+        u = (u - cdf[r].val) / pdf[r].val;
+        return r;
     }
 
     inline Dimensionless<float> calcGeometrySamplePdf(const Distance distance, const Normal<float, FOR::World>& wi,

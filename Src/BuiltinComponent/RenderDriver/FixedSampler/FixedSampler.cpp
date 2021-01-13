@@ -67,19 +67,19 @@ namespace Piper {
               mFilter(context.getModuleLoader().newInstanceT<Filter>(config->at("Filter")).getSync()) {}
         void renderFrame(DynamicArray<Spectrum<Radiance>>& res, const uint32_t width, const uint32_t height,
                          const RenderRECT& rect, const SensorNDCAffineTransform& transform, Tracer& tracer,
-                         Pipeline& pipeline) override {
+                         TraceLauncher& launcher) override {
             // TODO:use buffer (pass dependencies to tracer)
             // auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(Spectrum<Radiance>), 128);
             // payload.res = reinterpret_cast<Spectrum<Radiance>*>(buffer->ref()->getHandle());
             // buffer->reset();
             DynamicArray<RGBW> buffer{ res.size(), context().getAllocator() };
-            const auto spp = pipeline.getSamplesPerPixel();
+            const auto spp = launcher.getSamplesPerPixel();
             for(uint32_t i = 0; i < spp; ++i) {
                 auto stage = context().getErrorHandler().enterStage("progress " + toString(context().getAllocator(), i + 1) +
                                                                         "/" + toString(context().getAllocator(), spp),
                                                                     PIPER_SOURCE_LOCATION());
-                tracer.trace(pipeline, rect, packSBTPayload(context().getAllocator(), LaunchData{ buffer.data(), width, height }),
-                             transform, i);
+                launcher.launch(rect, packSBTPayload(context().getAllocator(), LaunchData{ buffer.data(), width, height }),
+                                transform, i);
             }
 
             // auto bufferCPU = buffer->download();

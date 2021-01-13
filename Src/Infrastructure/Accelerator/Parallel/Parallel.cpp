@@ -402,16 +402,16 @@ namespace Piper {
                         reporter.flushToLogger();
                         errorHandler.raiseException("Found some errors in module", PIPER_SOURCE_LOCATION());
                     }
-
+                    /*
                     llvm::legacy::PassManager manager;
                     std::string output;
                     llvm::raw_string_ostream out(output);
                     manager.add(llvm::createPrintModulePass(out));
                     manager.run(*module);
-
                     out.flush();
                     if(ctx->getLogger().allow(LogLevel::Debug))
                         ctx->getLogger().record(LogLevel::Debug, output.c_str(), PIPER_SOURCE_LOCATION());
+                        */
 
                     return llvm::orc::ThreadSafeModule{ std::move(module),
                                                         std::move(const_cast<std::remove_const_t<decltype(llvmCtx)>&>(llvmCtx)) };
@@ -421,7 +421,7 @@ namespace Piper {
                 [ctx = &context(), entry, nativeSymbol, this](llvm::orc::ThreadSafeModule mod) {
                     // TODO:LLVM use fake host triple,use true host triple to initialize JITTargetMachineBuilder
                     auto JTMB = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(), llvm::orc::JITTargetMachineBuilder::detectHost());
-                    
+
                     // TODO:test settings
                     // TODO:FP Precise
                     JTMB.setCodeGenOptLevel(llvm::CodeGenOpt::Aggressive);
@@ -432,12 +432,12 @@ namespace Piper {
                     options.EmulatedTLS = false;
                     options.TLSSize = 0;
 
-                    auto engine = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(),
-                                                std::move(llvm::orc::LLJITBuilder{}
-                                                              //.setNumCompileThreads(std::thread::hardware_concurrency())
-                                                              .setNumCompileThreads(0)  // NOTE: LLVM hasn't fix the bug in LLJIT construction.
-                                                              .setJITTargetMachineBuilder(std::move(JTMB)))
-                                                    .create());
+                    auto engine = getLLVMResult(
+                        *ctx, PIPER_SOURCE_LOCATION(),
+                        std::move(llvm::orc::LLJITBuilder{}     //.setNumCompileThreads(std::thread::hardware_concurrency())
+                                      .setNumCompileThreads(0)  // NOTE: LLVM hasn't fix the bug in LLJIT construction.
+                                      .setJITTargetMachineBuilder(std::move(JTMB)))
+                            .create());
 
                     mod.getModuleUnlocked()->setDataLayout(engine->getDataLayout());
 

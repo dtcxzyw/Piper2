@@ -49,21 +49,21 @@ namespace Piper {
             }
         }
 
-        [[nodiscard]] SamplerProgram materialize(const MaterializeContext& ctx, const uint32_t width, const uint32_t height) const override {
+        [[nodiscard]] SamplerProgram materialize(const MaterializeContext& ctx) const override {
             SamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
             res.start = ctx.tracer.buildProgram(linkable, "sobolStart");
             res.generate = ctx.tracer.buildProgram(linkable, "sobolGenerate");
-            SobolData data;
-            data.log2Resolution = static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(std::max(width, height)))));
-            data.resolution = 1 << data.log2Resolution;
-            data.scramble = mScramble;
-            res.payload = packSBTPayload(context().getAllocator(), data);
-            res.maxDimension = numSobolDimensions;
-            res.samplesPerPixel = mSamplesPerPixel;
             return res;
+        }
+
+        [[nodiscard]] SamplerAttributes generatePayload(const uint32_t width, const uint32_t height) const override {
+            const auto log2Resolution = static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(std::max(width, height)))));
+            return { packSBTPayload(context().getAllocator(),
+                                    SobolData{ static_cast<uint32_t>(1U << log2Resolution), log2Resolution, mScramble }),
+                     numSobolDimensions, mSamplesPerPixel };
         }
     };
 

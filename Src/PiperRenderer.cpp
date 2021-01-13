@@ -32,31 +32,31 @@
 #include <OpenEXR/ImfRgbaFile.h>
 #undef _CRT_SECURE_NO_WARNINGS
 #pragma warning(pop)
+#include <filesystem>
 
 namespace Piper {
     // TODO:instancing of lights and geometries
 
-    enum class FitMode { Fill, OverScan };
-    FitMode str2FitMode(PiperContext& context, const String& mode) {
-        if(mode == "Fill")
-            return FitMode::Fill;
-        if(mode == "OverScan")
-            return FitMode::OverScan;
-        context.getErrorHandler().raiseException("Invalid FitMode \"" + mode + "\".", PIPER_SOURCE_LOCATION());
-    }
-
     class Render final : public Operator {
     private:
-        static TransformSRT parseTransform(const SharedPtr<Config>& config) {
+        enum class FitMode { Fill, OverScan };
+        [[nodiscard]] FitMode str2FitMode(const String& mode) const {
+            if(mode == "Fill")
+                return FitMode::Fill;
+            if(mode == "OverScan")
+                return FitMode::OverScan;
+            context().getErrorHandler().raiseException("Invalid FitMode \"" + mode + "\".", PIPER_SOURCE_LOCATION());
+        }
+
+        [[nodiscard]] TransformSRT parseTransform(const SharedPtr<Config>& config) const {
             TransformSRT transform{};
 
-            auto& context = config->context();
-            auto reportError = [&context] {
-                context.getErrorHandler().raiseException("Invalid transform", PIPER_SOURCE_LOCATION());
+            auto reportError = [this] {
+                context().getErrorHandler().raiseException("Invalid transform", PIPER_SOURCE_LOCATION());
             };
             // SRT
             const auto& attrs = config->viewAsObject();
-            const auto translation = attrs.find(String{ "Translation", context.getAllocator() });
+            const auto translation = attrs.find(String{ "Translation", context().getAllocator() });
             if(translation != attrs.cend()) {
                 const auto offset = parseVector<float, FOR::World>(translation->second);
                 transform.transX = offset.x;
@@ -65,9 +65,9 @@ namespace Piper {
             } else
                 transform.transX = transform.transY = transform.transZ = 0.0f;
 
-            const auto scale = attrs.find(String{ "Scale", context.getAllocator() });
+            const auto scale = attrs.find(String{ "Scale", context().getAllocator() });
             transform.skewXY = transform.skewXZ = transform.skewYZ = 0.0f;
-            transform.shiftX = transform.shiftY = 0.0f, transform.shiftZ = 0.0f;
+            transform.shiftX = transform.shiftY = transform.shiftZ = 0.0f;
             if(scale != attrs.cend()) {
                 const auto& desc = scale->second;
                 switch(desc->type()) {
@@ -100,7 +100,7 @@ namespace Piper {
             } else {
                 transform.scaleX = transform.scaleY = transform.scaleZ = 1.0f;
             }
-            const auto rotation = attrs.find(String{ "Rotation", context.getAllocator() });
+            const auto rotation = attrs.find(String{ "Rotation", context().getAllocator() });
             if(rotation != attrs.cend()) {
                 const auto& arr = rotation->second->viewAsArray();
                 if(arr.size() == 3) {
@@ -134,14 +134,14 @@ namespace Piper {
 
         // TODO:concurrency
         template <typename T>
-        SharedPtr<T> syncLoad(const SharedPtr<Config>& config) {
+        [[nodiscard]] SharedPtr<T> syncLoad(const SharedPtr<Config>& config) const {
             return context().getModuleLoader().newInstanceT<T>(config).getSync();
         }
 
         // TODO:redirect of nodes
         // TODO:redirect of scenes
         SharedPtr<Node> buildSceneImpl(Tracer& tracer, const SharedPtr<Config>& config,
-                                       UMap<String, SharedPtr<Node>>& namedNodes) {
+                                       UMap<String, SharedPtr<Node>>& namedNodes) const {
             const auto type = config->at("Type")->get<String>();
             if(type == "Instance") {
                 const auto& attr = config->viewAsObject();
@@ -158,12 +158,36 @@ namespace Piper {
                 const auto& sub = config->at("Children")->viewAsArray();
                 DynamicArray<Pair<TransformInfo, SharedPtr<Node>>> nodes{ context().getAllocator() };
                 for(auto&& inst : sub) {
-                    TransformInfo transform{ context().getAllocator() };
+                    TransformInfo transform{ Time<float>{ 0.0f }, Time<float>{ 0.0f },
+                                             DynamicArray<Pair<uint32_t, TransformSRT>>{ context().getAllocator() } };
                     const auto& attr = inst->viewAsObject();
                     const auto iter = attr.find(String{ "Transform", context().getAllocator() });
-                    // TODO:motion blur
-                    if(iter != attr.cend())
-                        transform.push_back(makePair(Time<float>{ 0.0f }, parseTransform(iter->second)));
+                    if(iter != attr.cend()) {
+                        const auto& transformAttr = iter->second->viewAsObject();
+                        const auto offset = transformAttr.find(String{ "Offset", context().getAllocator() });
+                        if(offset != transformAttr.cend()) {
+                            // dynamic transform
+                            transform.offset = { static_cast<float>(offset->second->get<double>()) };
+                            transform.step = { static_cast<float>(iter->second->at("Step")->get<double>()) };
+                            for(auto&& trans : iter->second->at("KeyFrames")->viewAsArray()) {
+                                transform.transforms.emplace_back(
+                                    makePair(static_cast<uint32_t>(trans->at("Key")->get<uintmax_t>()),
+                                             parseTransform(trans->at("Transform"))));
+                            }
+
+                            if(transform.transforms.size() < 2)
+                                context().getErrorHandler().raiseException("Invalid dynamic transform", PIPER_SOURCE_LOCATION());
+                            // TODO: use Validation Layer
+                            for(uint32_t idx = 1; idx < transform.transforms.size(); ++idx)
+                                if(transform.transforms[idx].first <= transform.transforms[idx - 1].first) {
+                                    context().getErrorHandler().raiseException("Invalid dynamic transform",
+                                                                               PIPER_SOURCE_LOCATION());
+                                }
+                        } else {
+                            // static transform
+                            transform.transforms.emplace_back(makePair(0U, parseTransform(iter->second)));
+                        }
+                    }
                     nodes.emplace_back(makePair(std::move(transform), buildScene(tracer, inst, namedNodes)));
                 }
                 return tracer.buildNode(nodes);
@@ -172,17 +196,18 @@ namespace Piper {
             context().getErrorHandler().raiseException("Invalid scene node.", PIPER_SOURCE_LOCATION());
         }
 
-        SharedPtr<Node> buildScene(Tracer& tracer, const SharedPtr<Config>& config, UMap<String, SharedPtr<Node>>& namedNodes) {
-            auto attr = config->viewAsObject();
+        [[nodiscard]] SharedPtr<Node> buildScene(Tracer& tracer, const SharedPtr<Config>& config,
+                                                 UMap<String, SharedPtr<Node>>& namedNodes) const {
+            const auto& attr = config->viewAsObject();
             const auto name = attr.find(String{ "ID", context().getAllocator() });
             auto node = buildSceneImpl(tracer, config, namedNodes);
             if(name != attr.cend())
-                namedNodes.insert(makePair(name->second->get<String>(), node));
+                namedNodes.emplace(makePair(name->second->get<String>(), node));
             return node;
         }
 
         template <typename T, typename U>
-        SharedPtr<T> requireObject(const UMap<String, SharedPtr<U>>& objects, const String& key) {
+        SharedPtr<T> requireObject(const UMap<String, SharedPtr<U>>& objects, const String& key) const {
             const auto iter = objects.find(key);
             if(iter == objects.cend())
                 context().getErrorHandler().raiseException("Failed to find object named \"" + key + "\".",
@@ -193,8 +218,32 @@ namespace Piper {
                 return eastl::dynamic_shared_pointer_cast<T>(iter->second);
         }
 
+        // TODO:dynamic parameters of sensor
+        struct ActionInfo final {
+            String activeSensor;
+            // String follow;
+            Time<float> timeBegin;
+            Time<float> shutterOpenTime;
+            Time<float> shutterCloseTime;
+            uint32_t frameCount;
+            FitMode fitMode;
+        };
+
+        [[nodiscard]] DynamicArray<ActionInfo> parseActions(const SharedPtr<Config>& action) const {
+            DynamicArray<ActionInfo> res{ context().getAllocator() };
+            for(auto&& desc : action->viewAsArray()) {
+                res.push_back({ desc->at("ActiveSensor")->get<String>(),
+                                { static_cast<float>(desc->at("TimeBegin")->get<double>()) },
+                                { static_cast<float>(desc->at("ShutterOpenTime")->get<double>()) },
+                                { static_cast<float>(desc->at("ShutterCloseTime")->get<double>()) },
+                                static_cast<uint32_t>(desc->at("FrameCount")->get<uintmax_t>()),
+                                str2FitMode(desc->at("FitMode")->get<String>()) });
+            }
+            return res;
+        }
+
         UniqueObject<Pipeline> buildPipeline(Tracer& tracer, RenderDriver& renderDriver, const SharedPtr<Config>& config,
-                                             const uint32_t width, const uint32_t height, float& ratio) {
+                                             UMap<String, SharedPtr<Node>>& namedNodes) const {
             auto stage = context().getErrorHandler().enterStage("initialize objects", PIPER_SOURCE_LOCATION());
             // TODO:redirect context
             // TODO:concurrency
@@ -203,22 +252,18 @@ namespace Piper {
                 objects.emplace(obj->at("ID")->get<String>(), context().getModuleLoader().newInstance(obj).getSync());
             }
             stage.next("build scene hierarchy", PIPER_SOURCE_LOCATION());
-            UMap<String, SharedPtr<Node>> namedNodes{ context().getAllocator() };
-
             const auto scene = buildScene(tracer, config->at("Scene"), namedNodes);
 
-            stage.next("parse frames", PIPER_SOURCE_LOCATION());
-            // TODO:animation
-            const auto frames = config->at("Frames");
-            const auto sensor = requireObject<Node>(namedNodes, frames->at("ActiveSensor")->get<String>());
+            stage.next("initialize global components", PIPER_SOURCE_LOCATION());
             const auto lightSampler = syncLoad<LightSampler>(config->at("LightSampler"));
             const auto integrator = syncLoad<Integrator>(config->at("Integrator"));
             const auto sampler = syncLoad<Sampler>(config->at("Sampler"));
 
-            return tracer.buildPipeline(scene, sensor, *integrator, renderDriver, *lightSampler, *sampler, width, height, ratio);
+            return tracer.buildPipeline(scene, *integrator, renderDriver, *lightSampler, sampler);
         }
-        void saveToFile(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, const uint32_t width,
-                        const uint32_t height) const {
+        void saveImage(const String& dest, const DynamicArray<Spectrum<Radiance>>& res, const uint32_t width,
+                       const uint32_t height) const {
+            // TODO:move OpenEXR to ImageIO
             DynamicArray<Imf::Rgba> rgba(res.size(), context().getAllocator());
             auto invalid = false;
             eastl::transform(res.cbegin(), res.cend(), rgba.begin(), [&](const Spectrum<Radiance> rad) {
@@ -233,9 +278,20 @@ namespace Piper {
             }
             // TODO:filesystem
 
-            Imf::RgbaOutputFile out(dest.c_str(), width, height, Imf::WRITE_RGB);
+            Imf::RgbaOutputFile out((dest + ".exr").c_str(), width, height, Imf::WRITE_RGB);
             out.setFrameBuffer(rgba.data(), 1, width);
             out.writePixels(height);
+        }
+
+        void saveToFile(const String& dest, const DynamicArray<DynamicArray<Spectrum<Radiance>>>& frames, const uint32_t width,
+                        const uint32_t height) const {
+            // TODO:filesystem
+            namespace fs = std::filesystem;
+            if(!fs::exists(dest.c_str()) && !fs::create_directories(dest.c_str()))
+                context().getErrorHandler().raiseException("Failed to create directory \"" + dest + "\"",
+                                                           PIPER_SOURCE_LOCATION());
+            for(uint32_t idx = 0; idx < frames.size(); ++idx)
+                saveImage(dest + "/Frame" + toString(context().getAllocator(), idx), frames[idx], width, height);
         }
 
         [[nodiscard]] Pair<SensorNDCAffineTransform, RenderRECT>
@@ -290,7 +346,6 @@ namespace Piper {
             const auto height = static_cast<uint32_t>(sizeDesc[1]->get<uintmax_t>());
             const auto scenePath = opt->at("SceneDesc")->get<String>();
             auto parserID = opt->at("SceneParser")->get<String>();
-            const auto fitMode = str2FitMode(context(), opt->at("FitMode")->get<String>());
 
             auto parser = context().getModuleLoader().newInstanceT<ConfigSerializer>(parserID);
 
@@ -299,22 +354,44 @@ namespace Piper {
             const auto tracer = syncLoad<Tracer>(opt->at("Tracer"));
             auto renderDriver = syncLoad<RenderDriver>(scene->at("RenderDriver"));
 
-            auto deviceAspectRatio = -1.0f;
-            const auto pipeline = buildPipeline(*tracer, *renderDriver, scene, width, height, deviceAspectRatio);
+            const auto actions = parseActions(scene->at("Actions"));
 
-            const auto [transform, rect] = calcRenderRECT(width, height, deviceAspectRatio, fitMode);
+            UMap<String, SharedPtr<Node>> namedNodes{ context().getAllocator() };
+            const auto pipeline = buildPipeline(*tracer, *renderDriver, scene, namedNodes);
 
             stage.next("start rendering", PIPER_SOURCE_LOCATION());
-            DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
-            renderDriver->renderFrame(res, width, height, rect, transform, *tracer, *pipeline);
 
+            const auto output = opt->at("OutputDir")->get<String>();
+            uint32_t idx = 0;
+            for(auto&& action : actions) {
+                auto frameStage = context().getErrorHandler().enterStage("prepare for rendering", PIPER_SOURCE_LOCATION());
+                auto sensor = namedNodes.find(action.activeSensor);
+                if(sensor == namedNodes.cend())
+                    context().getErrorHandler().raiseException(
+                        "Failed to find a node with sensor named \"" + action.activeSensor + "\".", PIPER_SOURCE_LOCATION());
+
+                auto deviceAspectRatio = -1.0f;
+                const auto launcher = pipeline->prepare(sensor->second, width, height, deviceAspectRatio);
+                const auto [transform, rect] = calcRenderRECT(width, height, deviceAspectRatio, action.fitMode);
+
+                // TODO:stream
+                DynamicArray<DynamicArray<Spectrum<Radiance>>> frames{ context().getAllocator() };
+                for(uint32_t i = 0; i < action.frameCount; ++i) {
+                    // TODO:better parameters
+                    const auto begin = action.timeBegin +
+                        Dimensionless<float>{ static_cast<float>(i) } * (action.shutterOpenTime + action.shutterCloseTime);
+                    const auto end = begin + action.shutterOpenTime;
+                    launcher->updateTimeInterval(begin, end);
+                    DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
+                    renderDriver->renderFrame(res, width, height, rect, transform, *tracer, *launcher);
+                    frames.push_back(std::move(res));
+                }
+
+                // TODO: write video
+                saveToFile(output + "/Action" + toString(context().getAllocator(), idx++), frames, width, height);
+            }
             if(context().getLogger().allow(LogLevel::Info))
                 context().getLogger().record(LogLevel::Info, pipeline->generateStatisticsReport(), PIPER_SOURCE_LOCATION());
-
-            stage.next("write image to disk", PIPER_SOURCE_LOCATION());
-            const auto output = opt->at("OutputFile")->get<String>();
-            // TODO:move OpenEXR to ImageIO
-            saveToFile(output, res, width, height);
         }
     };
     class ModuleImpl final : public Module {

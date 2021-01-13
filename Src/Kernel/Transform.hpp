@@ -391,6 +391,16 @@ namespace Piper {
             transZ;
     };
 
+    inline TransformSRT lerp(const TransformSRT& x, const TransformSRT& y, const float u) {
+        const auto v = 1.0f - u;
+        return { x.scaleX * v + y.scaleX * u, x.scaleY * v + y.scaleY * u, x.scaleZ * v + y.scaleZ * u,
+                 x.skewXY * v + y.skewXY * u, x.skewXZ * v + y.skewXZ * u, x.skewYZ * v + y.skewYZ * u,
+                 x.shiftX * v + y.shiftX * u, x.shiftY * v + y.shiftY * u, x.shiftZ * v + y.shiftZ * u,
+                 x.quatW * v + y.quatW * u,   x.quatX * v + y.quatX * u,   x.quatY * v + y.quatY * u,
+                 x.quatZ * v + y.quatZ * u,   x.transX * v + y.transX * u, x.transY * v + y.transY * u,
+                 x.transZ * v + y.transZ * u };
+    }
+
     template <typename Float, FOR ref>
     Normal<Float, ref> reflect(Normal<Float, ref> wo, Normal<Float, ref> N) noexcept {
         return { N * (Dimensionless<Float>{ static_cast<Float>(2.0) } * dot(wo, N)) - wo.asVector(), Unsafe{} };

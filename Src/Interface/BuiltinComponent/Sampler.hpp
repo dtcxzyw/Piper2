@@ -19,9 +19,12 @@
 
 namespace Piper {
     struct SamplerProgram final {
-        SBTPayload payload;
         SharedPtr<RTProgram> start;
         SharedPtr<RTProgram> generate;
+    };
+
+    struct SamplerAttributes final {
+        SBTPayload payload;
         uint32_t maxDimension;
         uint32_t samplesPerPixel;
     };
@@ -30,7 +33,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Sampler, Object)
         virtual ~Sampler() = default;
-        [[nodiscard]] virtual SamplerProgram materialize(const MaterializeContext& ctx, uint32_t width,
-                                                         uint32_t height) const = 0;
+        [[nodiscard]] virtual SamplerProgram materialize(const MaterializeContext& ctx) const = 0;
+        [[nodiscard]] virtual SamplerAttributes generatePayload(uint32_t width, uint32_t height) const = 0;
     };
 }  // namespace Piper

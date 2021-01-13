@@ -438,21 +438,24 @@ namespace Piper {
         const auto y = SBT->rect.top + idx / SBT->rect.width;
 
         PerSampleContext context{
-            *arg->SBT, { 0.0f }, 2, 0, RandomEngine{ (x + y * SBT->rect.width) * SBT->rect.height + SBT->sample }
+            *arg->SBT, { 0.0f }, 5, 0, RandomEngine{ x + (y + SBT->sample * SBT->rect.height) * SBT->rect.width }
         };
         Vector2<float> point;
         SBT->start(SBT->SAPayload, x, y, SBT->sample, context.sampleIndex, point);
-        // TODO:motion blur
-        // context.time={};
+        SBT->generate(SBT->SAPayload, context.sampleIndex, 2, context.time.val);
 
+        // TODO:move to transform
         const auto& transform = SBT->transform;
         const auto NDC = Vector2<float>{ transform.ox + transform.sx * point.x / static_cast<float>(SBT->rect.width),
                                          transform.oy + transform.sy * point.y / static_cast<float>(SBT->rect.height) };
         RayInfo<FOR::World> ray;
         Dimensionless<float> weight;
-        SBT->rayGen(reinterpret_cast<RestrictedContext>(&context), SBT->RGPayload, NDC,
-                    piperEmbreeSample(reinterpret_cast<FullContext>(&context)),
-                    piperEmbreeSample(reinterpret_cast<FullContext>(&context)), ray, weight);
+        {
+            float u1, u2;
+            SBT->generate(SBT->SAPayload, context.sampleIndex, 3, u1);
+            SBT->generate(SBT->SAPayload, context.sampleIndex, 4, u2);
+            SBT->rayGen(reinterpret_cast<RestrictedContext>(&context), SBT->RGPayload, NDC, u1, u2, ray, weight);
+        }
 
         Spectrum<Radiance> sample;
         SBT->trace(reinterpret_cast<FullContext>(&context), SBT->TRPayload, ray, sample);
@@ -716,12 +719,83 @@ namespace Piper {
         virtual void collect(DynamicArray<GSMInstanceProgram>& gsm, DynamicArray<LightInstanceProgram>& light,
                              DynamicArray<SensorInstanceProgram>& sensor, const EmbreeTraversalNode* traversal,
                              MemoryArena& arena) = 0;
+        virtual void updateTimeInterval(Time<float> begin, Time<float> end) {}
     };
 
     static void setTransformSRT(const RTCGeometry geometry, const uint32_t step, const TransformSRT& trans) {
         static_assert(sizeof(RTCQuaternionDecomposition) == sizeof(trans));
         static_assert(alignof(RTCQuaternionDecomposition) == alignof(TransformSRT));
         rtcSetGeometryTransformQuaternion(geometry, step, reinterpret_cast<const RTCQuaternionDecomposition*>(&trans));
+    }
+
+    static uint32_t gcd(const uint32_t a, const uint32_t b) {
+        return b ? gcd(b, a % b) : a;
+    }
+
+    static void updateTransformSRT(const RTCGeometry geometry, const Time<float> begin, const Time<float> end,
+                                   const TransformInfo& transform) {
+        // default or static transform
+        if(transform.step.val <= 0.0f)
+            return;
+        const auto evalTime = [&](const Pair<uint32_t, TransformSRT>& key) {
+            return transform.offset + transform.step * Dimensionless<float>{ static_cast<float>(key.first) };
+        };
+
+        {
+            const auto start = evalTime(transform.transforms.front());
+            const auto stop = evalTime(transform.transforms.back());
+
+            if(stop.val < begin.val || start.val > end.val) {
+                rtcDisableGeometry(geometry);
+                return;
+            }
+            rtcEnableGeometry(geometry);
+        }
+
+        auto iterBeg = eastl::upper_bound(  // NOLINT(readability-qualified-auto)
+            transform.transforms.cbegin(), transform.transforms.cend(), begin,
+            [&](const Time<float> ref, const Pair<uint32_t, TransformSRT>& key) { return ref.val < evalTime(key).val; });
+
+        auto iterEnd = eastl::upper_bound(  // NOLINT(readability-qualified-auto)
+            transform.transforms.cbegin(), transform.transforms.cend(), begin,
+            [&](const Time<float> ref, const Pair<uint32_t, TransformSRT>& key) { return ref.val < evalTime(key).val; });
+
+        if(iterBeg != transform.transforms.cbegin())
+            --iterBeg;
+
+        if(iterEnd == transform.transforms.cend())
+            --iterEnd;
+
+        uint32_t step = 0;
+        {
+            auto iter = iterBeg, nxt = eastl::next(iterBeg);
+            while(iter != iterEnd) {
+                step = gcd(step, nxt->first - iter->first);
+                iter = nxt;
+                nxt = eastl::next(nxt);
+            }
+        }
+
+        const auto remap = [&](const Time<float> t) { return (t - begin) / (end - begin); };
+
+        rtcSetGeometryTimeRange(geometry, remap(evalTime(*iterBeg)).val, remap(evalTime(*iterEnd)).val);
+        const auto count = (iterEnd->first - iterBeg->first) / step + 1;
+        rtcSetGeometryTimeStepCount(geometry, count);
+
+        setTransformSRT(geometry, 0, iterBeg->second);
+        auto cur = iterBeg;               // NOLINT(readability-qualified-auto)
+        auto nxt = eastl::next(iterBeg);  // NOLINT(readability-qualified-auto)
+        for(uint32_t idx = 1; idx < count; ++idx) {
+            const auto key = iterBeg->first + idx * step;
+            if(key == nxt->first) {
+                setTransformSRT(geometry, idx, nxt->second);
+                cur = nxt;
+                nxt = eastl::next(nxt);
+            } else {
+                const auto u = static_cast<float>(key - cur->first) / static_cast<float>(nxt->first - cur->first);
+                setTransformSRT(geometry, idx, lerp(cur->second, nxt->second, u));
+            }
+        }
     }
 
     // TODO:use rtcJoinCommitScene?
@@ -749,13 +823,22 @@ namespace Piper {
                 rtcSetGeometryInstancedScene(sub.geometry.get(), sub.node->getScene());
                 rtcSetGeometryUserData(sub.geometry.get(), sub.node->getScene());
                 rtcSetGeometryMask(sub.geometry.get(), gsmMask | areaLightMask);
-                // TODO:motion blur
-                // rtcSetGeometryTimeStepCount(mGeometry.get(),1);
-                if(!trans.empty()) {
-                    setTransformSRT(sub.geometry.get(), 0, trans.front().second);
+                // static transform
+                if(trans.step.val <= 0.0f && !trans.transforms.empty()) {
+                    if(trans.transforms.size() == 1 && trans.transforms.front().first == 0U)
+                        setTransformSRT(sub.geometry.get(), 0, trans.transforms.front().second);
+                    else
+                        context.getErrorHandler().raiseException("Unrecognized transform.", PIPER_SOURCE_LOCATION());
                 }
                 rtcAttachGeometry(mScene.get(), sub.geometry.get());
-                rtcCommitGeometry(sub.geometry.get());
+            }
+        }
+
+        void updateTimeInterval(const Time<float> begin, const Time<float> end) override {
+            for(auto&& [transform, geometry, child] : mChildren) {
+                child->updateTimeInterval(begin, end);
+                updateTransformSRT(geometry.get(), begin, end, transform);
+                rtcCommitGeometry(geometry.get());
             }
             rtcCommitScene(mScene.get());
         }
@@ -894,6 +977,10 @@ namespace Piper {
             return mScene.get();
         }
 
+        [[nodiscard]] Sensor& getSensor() const noexcept {
+            return *mSensor;
+        }
+
         void collect(DynamicArray<GSMInstanceProgram>&, DynamicArray<LightInstanceProgram>&,
                      DynamicArray<SensorInstanceProgram>& sensor, const EmbreeTraversalNode* node, MemoryArena& arena) override {
             sensor.push_back(SensorInstanceProgram{ mSensor, reinterpret_cast<TraversalHandle>(node), this });
@@ -910,6 +997,55 @@ namespace Piper {
             : RTProgram(context), program(std::move(prog)), symbol(std::move(sym)) {}
     };
 
+    class EmbreeTraceLauncher final : public TraceLauncher {
+    private:
+        Accelerator& mAccelerator;
+        KernelArgument mArg;
+        SharedPtr<RunnableProgram> mKernel;
+        uint32_t mSamplesPerPixel;
+        std::unique_lock<std::mutex> mLock;
+        SharedPtr<EmbreeNode> mRoot;
+
+    public:
+        explicit EmbreeTraceLauncher(PiperContext& context, Accelerator& accelerator, const KernelArgument& argTemplate,
+                                     SharedPtr<RunnableProgram> kernel, SharedPtr<EmbreeNode> root, std::mutex& mutex,
+                                     const uint32_t samplesPerPixel)
+            : TraceLauncher(context), mAccelerator(accelerator), mArg(argTemplate), mKernel(std::move(kernel)),
+              mSamplesPerPixel(samplesPerPixel), mLock(mutex, std::try_to_lock), mRoot(std::move(root)) {
+            if(!mLock.owns_lock())
+                context.getErrorHandler().raiseException("The pipeline is locked.", PIPER_SOURCE_LOCATION());
+        }
+        void launch(const RenderRECT& rect, const SBTPayload& launchData, const SensorNDCAffineTransform& transform,
+                    const uint32_t sample) override {
+            auto stage = context().getErrorHandler().enterStage("prepare payload", PIPER_SOURCE_LOCATION());
+            MemoryArena arena(context().getAllocator(), 4096);
+            auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
+            mArg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
+            mArg.launchData = launchData.data();
+            mArg.sample = sample;
+            mArg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
+            buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
+
+            const auto payload = mAccelerator.createPayload(InputResource{ { buffer->ref() } });
+
+            stage.next("launch kernel", PIPER_SOURCE_LOCATION());
+            const auto future =
+                mAccelerator.runKernel(rect.width * rect.height, context().getScheduler().value(mKernel), payload);
+            future.wait();
+        }
+        void updateTimeInterval(const Time<float> begin, const Time<float> end) noexcept override {
+            mRoot->updateTimeInterval(begin, end);
+        }
+        [[nodiscard]] uint32_t getSamplesPerPixel() const noexcept override {
+            return mSamplesPerPixel;
+        }
+    };
+
+    struct SensorGroup final {
+        SensorFunc rayGen;
+        const void* RGPayload;
+    };
+
     class EmbreePipeline final : public Pipeline {
     private:
         SharedPtr<RunnableProgram> mKernel;
@@ -919,8 +1055,10 @@ namespace Piper {
         KernelArgument mArg;
         ResourceHolder mHolder;
         SharedPtr<EmbreeNode> mScene;
+        UMap<Node*, SensorGroup> mSensors;
+        SharedPtr<Sampler> mSampler;
         EmbreeProfiler mProfiler;
-        uint32_t mSamplesPerPixel;
+        std::mutex mMutex;
 
         void* upload(const SBTPayload& payload) {
             if(payload.empty())
@@ -932,10 +1070,10 @@ namespace Piper {
 
     public:
         EmbreePipeline(PiperContext& context, Tracer& tracer, const PITU& pitu, SharedPtr<EmbreeNode> scene,
-                       const SharedPtr<EmbreeNode>& sensor, Integrator& integrator, RenderDriver& renderDriver,
-                       LightSampler& lightSampler, Sampler& sampler, uint32_t width, uint32_t height, float& ratio, bool debug)
+                       Integrator& integrator, RenderDriver& renderDriver, LightSampler& lightSampler, SharedPtr<Sampler> sampler,
+                       bool debug)
             : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
-              mScene(std::move(scene)), mProfiler(context) {
+              mScene(std::move(scene)), mSensors{ context.getAllocator() }, mSampler(std::move(sampler)), mProfiler(context) {
             DynamicArray<LinkableProgram> modules(context.getAllocator());
             modules.push_back(prepareKernelNative(context, debug));
             modules.push_back(pitu.generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()));
@@ -1079,34 +1217,26 @@ namespace Piper {
             modules.push_back(LSRTP.program);
             mArg.LSPayload = upload(LSP.payload);
 
-            const auto* sensorIter = std::find_if(sensors.cbegin(), sensors.cend(),
-                                                  [key = eastl::dynamic_shared_pointer_cast<EmbreeLeafNodeWithSensor>(sensor)](
-                                                      const SensorInstanceProgram& inst) { return key.get() == inst.node; });
-            if(sensorIter == sensors.cend())
-                context.getErrorHandler().raiseException("Unresolved reference node of the active sensor.",
-                                                         PIPER_SOURCE_LOCATION());
-            // TODO:better interface
-            ratio = sensorIter->sensor->aspectRatio();
-            auto RGP = sensorIter->sensor->materialize(sensorIter->traversal, materialize);
-            auto& RGRTP = dynamic_cast<EmbreeRTProgram&>(*RGP.rayGen);
-            modules.push_back(RGRTP.program);
-            mArg.RGPayload = upload(RGP.payload);
+            DynamicArray<String> sensorFunc{ context.getAllocator() };
+            sensorFunc.reserve(sensors.size());
+            for(auto& sensor : sensors) {
+                auto RGP = sensor.sensor->materialize(sensor.traversal, materialize);
+                auto& RGRTP = dynamic_cast<EmbreeRTProgram&>(*RGP.rayGen);
+                modules.push_back(RGRTP.program);
+                sensorFunc.push_back(RGRTP.symbol);
+                mSensors.emplace(makePair(sensor.node, SensorGroup{ nullptr, upload(RGP.payload) }));
+            }
 
             auto TRP = integrator.materialize(materialize);
             auto& TRRTP = dynamic_cast<EmbreeRTProgram&>(*TRP.trace);
             modules.push_back(TRRTP.program);
             mArg.TRPayload = upload(TRP.payload);
 
-            // TODO:pass image size or real rendering window size?
-            auto SAP = sampler.materialize(materialize, width, height);
+            auto SAP = mSampler->materialize(materialize);
             auto& start = dynamic_cast<EmbreeRTProgram&>(*SAP.start);
             auto& generate = dynamic_cast<EmbreeRTProgram&>(*SAP.generate);
             modules.push_back(start.program);
             modules.push_back(generate.program);
-
-            mArg.SAPayload = upload(SAP.payload);
-            mArg.maxDimension = SAP.maxDimension;
-            mSamplesPerPixel = SAP.samplesPerPixel;
 
             auto& accelerator = tracer.getAccelerator();
             auto kernel = accelerator.compileKernel(Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
@@ -1173,7 +1303,10 @@ namespace Piper {
             }
 
             mArg.lightSample = static_cast<LightSelectFunc>(mKernel->lookup(LSRTP.symbol));
-            mArg.rayGen = static_cast<SensorFunc>(mKernel->lookup(RGRTP.symbol));
+
+            for(uint32_t idx = 0; idx < sensorFunc.size(); ++idx)
+                mSensors[sensors[idx].node].rayGen = static_cast<SensorFunc>(mKernel->lookup(sensorFunc[idx]));
+
             mArg.trace = static_cast<IntegratorFunc>(mKernel->lookup(TRRTP.symbol));
 
             mArg.start = static_cast<SampleStartFunc>(mKernel->lookup(start.symbol));
@@ -1187,29 +1320,27 @@ namespace Piper {
             mArg.profiler = &mProfiler;
             mArg.errorHandler = &context.getErrorHandler();
         }
-        void run(const RenderRECT& rect, const SBTPayload& launchData, const SensorNDCAffineTransform& transform,
-                 const uint32_t sample) {
-            auto stage = context().getErrorHandler().enterStage("prepare payload", PIPER_SOURCE_LOCATION());
-            MemoryArena arena(context().getAllocator(), 4096);
-            auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
-            mArg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
-            mArg.launchData = upload(launchData);
-            mArg.sample = sample;
-            mArg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
-            buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
+        [[nodiscard]] SharedPtr<TraceLauncher> prepare(const SharedPtr<Node>& sensor, const uint32_t width, const uint32_t height,
+                                                       float& deviceAspectRatio) override {
+            const auto sensorIter = mSensors.find(sensor.get());
+            if(sensorIter == mSensors.cend())
+                context().getErrorHandler().raiseException("Unresolved reference node of the active sensor.",
+                                                           PIPER_SOURCE_LOCATION());
+            deviceAspectRatio = dynamic_cast<const EmbreeLeafNodeWithSensor*>(sensorIter->first)->getSensor().aspectRatio();
 
-            const auto payload = mAccelerator.createPayload(InputResource{ { buffer->ref() } });
+            auto arg = mArg;
+            arg.rayGen = sensorIter->second.rayGen;
+            arg.RGPayload = sensorIter->second.RGPayload;
 
-            stage.next("launch kernel", PIPER_SOURCE_LOCATION());
-            const auto future =
-                mAccelerator.runKernel(rect.width * rect.height, context().getScheduler().value(mKernel), payload);
-            future.wait();
+            const auto attr = mSampler->generatePayload(width, height);
+            // TODO:pass image size or real rendering window size?
+            arg.SAPayload = upload(attr.payload);
+            arg.maxDimension = attr.maxDimension;
+            return makeSharedObject<EmbreeTraceLauncher>(context(), mAccelerator, arg, mKernel, mScene, mMutex,
+                                                         attr.samplesPerPixel);
         }
         String generateStatisticsReport() const override {
             return mProfiler.generateReport();
-        }
-        uint32_t getSamplesPerPixel() const noexcept override {
-            return mSamplesPerPixel;
         }
     };
 
@@ -1318,20 +1449,14 @@ namespace Piper {
                                                 SharedPtr<Medium> medium) override {
             return makeSharedObject<EmbreeGSMInstance>(context(), std::move(geometry), std::move(surface), std::move(medium));
         }
-        UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, const SharedPtr<Node>& sensor, Integrator& integrator,
-                                             RenderDriver& renderDriver, LightSampler& lightSampler, Sampler& sampler,
-                                             uint32_t width, uint32_t height, float& ratio) override {
-            return makeUniqueObject<Pipeline, EmbreePipeline>(
-                context(), *this, *mKernel.getSync(), eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene),
-                eastl::dynamic_shared_pointer_cast<EmbreeNode>(sensor), integrator, renderDriver, lightSampler, sampler, width,
-                height, ratio, mDebugMode);
+        UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator, RenderDriver& renderDriver,
+                                             LightSampler& lightSampler, SharedPtr<Sampler> sampler) override {
+            return makeUniqueObject<Pipeline, EmbreePipeline>(context(), *this, *mKernel.getSync(),
+                                                              eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), integrator,
+                                                              renderDriver, lightSampler, std::move(sampler), mDebugMode);
         }
         Accelerator& getAccelerator() override {
             return *mAccelerator;
-        }
-        void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& launchData,
-                   const SensorNDCAffineTransform& transform, const uint32_t sample) override {
-            dynamic_cast<EmbreePipeline&>(pipeline).run(rect, launchData, transform, sample);
         }
         SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc, const uint32_t channel) const override {
             auto res = generateTextureImpl(textureDesc);

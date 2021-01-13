@@ -40,7 +40,7 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(RenderDriver, Object)
         virtual ~RenderDriver() = default;
         virtual void renderFrame(DynamicArray<Spectrum<Radiance>>& res, uint32_t width, uint32_t height, const RenderRECT& rect,
-                                 const SensorNDCAffineTransform& transform, Tracer& tracer, Pipeline& pipeline) = 0;
+                                 const SensorNDCAffineTransform& transform, Tracer& tracer, TraceLauncher& launcher) = 0;
         [[nodiscard]] virtual RenderDriverProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

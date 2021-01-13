@@ -33,13 +33,6 @@ namespace Piper {
         virtual ~AccelerationStructure() = default;
     };
 
-    class Pipeline : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(Pipeline, Object) [[nodiscard]] virtual String generateStatisticsReport() const = 0;
-        [[nodiscard]] virtual uint32_t getSamplesPerPixel() const noexcept = 0;
-        virtual ~Pipeline() = default;
-    };
-
     class Node : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Node, Object)
@@ -84,7 +77,11 @@ namespace Piper {
         virtual ~GSMInstance() = default;
     };
 
-    using TransformInfo = DynamicArray<Pair<Time<float>, TransformSRT>>;  // local to world
+    struct TransformInfo final {
+        Time<float> offset;
+        Time<float> step;
+        DynamicArray<Pair<uint32_t, TransformSRT>> transforms;  // local to world
+    };
 
     using SBTPayload = DynamicArray<std::byte>;
     template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
@@ -95,6 +92,28 @@ namespace Piper {
 
     struct RenderRECT final {
         uint32_t left, top, width, height;
+    };
+
+    // NOTICE: It is a guard.
+    class TraceLauncher : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(TraceLauncher, Object)
+        virtual ~TraceLauncher() = default;
+        // TODO:update interval
+        [[nodiscard]] virtual uint32_t getSamplesPerPixel() const noexcept = 0;
+        virtual void updateTimeInterval(Time<float> begin, Time<float> end) noexcept = 0;
+        virtual void launch(const RenderRECT& rect, const SBTPayload& launchData, const SensorNDCAffineTransform& transform,
+                            uint32_t sample) = 0;
+    };
+
+    class Pipeline : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Pipeline, Object)
+        virtual ~Pipeline() = default;
+        [[nodiscard]] virtual String generateStatisticsReport() const = 0;
+        // TODO:better interface
+        [[nodiscard]] virtual SharedPtr<TraceLauncher> prepare(const SharedPtr<Node>& sensor, uint32_t width, uint32_t height,
+                                                               float& deviceAspectRatio) = 0;
     };
 
     using CallSiteRegister = Function<CallHandle, const SharedPtr<RTProgram>&, const SBTPayload&>;
@@ -123,14 +142,11 @@ namespace Piper {
         // TODO:call graph
         virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
         // TODO:better interface
-        virtual UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, const SharedPtr<Node>& sensor,
-                                                     Integrator& integrator, RenderDriver& renderDriver,
-                                                     LightSampler& lightSampler, Sampler& sampler, uint32_t width,
-                                                     uint32_t height, float& ratio) = 0;
+        virtual UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator,
+                                                     RenderDriver& renderDriver, LightSampler& lightSampler,
+                                                     SharedPtr<Sampler> sampler) = 0;
         virtual Accelerator& getAccelerator() = 0;
         virtual ResourceCacheManager& getCacheManager() = 0;
-        virtual void trace(Pipeline& pipeline, const RenderRECT& rect, const SBTPayload& launchData,
-                           const SensorNDCAffineTransform& transform, uint32_t sample) = 0;
         [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
                                                                  uint32_t channel) const = 0;
     };
