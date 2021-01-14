@@ -99,11 +99,10 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(TraceLauncher, Object)
         virtual ~TraceLauncher() = default;
-        // TODO:update interval
         [[nodiscard]] virtual uint32_t getSamplesPerPixel() const noexcept = 0;
         virtual void updateTimeInterval(Time<float> begin, Time<float> end) noexcept = 0;
-        virtual void launch(const RenderRECT& rect, const SBTPayload& launchData, const SensorNDCAffineTransform& transform,
-                            uint32_t sample) = 0;
+        [[nodiscard]] virtual Future<void> launch(const RenderRECT& rect, const SBTPayload& launchData,
+                                                  const SensorNDCAffineTransform& transform, uint32_t sampleCount) = 0;
     };
 
     class Pipeline : public Object {

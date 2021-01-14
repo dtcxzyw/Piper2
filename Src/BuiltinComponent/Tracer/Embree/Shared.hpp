@@ -65,6 +65,8 @@ namespace Piper {
     };
 
     struct KernelArgument final {
+        uint32_t width, height;
+
         RenderRECTAlias rect;
         RTCSceneTy* scene;
         SensorFunc rayGen;
@@ -80,7 +82,7 @@ namespace Piper {
         SampleStartFunc start;
         SampleGenerateFunc generate;
         const void* SAPayload;
-        uint32_t sample;
+        uint32_t sampleCount;
         uint32_t maxDimension;
         SensorNDCAffineTransformAlias transform;
         CallInfo* callInfo;
@@ -90,6 +92,7 @@ namespace Piper {
         StatisticsHandle profileIntersectTime;
         StatisticsHandle profileOccludeHit;
         StatisticsHandle profileOccludeTime;
+        StatisticsHandle profileSampleTime;
         bool debug;
         ErrorHandler* errorHandler;
     };

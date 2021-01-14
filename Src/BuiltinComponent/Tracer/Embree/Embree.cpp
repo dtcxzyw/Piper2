@@ -434,20 +434,22 @@ namespace Piper {
     extern void piperMain(uint32_t idx, const MainArgument* arg);
     static void piperEmbreeMain(const uint32_t idx, const MainArgument* arg) {
         const auto* SBT = arg->SBT;
-        const auto x = SBT->rect.left + idx % SBT->rect.width;
-        const auto y = SBT->rect.top + idx / SBT->rect.width;
+        const auto beg = EmbreeProfiler::getTime();
+        const auto sampleIdx = idx % SBT->sampleCount, pixelIdx = idx / SBT->sampleCount;
+        const auto x = SBT->rect.left + pixelIdx % SBT->rect.width;
+        const auto y = SBT->rect.top + pixelIdx / SBT->rect.width;
 
         PerSampleContext context{
-            *arg->SBT, { 0.0f }, 5, 0, RandomEngine{ x + (y + SBT->sample * SBT->rect.height) * SBT->rect.width }
+            *arg->SBT, { 0.0f }, 5, 0, RandomEngine{ (y * SBT->width + x) * SBT->sampleCount + sampleIdx }
         };
         Vector2<float> point;
-        SBT->start(SBT->SAPayload, x, y, SBT->sample, context.sampleIndex, point);
+        SBT->start(SBT->SAPayload, x, y, sampleIdx, context.sampleIndex, point);
         SBT->generate(SBT->SAPayload, context.sampleIndex, 2, context.time.val);
 
         // TODO:move to transform
         const auto& transform = SBT->transform;
-        const auto NDC = Vector2<float>{ transform.ox + transform.sx * point.x / static_cast<float>(SBT->rect.width),
-                                         transform.oy + transform.sy * point.y / static_cast<float>(SBT->rect.height) };
+        const auto NDC = Vector2<float>{ transform.ox + transform.sx * point.x / static_cast<float>(SBT->width),
+                                         transform.oy + transform.sy * point.y / static_cast<float>(SBT->height) };
         RayInfo<FOR::World> ray;
         Dimensionless<float> weight;
         {
@@ -460,6 +462,8 @@ namespace Piper {
         Spectrum<Radiance> sample;
         SBT->trace(reinterpret_cast<FullContext>(&context), SBT->TRPayload, ray, sample);
         SBT->accumulate(reinterpret_cast<RestrictedContext>(&context), SBT->ACPayload, SBT->launchData, point, sample * weight);
+        const auto end = EmbreeProfiler::getTime();
+        SBT->profiler->addTime(SBT->profileSampleTime, end - beg);
     }
 
     static LinkableProgram prepareKernelNative(PiperContext& context, const bool debug) {
@@ -1005,33 +1009,34 @@ namespace Piper {
         uint32_t mSamplesPerPixel;
         std::unique_lock<std::mutex> mLock;
         SharedPtr<EmbreeNode> mRoot;
+        MemoryArena mArena;
 
     public:
         explicit EmbreeTraceLauncher(PiperContext& context, Accelerator& accelerator, const KernelArgument& argTemplate,
                                      SharedPtr<RunnableProgram> kernel, SharedPtr<EmbreeNode> root, std::mutex& mutex,
                                      const uint32_t samplesPerPixel)
             : TraceLauncher(context), mAccelerator(accelerator), mArg(argTemplate), mKernel(std::move(kernel)),
-              mSamplesPerPixel(samplesPerPixel), mLock(mutex, std::try_to_lock), mRoot(std::move(root)) {
+              mSamplesPerPixel(samplesPerPixel), mLock(mutex, std::try_to_lock), mRoot(std::move(root)),
+              mArena(context.getAllocator(), 128) {
             if(!mLock.owns_lock())
                 context.getErrorHandler().raiseException("The pipeline is locked.", PIPER_SOURCE_LOCATION());
         }
-        void launch(const RenderRECT& rect, const SBTPayload& launchData, const SensorNDCAffineTransform& transform,
-                    const uint32_t sample) override {
-            auto stage = context().getErrorHandler().enterStage("prepare payload", PIPER_SOURCE_LOCATION());
-            MemoryArena arena(context().getAllocator(), 4096);
+        [[nodiscard]] Future<void> launch(const RenderRECT& rect, const SBTPayload& launchData,
+                                          const SensorNDCAffineTransform& transform, const uint32_t sampleCount) override {
+            auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(launchData.size()));
+            memcpy(ptr, launchData.data(), launchData.size());
+            auto arg = makeSharedPtr<KernelArgument>(context().getAllocator());
+            *arg = mArg;
+            arg->rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
+            arg->launchData = ptr;
+            arg->sampleCount = sampleCount;
+            arg->transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
             auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
-            mArg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
-            mArg.launchData = launchData.data();
-            mArg.sample = sample;
-            mArg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
-            buffer->upload(context().getScheduler().value(DataHolder{ SharedPtr<int>{}, &mArg }));
+            buffer->upload(context().getScheduler().value(DataHolder{ arg, arg.get() }));
 
-            const auto payload = mAccelerator.createPayload(InputResource{ { buffer->ref() } });
-
-            stage.next("launch kernel", PIPER_SOURCE_LOCATION());
-            const auto future =
-                mAccelerator.runKernel(rect.width * rect.height, context().getScheduler().value(mKernel), payload);
-            future.wait();
+            const auto payload = mAccelerator.createPayload(InputResource{ { buffer } });
+            return mAccelerator.runKernel(rect.width * rect.height * sampleCount, context().getScheduler().value(mKernel),
+                                          payload);
         }
         void updateTimeInterval(const Time<float> begin, const Time<float> end) noexcept override {
             mRoot->updateTimeInterval(begin, end);
@@ -1312,11 +1317,12 @@ namespace Piper {
             mArg.start = static_cast<SampleStartFunc>(mKernel->lookup(start.symbol));
             mArg.generate = static_cast<SampleGenerateFunc>(mKernel->lookup(generate.symbol));
 
-            static char p1, p2, p3, p4;
+            static char p1, p2, p3, p4, p5;
             mArg.profileIntersectHit = mProfiler.registerDesc("Tracer", "Intersect Hit", &p1, StatisticsType::Bool);
             mArg.profileIntersectTime = mProfiler.registerDesc("Tracer", "Intersect Time", &p2, StatisticsType::Time);
             mArg.profileOccludeHit = mProfiler.registerDesc("Tracer", "Occlude Hit", &p3, StatisticsType::Bool);
             mArg.profileOccludeTime = mProfiler.registerDesc("Tracer", "Occlude Time", &p4, StatisticsType::Time);
+            mArg.profileSampleTime = mProfiler.registerDesc("Tracer", "Per Sample Time", &p5, StatisticsType::Time);
             mArg.profiler = &mProfiler;
             mArg.errorHandler = &context.getErrorHandler();
         }
@@ -1336,6 +1342,9 @@ namespace Piper {
             // TODO:pass image size or real rendering window size?
             arg.SAPayload = upload(attr.payload);
             arg.maxDimension = attr.maxDimension;
+
+            arg.width = width;
+            arg.height = height;
             return makeSharedObject<EmbreeTraceLauncher>(context(), mAccelerator, arg, mKernel, mScene, mMutex,
                                                          attr.samplesPerPixel);
         }

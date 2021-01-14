@@ -21,6 +21,7 @@
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
+#include "../../../STL/List.hpp"
 #include "Shared.hpp"
 
 namespace Piper {
@@ -74,12 +75,42 @@ namespace Piper {
             // buffer->reset();
             DynamicArray<RGBW> buffer{ res.size(), context().getAllocator() };
             const auto spp = launcher.getSamplesPerPixel();
-            for(uint32_t i = 0; i < spp; ++i) {
-                auto stage = context().getErrorHandler().enterStage("progress " + toString(context().getAllocator(), i + 1) +
-                                                                        "/" + toString(context().getAllocator(), spp),
-                                                                    PIPER_SOURCE_LOCATION());
-                launcher.launch(rect, packSBTPayload(context().getAllocator(), LaunchData{ buffer.data(), width, height }),
-                                transform, i);
+            constexpr uint32_t tileSize = 32;
+            const auto blockX = (rect.width + tileSize - 1) / tileSize;
+            const auto blockY = (rect.height + tileSize - 1) / tileSize;
+            const auto blockCount = blockX * blockY;
+            auto& logger = context().getLogger();
+
+            List<Future<void>> tiles{ context().getAllocator() };
+
+            const auto launchData = packSBTPayload(context().getAllocator(), LaunchData{ buffer.data(), width, height });
+
+            for(uint32_t bx = 0; bx < blockX; ++bx)
+                for(uint32_t by = 0; by < blockY; ++by) {
+                    const auto left = rect.left + bx * tileSize, top = rect.top + by * tileSize;
+                    const auto tile = RenderRECT{ left, top, std::min(tileSize, rect.width - bx * tileSize),
+                                                  std::min(tileSize, rect.height - by * tileSize) };
+                    tiles.emplace_back(launcher.launch(tile, launchData, transform, spp));
+                    //tiles.back().wait();
+                }
+
+            uint32_t progress = 0;
+            while(!tiles.empty()) {
+                tiles.remove_if([](Future<void>& future) { return future.ready(); });
+                const auto newProgress = blockCount - static_cast<uint32_t>(tiles.size());
+                if(newProgress != progress) {
+                    progress = newProgress;
+                    if(logger.allow(LogLevel::Info))
+                        logger.record(LogLevel::Info,
+                                      "Progress: " +
+                                          toString(context().getAllocator(),
+                                                   static_cast<float>(progress) / static_cast<float>(blockCount) * 100.0f) +
+                                          "% (" + toString(context().getAllocator(), progress) + "/" +
+                                          toString(context().getAllocator(), blockCount) + ")",
+                                      PIPER_SOURCE_LOCATION());
+                }
+                using namespace std::chrono_literals;
+                std::this_thread::sleep_for(100ms);
             }
 
             // auto bufferCPU = buffer->download();

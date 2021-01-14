@@ -57,13 +57,13 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     // TODO:concurrency
     linkable.wait();
     auto kernel = accelerator->compileKernel(Piper::Span<Piper::LinkableProgram>{ &linkable.get(), 1 }, "conv");
-    const auto payload = accelerator->createPayload(Piper::InputResource{ devX->ref() }, Piper::InputResource{ devY->ref() },
-                                                    Piper::OutputResource{ devZ->ref() }, width, height, kernelSize);
+    const auto payload = accelerator->createPayload(Piper::InputResource{ devX }, Piper::InputResource{ devY },
+                                                    Piper::OutputResource{ devZ }, width, height, kernelSize);
 
     // for timing
-    accelerator->available(devX->ref()).wait();
-    accelerator->available(devY->ref()).wait();
-    accelerator->available(devZ->ref()).wait();
+    accelerator->available(devX).wait();
+    accelerator->available(devY).wait();
+    accelerator->available(devZ).wait();
     kernel.wait();
 
     if(logger.allow(Piper::LogLevel::Info))

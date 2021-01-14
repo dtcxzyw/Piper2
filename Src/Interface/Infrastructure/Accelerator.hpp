@@ -32,24 +32,35 @@ namespace Piper {
         virtual void* lookup(const String& symbol) = 0;
     };
 
-    using CommandQueue = uint64_t;
-    using Context = uint64_t;
-    using ResourceHandle = uint64_t;
+    using CommandQueue = ptrdiff_t;
+    using Context = ptrdiff_t;
+    using ResourceHandle = ptrdiff_t;
 
-    class Resource : public Object {
+    // NOTICE: not thread-safe
+    class ResourceTracer : public Object {
     private:
         const ResourceHandle mHandle;
 
     public:
-        Resource(PiperContext& context, const ResourceHandle handle) : Object(context), mHandle(handle) {}
+        ResourceTracer(PiperContext& context, const ResourceHandle handle) : Object(context), mHandle(handle) {}
 
         [[nodiscard]] ResourceHandle getHandle() const noexcept {
             return mHandle;
         }
-        virtual ~Resource() = default;
+        virtual ~ResourceTracer() = default;
     };
 
-    // not thread-safe
+    class Resource : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Resource, Object)
+        virtual ~Resource() = default;
+        // TODO:immutable access?
+        [[nodiscard]] virtual ResourceTracer& ref() const = 0;
+        [[nodiscard]] virtual ResourceHandle getHandle() const noexcept = 0;
+    };
+
+    // TODO:better interface
+    // NOTICE: not thread-safe
     class ResourceBinding : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(ResourceBinding, Object);
@@ -62,7 +73,7 @@ namespace Piper {
     class Payload : public Object {
     private:
         friend class Accelerator;
-        virtual void append(const void* data, size_t size, const size_t alignment) = 0;
+        virtual void append(const void* data, size_t size, size_t alignment) = 0;
 
         template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
         void append(const T& data) {
@@ -91,17 +102,15 @@ namespace Piper {
         }
     };
 
-    class Buffer : public Object {
+    class Buffer : public Resource {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Buffer, Object);
+        PIPER_INTERFACE_CONSTRUCT(Buffer, Resource);
         virtual ~Buffer() = default;
         [[nodiscard]] virtual size_t size() const noexcept = 0;
         virtual void upload(Future<DataHolder> data) = 0;
         // TODO:provide destination
         [[nodiscard]] virtual Future<DynamicArray<std::byte>> download() const = 0;
         virtual void reset() = 0;
-        // TODO:immutable access limitation?
-        [[nodiscard]] virtual SharedPtr<Resource> ref() const = 0;
     };
 
     struct ExtraInputResource {
@@ -174,14 +183,14 @@ namespace Piper {
         [[nodiscard]] virtual SharedPtr<ResourceBinding> createResourceBinding() const = 0;
 
         template <typename... Args>
-        SharedPtr<Payload> createPayload(const Args&... args) const {
+        [[nodiscard]] SharedPtr<Payload> createPayload(const Args&... args) const {
             auto res = createPayloadImpl();
             append(res, args...);
             return res;
         }
 
         // TODO:Resource name for debug
-        [[nodiscard]] virtual SharedPtr<Resource> createResource(ResourceHandle handle) const = 0;
+        [[nodiscard]] virtual UniqueObject<ResourceTracer> createResourceTracer(ResourceHandle handle) const = 0;
         virtual Future<SharedPtr<RunnableProgram>> compileKernel(const Span<LinkableProgram>& linkable, const String& entry) = 0;
         virtual Future<void> runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
                                        const SharedPtr<Payload>& args) = 0;

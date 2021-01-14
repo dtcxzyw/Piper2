@@ -111,12 +111,12 @@ namespace Piper {
         }
     };
 
-    class ResourceImpl final : public Resource {
+    class ResourceTracerImpl final : public ResourceTracer {
     private:
         SharedPtr<FutureImpl> mFuture;
 
     public:
-        ResourceImpl(PiperContext& context, const ResourceHandle handle) : Resource(context, handle) {}
+        ResourceTracerImpl(PiperContext& context, const ResourceHandle handle) : ResourceTracer(context, handle) {}
         [[nodiscard]] SharedPtr<FutureImpl> getFuture() const {
             return mFuture;
         }
@@ -129,34 +129,28 @@ namespace Piper {
 
     class ResourceBindingImpl final : public ResourceBinding {
     private:
-        DynamicArray<SharedPtr<ResourceImpl>> mInput;
-        DynamicArray<SharedPtr<ResourceImpl>> mOutput;
+        DynamicArray<SharedPtr<Resource>> mInput;
+        DynamicArray<SharedPtr<Resource>> mOutput;
 
     public:
         explicit ResourceBindingImpl(PiperContext& context)
             : ResourceBinding(context), mInput(context.getAllocator()), mOutput(context.getAllocator()) {}
         void addInput(const SharedPtr<Resource>& resource) override {
-            auto res = eastl::dynamic_pointer_cast<ResourceImpl>(resource);
-            if(!res)
-                context().getErrorHandler().raiseException("Unrecognized Resource", PIPER_SOURCE_LOCATION());
-            mInput.push_back(std::move(res));
+            mInput.push_back(resource);
         }
         void addOutput(const SharedPtr<Resource>& resource) override {
-            auto res = eastl::dynamic_pointer_cast<ResourceImpl>(std::move(resource));
-            if(!res)
-                context().getErrorHandler().raiseException("Unrecognized Resource", PIPER_SOURCE_LOCATION());
-            mOutput.push_back(std::move(res));
+            mOutput.push_back(resource);
         }
         [[nodiscard]] DynamicArray<SharedPtr<FutureImpl>> getInput() const {
             DynamicArray<SharedPtr<FutureImpl>> input{ context().getAllocator() };
             input.reserve(mInput.size());
             for(auto&& in : mInput)
-                input.push_back(in->getFuture());
+                input.push_back(dynamic_cast<ResourceTracerImpl&>(in->ref()).getFuture());
             return input;
         }
         void makeDirty(const SharedPtr<FutureImpl>& newFuture) {
             for(auto&& output : mOutput)
-                output->setFuture(newFuture);
+                dynamic_cast<ResourceTracerImpl&>(output->ref()).setFuture(newFuture);
         }
     };
 
@@ -201,12 +195,13 @@ namespace Piper {
         Ptr mData;
         size_t mSize;
         Allocator& mAllocator;
-        SharedPtr<ResourceImpl> mResource;
+        SharedPtr<ResourceTracerImpl> mTracer;
 
     public:
-        BufferImpl(PiperContext& context, const Ptr data, const size_t size, Allocator& allocator, SharedPtr<ResourceImpl> res)
-            : Buffer(context), mData(data), mSize(size), mAllocator(allocator), mResource(std::move(res)) {}
-        ~BufferImpl() {
+        BufferImpl(PiperContext& context, const Ptr data, const size_t size, Allocator& allocator,
+                   SharedPtr<ResourceTracerImpl> tracer)
+            : Buffer(context), mData(data), mSize(size), mAllocator(allocator), mTracer(std::move(tracer)) {}
+        ~BufferImpl() override {
             mAllocator.free(mData);
         }
         size_t size() const noexcept override {
@@ -215,14 +210,14 @@ namespace Piper {
         void upload(Future<DataHolder> data) override {
             auto& scheduler = context().getScheduler();
             const auto res = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
-            SharedPtr<FutureImpl> dep[] = { mResource->getFuture(), data.raw() };
+            SharedPtr<FutureImpl> dep[] = { mTracer->getFuture(), data.raw() };
             scheduler.spawnImpl(Closure<>{ context(),
                                            [src = std::move(data), data = shared_from_this()] {
                                                memcpy(reinterpret_cast<void*>(data->mData), static_cast<void*>(src.get().get()),
                                                       data->mSize);
                                            } },
                                 Span<SharedPtr<FutureImpl>>{ std::begin(dep), std::end(dep) }, res);
-            mResource->setFuture(res);
+            mTracer->setFuture(res);
         }
         Future<DynamicArray<std::byte>> download() const override {
             auto& scheduler = context().getScheduler();
@@ -232,21 +227,24 @@ namespace Piper {
                     const auto* end = beg + thisBuffer->mSize;
                     return DynamicArray<std::byte>{ beg, end, thisBuffer->context().getAllocator() };
                 },
-                Future<void>{ mResource->getFuture() });
+                Future<void>{ mTracer->getFuture() });
         }
         void reset() override {
             auto& scheduler = context().getScheduler();
             const auto res = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
-            SharedPtr<FutureImpl> dep[] = { mResource->getFuture() };
+            SharedPtr<FutureImpl> dep[] = { mTracer->getFuture() };
             scheduler.spawnImpl(Closure<>{ context(),
                                            [thisData = shared_from_this()] {
                                                memset(reinterpret_cast<void*>(thisData->mData), 0x00, thisData->mSize);
                                            } },
                                 Span<SharedPtr<FutureImpl>>{ std::begin(dep), std::end(dep) }, res);
-            mResource->setFuture(res);
+            mTracer->setFuture(res);
         }
-        SharedPtr<Resource> ref() const override {
-            return eastl::static_shared_pointer_cast<Resource>(mResource);
+        ResourceTracer& ref() const override {
+            return *mTracer;
+        }
+        ResourceHandle getHandle() const noexcept override {
+            return mData;
         }
     };
 
@@ -268,7 +266,7 @@ namespace Piper {
             auto name = String{ beg, ptr, context.getAllocator() };
             if(ptr + 9 > end)
                 context.getErrorHandler().raiseException("The native linkable file is corrupted.", PIPER_SOURCE_LOCATION());
-            auto func = reinterpret_cast<void*>(*reinterpret_cast<const uint64_t*>(ptr + 1));
+            auto* func = reinterpret_cast<void*>(*reinterpret_cast<const uint64_t*>(ptr + 1));
             ptr += 9;
             symbol.insert({ std::move(name), func });
         }
@@ -291,8 +289,8 @@ namespace Piper {
         [[nodiscard]] SharedPtr<Payload> createPayloadImpl() const override {
             return eastl::static_shared_pointer_cast<Payload>(makeSharedObject<PayloadImpl>(context()));
         }
-        [[nodiscard]] SharedPtr<Resource> createResource(const ResourceHandle handle) const override {
-            return eastl::static_shared_pointer_cast<Resource>(makeSharedObject<ResourceImpl>(context(), handle));
+        [[nodiscard]] UniqueObject<ResourceTracer> createResourceTracer(const ResourceHandle handle) const override {
+            return makeUniqueObject<ResourceTracer, ResourceTracerImpl>(context(), handle);
         }
         Future<SharedPtr<RunnableProgram>> compileKernel(const Span<LinkableProgram>& linkable, const String& entry) override {
             DynamicArray<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
@@ -419,6 +417,7 @@ namespace Piper {
                 scheduler.wrap(modules));
             return scheduler.spawn(
                 [ctx = &context(), entry, nativeSymbol, this](llvm::orc::ThreadSafeModule mod) {
+                    auto stage = ctx->getErrorHandler().enterStage("build JIT", PIPER_SOURCE_LOCATION());
                     // TODO:LLVM use fake host triple,use true host triple to initialize JITTargetMachineBuilder
                     auto JTMB = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(), llvm::orc::JITTargetMachineBuilder::detectHost());
 
@@ -479,12 +478,12 @@ namespace Piper {
                 },
                 std::move(kernel));
         }
-        Future<void> runKernel(uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
+        Future<void> runKernel(const uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
                                const SharedPtr<Payload>& payload) override {
             // TODO:for small n,run in the thread
             auto& scheduler = context().getScheduler();
             auto* payloadImpl = dynamic_cast<PayloadImpl*>(payload.get());
-            auto&& binding = payloadImpl->getResourceBinding();
+            auto binding = payloadImpl->getResourceBinding();
             // TODO:reduce copy
             auto inputFuture = binding->getInput();
             DynamicArray<Future<void>> input{ context().getAllocator() };
@@ -493,8 +492,8 @@ namespace Piper {
                 input.push_back(Future<void>{ in });
             auto future = scheduler
                               .parallelFor((n + chunkSize - 1) / chunkSize,
-                                           [input = payloadImpl->data(), n](const uint32_t idx,
-                                                                            const SharedPtr<RunnableProgram>& func, PlaceHolder) {
+                                           [input = payloadImpl->data(), n,
+                                            binding](const uint32_t idx, const SharedPtr<RunnableProgram>& func, PlaceHolder) {
                                                auto beg = idx * chunkSize;
                                                const auto end = beg + chunkSize;
                                                auto& kernel = dynamic_cast<LLVMProgram&>(*func);
@@ -523,16 +522,13 @@ namespace Piper {
             bind->makeDirty(result);
         }
         Future<void> available(const SharedPtr<Resource>& resource) override {
-            auto* res = dynamic_cast<ResourceImpl*>(resource.get());
-            if(!res)
-                context().getErrorHandler().raiseException("Unrecognized Resource", PIPER_SOURCE_LOCATION());
-            return Future<void>{ res->getFuture() };
+            return Future<void>{ dynamic_cast<ResourceTracerImpl&>(resource->ref()).getFuture() };
         }
         SharedPtr<Buffer> createBuffer(const size_t size, const size_t alignment) override {
             auto& allocator = context().getAllocator();
             auto ptr = allocator.alloc(size, alignment);
-            return eastl::static_shared_pointer_cast<Buffer>(
-                makeSharedObject<BufferImpl>(context(), ptr, size, allocator, makeSharedObject<ResourceImpl>(context(), ptr)));
+            return eastl::static_shared_pointer_cast<Buffer>(makeSharedObject<BufferImpl>(
+                context(), ptr, size, allocator, makeSharedObject<ResourceTracerImpl>(context(), ptr)));
         }
     };
     class ModuleImpl final : public Module {

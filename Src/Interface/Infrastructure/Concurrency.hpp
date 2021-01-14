@@ -131,8 +131,10 @@ namespace Piper {
             return res;
         }
         void wait() const {
-            if(!ready())
-                return mImpl->wait();
+            if(!ready()) {
+                mImpl->wait();
+                mReady = true;
+            }
         }
 
         T& get() {
@@ -181,7 +183,8 @@ namespace Piper {
         bool ready() const noexcept {
             if(mImpl) {
                 if(mImpl->ready()) {
-                    mImpl.reset();
+                    // TODO: ABA?
+                    // mImpl.reset();
                     return true;
                 }
                 return false;
@@ -189,8 +192,11 @@ namespace Piper {
             return true;
         }
         void wait() const {
-            if(!ready())
+            if(!ready()) {
                 mImpl->wait();
+                // TODO: ABA?
+                // mImpl.reset();
+            }
         }
     };
 
@@ -530,14 +536,13 @@ namespace Piper {
             const auto depSpan = Span<SharedPtr<FutureImpl>>(std::begin(dependencies) + 1, std::end(dependencies));
             auto result = newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
 
-            parallelForImpl(
-                n,
-                Closure<uint32_t>{ context(),
-                                   [call = std::forward<Callable>(callable), tuple = std::make_tuple(std::forward<Args>(args)...),
-                                    ptr = result->storage()](uint32_t idx) {
-                                       Detail::copyApply(call, std::tuple_cat(std::make_tuple(idx), tuple));
-                                   } },
-                depSpan, result);
+            parallelForImpl(n,
+                            Closure<uint32_t>{ context(),
+                                               [call = std::forward<Callable>(callable),
+                                                tuple = std::make_tuple(std::forward<Args>(args)...)](uint32_t idx) {
+                                                   Detail::copyApply(call, std::tuple_cat(std::make_tuple(idx), tuple));
+                                               } },
+                            depSpan, result);
 
             return Future<void>{ std::move(result) };
         }

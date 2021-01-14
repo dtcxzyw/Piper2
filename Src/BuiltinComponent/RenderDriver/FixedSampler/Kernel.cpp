@@ -17,7 +17,7 @@
 #include "Shared.hpp"
 
 namespace Piper {
-    void atomicAdd(RGBW& x, const Spectrum<Radiance>& y, Dimensionless<float> weight) {
+    void atomicAdd(RGBW& x, const Spectrum<Radiance>& y, const Dimensionless<float> weight) {
         piperFloatAtomicAdd(x.radiance.r.val, y.r.val);
         piperFloatAtomicAdd(x.radiance.g.val, y.g.val);
         piperFloatAtomicAdd(x.radiance.b.val, y.b.val);

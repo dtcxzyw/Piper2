@@ -17,8 +17,11 @@
 #include "../Interface/Infrastructure/Allocator.hpp"
 #include "../Interface/Infrastructure/Config.hpp"
 #include "../Interface/Infrastructure/Module.hpp"
+#include "../STL/List.hpp"
 #include "TestEnvironment.hpp"
+
 #include <atomic>
+#include <random>
 
 using namespace std::chrono_literals;
 
@@ -275,6 +278,33 @@ void dynamicParallelism(Piper::Scheduler& scheduler) {
     ASSERT_EQ(future.get(), magic);
 }
 
+void multiTasks(Piper::Scheduler& scheduler) {
+    std::mt19937_64 eng{ static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()) };
+    constexpr uint32_t tasks = 10000, count = 10000;
+    const std::uniform_int_distribution<uint32_t> dis(0, count);
+    Piper::List<Piper::Future<void>> futures{ scheduler.context().getAllocator() };
+    std::atomic_uint64_t execCount{ 0 };
+    std::atomic_uint64_t sum{ 0 };
+    uint64_t standardCount = 0, standardSum = 0;
+    for(uint32_t i = 0; i < tasks; ++i) {
+        const auto cnt = dis(eng);
+        const auto mul = dis(eng);
+        standardCount += cnt;
+        standardSum += static_cast<uint64_t>(mul) * static_cast<uint64_t>(cnt) * static_cast<uint64_t>(cnt - 1) / 2;
+        futures.emplace_back(scheduler.parallelFor(cnt, [&, mul](const uint32_t idx) {
+            std::this_thread::sleep_for(10ns);
+            ++execCount;
+            sum += static_cast<uint64_t>(mul) * static_cast<uint64_t>(idx);
+        }));
+    }
+    while(!futures.empty()) {
+        futures.remove_if([](Piper::Future<void>& future) { return future.ready(); });
+        std::this_thread::sleep_for(100ms);
+    }
+    ASSERT_EQ(static_cast<uint64_t>(execCount), standardCount);
+    ASSERT_EQ(static_cast<uint64_t>(sum), standardSum);
+}
+
 #define TEST_ENVIRONMENT(NAME, CLASS_ID)                                                     \
     class NAME : public PiperCoreEnvironment {                                               \
     protected:                                                                               \
@@ -303,7 +333,8 @@ void dynamicParallelism(Piper::Scheduler& scheduler) {
     TEST_CONTENT(NAME, notify)             \
     TEST_CONTENT(NAME, futureCallProxy)    \
     TEST_CONTENT(NAME, futureMemberAccess) \
-    TEST_CONTENT(NAME, dynamicParallelism)
+    TEST_CONTENT(NAME, dynamicParallelism) \
+    TEST_CONTENT(NAME, multiTasks)
 
 TEST_MODULE(Taskflow, "Piper.Infrastructure.Taskflow.Scheduler")
 TEST_MODULE(Squirrel, "Piper.Infrastructure.Squirrel.Scheduler")
