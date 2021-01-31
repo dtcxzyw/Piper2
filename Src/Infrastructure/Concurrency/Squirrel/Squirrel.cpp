@@ -22,6 +22,7 @@
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
 #include "../../../STL/List.hpp"
+#include "../../../STL/Pair.hpp"
 #include <condition_variable>
 #include <mutex>
 

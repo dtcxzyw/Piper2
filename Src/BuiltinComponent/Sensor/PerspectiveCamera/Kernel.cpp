@@ -28,25 +28,22 @@ namespace Piper {
         // TODO:consider rotate/scale?
         const auto base = transform.originRefB();
         const auto forward = Normal<float, FOR::World>{ data->lookAt - base };
-        const auto right = cross(forward, data->upRef);
-        const auto up = cross(right, forward);
-        const auto anchor = base + up * Distance{ data->size.x * 0.5f } - right * Distance{ data->size.y * 0.5f };  // left-top
+        const auto right = cross(data->upRef, forward);
+        const auto up = cross(forward, right);
+        const auto filmHit =
+            base + right * Distance{ data->size.x * (NDC.x - 0.5f) } + up * Distance{ data->size.y * (NDC.y - 0.5f) };
         // TODO:AF/MF mode support
         const auto focalDistance = dot(data->lookAt - base, forward);
         const auto filmDistance = inverse(inverse(data->focalLength) - inverse(focalDistance));
         const auto lensCenter = base + forward * filmDistance;
-        const auto offX = right * Distance{ data->size.x };
-        const auto offY = up * Distance{ -data->size.y };
-        const auto apertureX = right * data->apertureRadius;
-        const auto apertureY = up * data->apertureRadius;
 
-        const auto filmHit = anchor + offX * Dimensionless<float>{ 1.0f - NDC.x } + offY * Dimensionless<float>{ 1.0f - NDC.y };
         const auto lensOffset = sampleUniformDisk(u1, u2);
-        const auto lensHit = lensCenter + apertureX * lensOffset.x + apertureY * lensOffset.y;
+        const auto lensHit =
+            lensCenter + right * (data->apertureRadius * lensOffset.x) + up * (data->apertureRadius * lensOffset.y);
         const auto dir = lensCenter - filmHit;
         const auto planeOfFocusHit = lensCenter + dir * (focalDistance / dot(dir, forward));
         ray.origin = lensHit;
-        ray.direction = normalize(planeOfFocusHit - ray.origin);
+        ray.direction = normalize(planeOfFocusHit - lensHit);
         weight = { 1.0f };
     }
     static_assert(std::is_same_v<SensorFunc, decltype(&rayGen)>);

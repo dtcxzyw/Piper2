@@ -30,11 +30,13 @@ namespace Piper {
     private:
         String mKernelPath;
         uint32_t mMaxDepth;
+        uint32_t mMinDepthForRussianRoulette;
 
     public:
         PathTracing(PiperContext& context, const String& path, const SharedPtr<Config>& config)
             : Integrator(context), mKernelPath(path + "/Kernel.bc") {
             mMaxDepth = static_cast<uint32_t>(config->at("MaxTraceDepth")->get<uintmax_t>());
+            mMinDepthForRussianRoulette = static_cast<uint32_t>(config->at("MinRussianRouletteDepth")->get<uintmax_t>());
         }
 
         [[nodiscard]] IntegratorProgram materialize(const MaterializeContext& ctx) const override {
@@ -46,7 +48,8 @@ namespace Piper {
             static char p1, p2, p3;
             res.payload = packSBTPayload(
                 context().getAllocator(),
-                Data{ mMaxDepth, ctx.profiler.registerDesc("Integrator", "Trace Depth", &p1, StatisticsType::UInt, mMaxDepth + 1),
+                Data{ mMaxDepth, mMinDepthForRussianRoulette,
+                      ctx.profiler.registerDesc("Integrator", "Trace Depth", &p1, StatisticsType::UInt, mMaxDepth + 1),
                       ctx.profiler.registerDesc("Integrator", "Time Per Path", &p2, StatisticsType::Time),
                       ctx.profiler.registerDesc("Integrator", "Valid Rays", &p3, StatisticsType::Bool) });
             return res;

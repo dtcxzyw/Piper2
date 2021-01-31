@@ -21,6 +21,7 @@
 namespace Piper {
     struct Data final {
         uint32_t maxDepth;
+        uint32_t minDepthForRussianRoulette;
 
         StatisticsHandle profileDepth;
         StatisticsHandle profilePathTime;

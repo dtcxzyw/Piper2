@@ -20,6 +20,7 @@
 #include "../../../Interface/Infrastructure/FileSystem.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../PiperAPI.hpp"
+#include "../../../STL/Pair.hpp"
 #include "../../../STL/UniquePtr.hpp"
 #include <new>
 

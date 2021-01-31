@@ -22,6 +22,7 @@
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../PiperAPI.hpp"
 #include "../../../PiperContext.hpp"
+#include "../../../STL/Pair.hpp"
 #include <new>
 #include <nlohmann/json.hpp>
 

@@ -174,7 +174,7 @@ namespace Piper {
 
             // Russian roulette
             // TODO:better p estimation(etaScale)
-            if(depth > 3) {
+            if(depth > data->minDepthForRussianRoulette) {
                 const auto p = std::fmax(0.05f, 1.0f - std::fmax(pf.r.val, std::fmax(pf.g.val, pf.b.val)));
                 if(piperSample(context) < p)
                     break;

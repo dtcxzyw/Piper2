@@ -25,6 +25,7 @@
 #include "Interface/Infrastructure/Operator.hpp"
 #include "Interface/Infrastructure/Program.hpp"
 #include "PiperContext.hpp"
+#include "STL/Pair.hpp"
 #include "STL/UniquePtr.hpp"
 #include <cstdlib>
 #include <cxxopts.hpp>

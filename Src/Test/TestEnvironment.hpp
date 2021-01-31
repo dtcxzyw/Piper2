@@ -17,6 +17,7 @@
 
 #pragma once
 #include "../PiperContext.hpp"
+#include "../STL/Pair.hpp"
 #include "../STL/UniquePtr.hpp"
 #include <gtest/gtest.h>
 

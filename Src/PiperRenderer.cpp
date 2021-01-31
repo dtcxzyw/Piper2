@@ -106,14 +106,14 @@ namespace Piper {
                 const auto& arr = rotation->second->viewAsArray();
                 if(arr.size() == 3) {
                     // euler angle
-                    const auto halfRoll = 0.5f * static_cast<float>(arr[0]->get<double>());
-                    const auto chRoll = std::cos(halfRoll), shRoll = std::sin(halfRoll);
-
-                    const auto halfPitch = 0.5f * static_cast<float>(arr[1]->get<double>());
+                    const auto halfPitch = 0.5f * static_cast<float>(arr[0]->get<double>());
                     const auto chPitch = std::cos(halfPitch), shPitch = std::sin(halfPitch);
 
-                    const auto halfYaw = 0.5f * static_cast<float>(arr[2]->get<double>());
+                    const auto halfYaw = 0.5f * static_cast<float>(arr[1]->get<double>());
                     const auto chYaw = std::cos(halfYaw), shYaw = std::sin(halfYaw);
+
+                    const auto halfRoll = 0.5f * static_cast<float>(arr[2]->get<double>());
+                    const auto chRoll = std::cos(halfRoll), shRoll = std::sin(halfRoll);
 
                     transform.quatW = chRoll * chPitch * chYaw + shRoll * shPitch * shYaw;
                     transform.quatX = chRoll * shPitch * chYaw + shRoll * chPitch * shYaw;

@@ -57,7 +57,7 @@ namespace Piper {
     };
     // TODO:MeasuredFilter
 
-    // TODO:tiled
+    // TODO:unbiased estimator of sample variance
     class FixedSampler final : public RenderDriver {
     private:
         String mKernelPath;
