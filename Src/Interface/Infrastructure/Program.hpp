@@ -23,7 +23,7 @@
 
 namespace Piper {
     struct LinkableProgram final {
-        Future<DynamicArray<std::byte>> exchange;
+        Future<Binary> exchange;
         String format;
         uint64_t UID;
     };

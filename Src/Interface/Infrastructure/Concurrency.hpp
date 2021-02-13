@@ -28,9 +28,7 @@ namespace Piper {
     // TODO:process report
     class FutureImpl : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(FutureImpl, Object)
-        virtual ~FutureImpl() = default;
-        [[nodiscard]] virtual bool fastReady() const noexcept = 0;
+        PIPER_INTERFACE_CONSTRUCT(FutureImpl, Object) [[nodiscard]] virtual bool fastReady() const noexcept = 0;
         [[nodiscard]] virtual bool ready() const noexcept = 0;
         virtual void wait() const = 0;
         [[nodiscard]] virtual const void* storage() const = 0;
@@ -137,11 +135,13 @@ namespace Piper {
             }
         }
 
-        T& get() {
+        T& getUnsafe() {
+            wait();
             return *static_cast<T*>(const_cast<void*>(mImpl->storage()));
         }
 
-        const T& get() const {
+        const T& getUnsafe() const {
+            wait();
             return *static_cast<const T*>(mImpl->storage());
         }
 
@@ -306,11 +306,11 @@ namespace Piper {
 
         template <typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
         decltype(auto) removeFuture(const Future<T>& arg) {
-            return (arg.get());
+            return (arg.getUnsafe());
         }
         template <typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
         decltype(auto) removeFuture(Future<T>&& arg) {
-            return std::move(arg.get());
+            return std::move(arg.getUnsafe());
         }
 
         constexpr auto removeFuture(const Future<void>&) {
@@ -445,11 +445,11 @@ namespace Piper {
                                   ptr = result->storage()] {
                                      auto future = std::move(Detail::moveApply(
                                          std::move(call), std::move(const_cast<std::remove_const_t<decltype(tuple)>&>(tuple))));
-                                     // TODO:yield time slice
+                                     // TODO: yield time slice
                                      future.wait();
-                                     // TODO:ownership?
+                                     // TODO: ownership?
                                      new(static_cast<RealReturnType*>(const_cast<void*>(ptr)))
-                                         RealReturnType(std::move(future.get()));
+                                         RealReturnType(std::move(future.getUnsafe()));
                                  } },
                       depSpan, result);
 
@@ -500,7 +500,7 @@ namespace Piper {
                                      vec->reserve(fs.size());
                                      for(auto&& future : const_cast<DynamicArray<Future<T>>&>(fs))
                                          // TODO:ownership
-                                         vec->emplace_back(std::move(future.get()));
+                                         vec->emplace_back(std::move(future.getUnsafe()));
                                  } },
                       Span<SharedPtr<FutureImpl>>{ dep.data(), dep.size() }, result);
             return Future<DynamicArray<T>>{ std::move(result) };

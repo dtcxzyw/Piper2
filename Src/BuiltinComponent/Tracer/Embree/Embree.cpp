@@ -372,7 +372,7 @@ namespace Piper {
             0  // must set the ray flags to 0
         };
 
-        // TODO:Coroutine+SIMD?
+        // TODO: Coroutine+SIMD?
         rtcOccluded1(ctx->argument.scene, reinterpret_cast<RTCIntersectContext*>(&intersectCtx), &rayInfo);
 
         const auto result = (rayInfo.tfar < 0.0f);
@@ -380,16 +380,6 @@ namespace Piper {
         const auto end = EmbreeProfiler::getTime();
         ctx->argument.profiler->addTime(ctx->argument.profileOccludeTime, end - begin);
         return result;
-    }
-
-    static float piperEmbreeSample(const FullContext context) {
-        auto* ctx = reinterpret_cast<PerSampleContext*>(context);
-        if(ctx->currentDimension < ctx->argument.maxDimension) {
-            float res;
-            ctx->argument.generate(ctx->argument.SAPayload, ctx->sampleIndex, ctx->currentDimension++, res);
-            return res;
-        }
-        return std::generate_canonical<float, -1>(ctx->eng);
     }
 
     struct EmbreeTraversalNode final {
@@ -427,48 +417,8 @@ namespace Piper {
             ;
     }
 
-    struct MainArgument final {
-        const KernelArgument* SBT;
-    };
-
-    // make compiler happy
-    extern void piperMain(uint32_t idx, const MainArgument* arg);
-    static void piperEmbreeMain(const uint32_t idx, const MainArgument* arg) {
-        const auto* SBT = arg->SBT;
-        const auto beg = EmbreeProfiler::getTime();
-        const auto sampleIdx = idx % SBT->sampleCount, pixelIdx = idx / SBT->sampleCount;
-        const auto x = SBT->rect.left + pixelIdx % SBT->rect.width;
-        const auto y = SBT->rect.top + pixelIdx / SBT->rect.width;
-
-        PerSampleContext context{
-            *arg->SBT, { 0.0f }, 5, 0, RandomEngine{ (y * SBT->width + x) * SBT->sampleCount + sampleIdx }
-        };
-        Vector2<float> point;
-        SBT->start(SBT->SAPayload, x, y, sampleIdx, context.sampleIndex, point);
-        SBT->generate(SBT->SAPayload, context.sampleIndex, 2, context.time.val);
-
-        // TODO:move to transform
-        const auto& transform = SBT->transform;
-        const auto NDC = Vector2<float>{ transform.ox + transform.sx * point.x / static_cast<float>(SBT->width),
-                                         transform.oy + transform.sy * point.y / static_cast<float>(SBT->height) };
-        RayInfo<FOR::World> ray;
-        Dimensionless<float> weight;
-        {
-            float u1, u2;
-            SBT->generate(SBT->SAPayload, context.sampleIndex, 3, u1);
-            SBT->generate(SBT->SAPayload, context.sampleIndex, 4, u2);
-            SBT->rayGen(reinterpret_cast<RestrictedContext>(&context), SBT->RGPayload, NDC, u1, u2, ray, weight);
-        }
-
-        Spectrum<Radiance> sample;
-        SBT->trace(reinterpret_cast<FullContext>(&context), SBT->TRPayload, ray, sample);
-        SBT->accumulate(reinterpret_cast<RestrictedContext>(&context), SBT->ACPayload, SBT->launchData, point, sample * weight);
-        const auto end = EmbreeProfiler::getTime();
-        SBT->profiler->addTime(SBT->profileSampleTime, end - beg);
-    }
-
     static LinkableProgram prepareKernelNative(PiperContext& context, const bool debug) {
-        DynamicArray<std::byte> res{ context.getAllocator() };
+        Binary res{ context.getAllocator() };
         constexpr auto header = "Native";
         res.insert(res.cend(), reinterpret_cast<const std::byte*>(header), reinterpret_cast<const std::byte*>(header + 6));
         auto append = [&res](const StringView symbol, auto address) {
@@ -484,8 +434,6 @@ namespace Piper {
     append("piper" #FUNC, piperEmbree##FUNC)
         PIPER_APPEND(Trace);
         PIPER_APPEND(Occlude);
-        PIPER_APPEND(Main);
-        PIPER_APPEND(Sample);
         PIPER_APPEND(StatisticsUInt);
         PIPER_APPEND(StatisticsBool);
         PIPER_APPEND(StatisticsFloat);
@@ -498,7 +446,7 @@ namespace Piper {
         }
 #undef PIPER_APPEND
         return LinkableProgram{ context.getScheduler().value(res), String{ "Native", context.getAllocator() },
-                                reinterpret_cast<uint64_t>(piperEmbreeMain) };
+                                reinterpret_cast<uint64_t>(piperEmbreeTrace) };
     }
 
     struct DeviceDeleter {
@@ -537,7 +485,7 @@ namespace Piper {
         CustomBuffer mCustomBuffer;
 
     public:
-        EmbreeAcceleration(PiperContext& context, RTCDevice device, const GeometryDesc& desc)
+        EmbreeAcceleration(PiperContext& context, const RTCDevice device, const GeometryDesc& desc)
             : AccelerationStructure(context), mBuffer{} {
             switch(desc.type) {
                 case PrimitiveShapeType::TriangleIndexed: {
@@ -718,9 +666,7 @@ namespace Piper {
 
     class EmbreeNode : public Node {
     public:
-        PIPER_INTERFACE_CONSTRUCT(EmbreeNode, Node)
-        virtual ~EmbreeNode() = default;
-        [[nodiscard]] virtual RTCScene getScene() const noexcept = 0;
+        PIPER_INTERFACE_CONSTRUCT(EmbreeNode, Node) [[nodiscard]] virtual RTCScene getScene() const noexcept = 0;
         virtual void collect(DynamicArray<GSMInstanceProgram>& gsm, DynamicArray<LightInstanceProgram>& light,
                              DynamicArray<SensorInstanceProgram>& sensor, const EmbreeTraversalNode* traversal,
                              MemoryArena& arena) = 0;
@@ -961,7 +907,7 @@ namespace Piper {
         SharedPtr<Sensor> mSensor;
 
     public:
-        EmbreeLeafNodeWithSensor(PiperContext& context, RTCDevice device, SharedPtr<Sensor> sensor)
+        EmbreeLeafNodeWithSensor(PiperContext& context, const RTCDevice device, SharedPtr<Sensor> sensor)
             : EmbreeNode(context), mSensor(std::move(sensor)) {
             mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER));
 
@@ -1006,7 +952,8 @@ namespace Piper {
     private:
         Accelerator& mAccelerator;
         KernelArgument mArg;
-        SharedPtr<RunnableProgram> mKernel;
+        RunnableProgram<KernelArgument> mKernel;
+        DynamicArray<ResourceView> mResources;
         uint32_t mSamplesPerPixel;
         std::unique_lock<std::mutex> mLock;
         SharedPtr<EmbreeNode> mRoot;
@@ -1014,11 +961,11 @@ namespace Piper {
 
     public:
         explicit EmbreeTraceLauncher(PiperContext& context, Accelerator& accelerator, const KernelArgument& argTemplate,
-                                     SharedPtr<RunnableProgram> kernel, SharedPtr<EmbreeNode> root, std::mutex& mutex,
-                                     const uint32_t samplesPerPixel)
-            : TraceLauncher(context), mAccelerator(accelerator), mArg(argTemplate), mKernel(std::move(kernel)),
-              mSamplesPerPixel(samplesPerPixel), mLock(mutex, std::try_to_lock), mRoot(std::move(root)),
-              mArena(context.getAllocator(), 128) {
+                                     RunnableProgram<KernelArgument> kernel, DynamicArray<ResourceView> resources,
+                                     SharedPtr<EmbreeNode> root, std::mutex& mutex, const uint32_t samplesPerPixel)
+            : TraceLauncher(context), mAccelerator(accelerator), mArg(argTemplate),
+              mKernel(std::move(kernel)), mResources{ std::move(resources) }, mSamplesPerPixel(samplesPerPixel),
+              mLock(mutex, std::try_to_lock), mRoot(std::move(root)), mArena(context.getAllocator(), 128) {
             if(!mLock.owns_lock())
                 context.getErrorHandler().raiseException("The pipeline is locked.", PIPER_SOURCE_LOCATION());
         }
@@ -1026,18 +973,15 @@ namespace Piper {
                                           const SensorNDCAffineTransform& transform, const uint32_t sampleCount) override {
             auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(launchData.size()));
             memcpy(ptr, launchData.data(), launchData.size());
-            auto arg = makeSharedPtr<KernelArgument>(context().getAllocator());
-            *arg = mArg;
-            arg->rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
-            arg->launchData = ptr;
-            arg->sampleCount = sampleCount;
-            arg->transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
-            auto buffer = mAccelerator.createBuffer(sizeof(KernelArgument), 128);
-            buffer->upload(context().getScheduler().value(DataHolder{ arg, arg.get() }));
+            auto arg = mArg;
 
-            const auto payload = mAccelerator.createPayload(InputResource{ { buffer } });
-            return mAccelerator.runKernel(rect.width * rect.height * sampleCount, context().getScheduler().value(mKernel),
-                                          payload);
+            arg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
+            arg.launchData = ptr;
+            arg.sampleCount = sampleCount;
+            arg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
+
+            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ sampleCount, 1, 1 }, mKernel, mResources,
+                                             arg);
         }
         void updateTimeInterval(const Time<float> begin, const Time<float> end) noexcept override {
             mRoot->updateTimeInterval(begin, end);
@@ -1054,7 +998,7 @@ namespace Piper {
 
     class EmbreePipeline final : public Pipeline {
     private:
-        SharedPtr<RunnableProgram> mKernel;
+        Optional<RunnableProgram<KernelArgument>> mKernel;
         Accelerator& mAccelerator;
         // TODO:temp arena?
         MemoryArena mArena;
@@ -1064,6 +1008,7 @@ namespace Piper {
         UMap<Node*, SensorGroup> mSensors;
         SharedPtr<Sampler> mSampler;
         EmbreeProfiler mProfiler;
+        DynamicArray<ResourceView> mResources;
         std::mutex mMutex;
 
         void* upload(const SBTPayload& payload) {
@@ -1078,8 +1023,9 @@ namespace Piper {
         EmbreePipeline(PiperContext& context, Tracer& tracer, const PITU& pitu, SharedPtr<EmbreeNode> scene,
                        Integrator& integrator, RenderDriver& renderDriver, LightSampler& lightSampler, SharedPtr<Sampler> sampler,
                        bool debug)
-            : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mHolder(context),
-              mScene(std::move(scene)), mSensors{ context.getAllocator() }, mSampler(std::move(sampler)), mProfiler(context) {
+            : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mArg{},
+              mHolder(context), mScene(std::move(scene)), mSensors{ context.getAllocator() }, mSampler(std::move(sampler)),
+              mProfiler(context), mResources{ context.getAllocator() } {
             DynamicArray<LinkableProgram> modules(context.getAllocator());
             modules.push_back(prepareKernelNative(context, debug));
             modules.push_back(pitu.generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()));
@@ -1245,29 +1191,32 @@ namespace Piper {
             modules.push_back(generate.program);
 
             auto& accelerator = tracer.getAccelerator();
-            auto kernel = accelerator.compileKernel(Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
-                                                    String{ "piperMain", context.getAllocator() });
-            mKernel = kernel.getSync();
+            mKernel = accelerator.compileKernel<KernelArgument>(
+                Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
+                String{ "piperMain", context.getAllocator() });
+
+            // TODO:better interface
+            auto symbolMap = mKernel->get().getSync();
 
             mArg.callInfo = mArena.alloc<CallInfo>(call.size());
             for(size_t idx = 0; idx < call.size(); ++idx) {
-                mArg.callInfo[idx].address = reinterpret_cast<ptrdiff_t>(mKernel->lookup(call[idx].first));
+                mArg.callInfo[idx].address = reinterpret_cast<ptrdiff_t>(symbolMap->lookup(call[idx].first));
                 mArg.callInfo[idx].SBTData = call[idx].second;
             }
 
             for(auto& [_, prog] : geometryProg) {
-                prog.calcSurface = static_cast<GeometryPostProcessFunc>(mKernel->lookup(prog.calcSurfaceFunc));
+                prog.calcSurface = static_cast<GeometryPostProcessFunc>(symbolMap->lookup(prog.calcSurfaceFunc));
                 if(prog.kind != HitKind::Builtin) {
                     prog.acceleration->setCustomFunc(prog.payload, mArena,
-                                                     static_cast<GeometryIntersectFunc>(mKernel->lookup(prog.intersectFunc)),
-                                                     static_cast<GeometryOccludeFunc>(mKernel->lookup(prog.occludeFunc)));
+                                                     static_cast<GeometryIntersectFunc>(symbolMap->lookup(prog.intersectFunc)),
+                                                     static_cast<GeometryOccludeFunc>(symbolMap->lookup(prog.occludeFunc)));
                 }
             }
             for(auto& [_, prog] : surfaceProg) {
-                prog.init = static_cast<SurfaceInitFunc>(mKernel->lookup(prog.initFunc));
-                prog.sample = static_cast<SurfaceSampleFunc>(mKernel->lookup(prog.sampleFunc));
-                prog.evaluate = static_cast<SurfaceEvaluateFunc>(mKernel->lookup(prog.evaluateFunc));
-                prog.pdf = static_cast<SurfacePdfFunc>(mKernel->lookup(prog.pdfFunc));
+                prog.init = static_cast<SurfaceInitFunc>(symbolMap->lookup(prog.initFunc));
+                prog.sample = static_cast<SurfaceSampleFunc>(symbolMap->lookup(prog.sampleFunc));
+                prog.evaluate = static_cast<SurfaceEvaluateFunc>(symbolMap->lookup(prog.evaluateFunc));
+                prog.pdf = static_cast<SurfacePdfFunc>(symbolMap->lookup(prog.pdfFunc));
             }
             for(auto& prog : GSMs) {
                 auto& data = prog.node->postMaterialize(mHolder);
@@ -1285,7 +1234,7 @@ namespace Piper {
                 data.SFPayload = surf.payload;
             }
 
-            mArg.accumulate = static_cast<RenderDriverFunc>(mKernel->lookup(ACRTP.symbol));
+            mArg.accumulate = static_cast<RenderDriverFunc>(symbolMap->lookup(ACRTP.symbol));
 
             for(size_t idx = 0; idx < lights.size(); ++idx) {
                 auto& LIP = LIPs[idx];
@@ -1293,10 +1242,10 @@ namespace Piper {
                 auto& sample = dynamic_cast<EmbreeRTProgram&>(*LIP.sample);
                 auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*LIP.evaluate);
                 auto& pdf = dynamic_cast<EmbreeRTProgram&>(*LIP.pdf);
-                mArg.lights[idx].init = static_cast<LightInitFunc>(mKernel->lookup(init.symbol));
-                mArg.lights[idx].sample = static_cast<LightSampleFunc>(mKernel->lookup(sample.symbol));
-                mArg.lights[idx].evaluate = static_cast<LightEvaluateFunc>(mKernel->lookup(evaluate.symbol));
-                mArg.lights[idx].pdf = static_cast<LightPdfFunc>(mKernel->lookup(pdf.symbol));
+                mArg.lights[idx].init = static_cast<LightInitFunc>(symbolMap->lookup(init.symbol));
+                mArg.lights[idx].sample = static_cast<LightSampleFunc>(symbolMap->lookup(sample.symbol));
+                mArg.lights[idx].evaluate = static_cast<LightEvaluateFunc>(symbolMap->lookup(evaluate.symbol));
+                mArg.lights[idx].pdf = static_cast<LightPdfFunc>(symbolMap->lookup(pdf.symbol));
 
                 if(auto* data = lights[idx].node->postMaterialize(mHolder)) {
                     auto& geo = geometryProg[lights[idx].light->getGeometry()];
@@ -1308,15 +1257,15 @@ namespace Piper {
                 }
             }
 
-            mArg.lightSample = static_cast<LightSelectFunc>(mKernel->lookup(LSRTP.symbol));
+            mArg.lightSample = static_cast<LightSelectFunc>(symbolMap->lookup(LSRTP.symbol));
 
             for(uint32_t idx = 0; idx < sensorFunc.size(); ++idx)
-                mSensors[sensors[idx].node].rayGen = static_cast<SensorFunc>(mKernel->lookup(sensorFunc[idx]));
+                mSensors[sensors[idx].node].rayGen = static_cast<SensorFunc>(symbolMap->lookup(sensorFunc[idx]));
 
-            mArg.trace = static_cast<IntegratorFunc>(mKernel->lookup(TRRTP.symbol));
+            mArg.trace = static_cast<IntegratorFunc>(symbolMap->lookup(TRRTP.symbol));
 
-            mArg.start = static_cast<SampleStartFunc>(mKernel->lookup(start.symbol));
-            mArg.generate = static_cast<SampleGenerateFunc>(mKernel->lookup(generate.symbol));
+            mArg.start = static_cast<SampleStartFunc>(symbolMap->lookup(start.symbol));
+            mArg.generate = static_cast<SampleGenerateFunc>(symbolMap->lookup(generate.symbol));
 
             static char p1, p2, p3, p4, p5;
             mArg.profileIntersectHit = mProfiler.registerDesc("Tracer", "Intersect Hit", &p1, StatisticsType::Bool);
@@ -1346,14 +1295,15 @@ namespace Piper {
 
             arg.width = width;
             arg.height = height;
-            return makeSharedObject<EmbreeTraceLauncher>(context(), mAccelerator, arg, mKernel, mScene, mMutex,
-                                                         attr.samplesPerPixel);
+            return makeSharedObject<EmbreeTraceLauncher>(context(), mAccelerator, arg, mKernel.value(), mResources, mScene,
+                                                         mMutex, attr.samplesPerPixel);
         }
         String generateStatisticsReport() const override {
             return mProfiler.generateReport();
         }
     };
 
+    // ReSharper disable once CppNotAllPathsReturnValue
     static CString getErrorString(const RTCError ec) {
         switch(ec) {
             case RTC_ERROR_NONE:
@@ -1368,7 +1318,7 @@ namespace Piper {
                 return "Unsupported CPU";
             case RTC_ERROR_CANCELLED:
                 return "Cancelled";
-            default:
+            case RTC_ERROR_UNKNOWN:
                 return "Unknown";
         }
     }
@@ -1404,14 +1354,18 @@ namespace Piper {
         ResourceCacheManager& getCacheManager() override {
             return mCache;
         }
-        void reportError(const RTCError ec, CString str) const {
+        void reportError(const RTCError ec, const CString str) const {
             context().getErrorHandler().raiseException(
                 "Embree Error:" + toString(context().getAllocator(), static_cast<uint32_t>(ec)) + str, PIPER_SOURCE_LOCATION());
         }
         Embree(PiperContext& context, const String& kernel, const SharedPtr<Config>& config)
             : Tracer(context), mCache(context), mKernel(context.getPITUManager().loadPITU(kernel)),
               mDebugMode(config->at("DebugMode")->get<bool>()) {
+            // TODO: concurrency
             mAccelerator = context.getModuleLoader().newInstanceT<Accelerator>(config->at("Accelerator")).getSync();
+            // FIXME: use StringView
+            if(std::string_view{ mAccelerator->getNativePlatform() } != std::string_view{ "CPU" })
+                context.getErrorHandler().raiseException("Unsupported accelerator", PIPER_SOURCE_LOCATION());
             mDevice.reset(rtcNewDevice(config->at("EmbreeDeviceConfig")->get<String>().c_str()));
             if(!mDevice) {
                 const auto error = rtcGetDeviceError(nullptr);
@@ -1422,7 +1376,8 @@ namespace Piper {
             }
             rtcSetDeviceErrorFunction(
                 mDevice.get(),
-                [](void* userPtr, const RTCError ec, CString str) { static_cast<Embree*>(userPtr)->reportError(ec, str); }, this);
+                [](void* userPtr, const RTCError ec, const CString str) { static_cast<Embree*>(userPtr)->reportError(ec, str); },
+                this);
             if(!(rtcGetDeviceProperty(mDevice.get(), RTC_DEVICE_PROPERTY_RAY_MASK_SUPPORTED) &&
                  rtcGetDeviceProperty(mDevice.get(), RTC_DEVICE_PROPERTY_TRIANGLE_GEOMETRY_SUPPORTED) &&
                  rtcGetDeviceProperty(mDevice.get(), RTC_DEVICE_PROPERTY_USER_GEOMETRY_SUPPORTED))) {

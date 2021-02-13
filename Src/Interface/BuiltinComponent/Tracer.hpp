@@ -84,7 +84,7 @@ namespace Piper {
         DynamicArray<Pair<uint32_t, TransformSRT>> transforms;  // local to world
     };
 
-    using SBTPayload = DynamicArray<std::byte>;
+    using SBTPayload = Binary;
     template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
     SBTPayload packSBTPayload(STLAllocator allocator, const T& data) {
         return SBTPayload{ reinterpret_cast<const std::byte*>(&data), reinterpret_cast<const std::byte*>(&data) + sizeof(data),

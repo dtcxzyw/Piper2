@@ -33,13 +33,13 @@ TEST_F(PiperCoreEnvironment, ConcurrencyTest) {
     auto&& scheduler = context->getScheduler();
     auto a = scheduler.value(1);
     a.wait();
-    ASSERT_EQ(a.get(), 1);
+    ASSERT_EQ(a.getUnsafe(), 1);
     auto b = scheduler.value(2);
     b.wait();
-    ASSERT_EQ(b.get(), 2);
+    ASSERT_EQ(b.getUnsafe(), 2);
     auto c = scheduler.spawn([](const int32_t x, const int32_t y) { return x + y; }, a, b);
     c.wait();
-    ASSERT_EQ(c.get(), 3);
+    ASSERT_EQ(c.getUnsafe(), 3);
 }
 
 TEST_F(PiperCoreEnvironment, ConfigTest) {
@@ -105,9 +105,8 @@ TEST_F(PiperCoreEnvironment, UnitManagerTest) {
 TEST_F(PiperCoreEnvironment, ModuleLoaderTest) {
     auto&& loader = context->getModuleLoader();
     auto inst = loader.newInstance("Piper.Infrastructure.MemoryFS.MemoryFS");
-    inst.wait();
     {
-        const auto object = std::move(inst.get());
+        const auto object = std::move(inst.getSync());
         ASSERT_EQ(context, &object->context());
     }
 }

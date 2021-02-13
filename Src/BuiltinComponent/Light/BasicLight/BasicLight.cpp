@@ -100,7 +100,7 @@ namespace Piper {
             auto program =
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
             res.select = ctx.tracer.buildProgram(program, "uniformSelect");
-            DynamicArray<std::byte> data(context().getAllocator());
+            Binary data(context().getAllocator());
             const auto size = static_cast<uint32_t>(mFlags.size());
             data.insert(data.cend(), reinterpret_cast<const std::byte*>(&size),
                         reinterpret_cast<const std::byte*>(&size) + sizeof(uint32_t));

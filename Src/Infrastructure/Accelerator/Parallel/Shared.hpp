@@ -16,12 +16,17 @@
 */
 
 #pragma once
-#include "STLAllocator.hpp"
-#include <EASTL/vector.h>
+#include "../../../Kernel/DeviceRuntime.hpp"
 
 namespace Piper {
-    template <typename T>
-    using DynamicArray = eastl::vector<T>;
+    struct TaskContext final {
+        Dim3 gridSize;
+        Dim3 gridIndex;
+        Dim3 blockSize;
+        uint32_t gridLinearIndex;
 
-    using Binary = DynamicArray<std::byte>;
+        uint32_t index;
+        uint32_t blockLinearIndex;
+        Dim3 blockIndex;
+    };
 }  // namespace Piper

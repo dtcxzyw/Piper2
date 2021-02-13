@@ -29,8 +29,8 @@ namespace Piper {
         virtual ~Stream() = default;
         virtual size_t size() const noexcept = 0;
         // TODO:FutureSequence/reduce copy
-        virtual Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) = 0;
-        virtual Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) = 0;
+        virtual Future<Binary> read(const size_t offset, const size_t size) = 0;
+        virtual Future<void> write(const size_t offset, const Future<Binary>& data) = 0;
     };
 
     class MappedSpan : public Object {

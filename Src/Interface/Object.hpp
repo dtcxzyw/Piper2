@@ -46,6 +46,7 @@ namespace Piper {
     class PiperContext;
     class Allocator;
 
+    // TODO:name of object for debugging
     class Object : private Unmovable {  // NOLINT(cppcoreguidelines-special-member-functions)
     private:
         PiperContext& mContext;

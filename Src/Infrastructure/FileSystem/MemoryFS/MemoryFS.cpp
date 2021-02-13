@@ -30,7 +30,7 @@ namespace Piper {
 
     class StorageUnit final : public Object {
     private:
-        Variant<UMap<String, SharedPtr<StorageUnit>>, DynamicArray<std::byte>> mData;
+        Variant<UMap<String, SharedPtr<StorageUnit>>, Binary> mData;
         auto& viewAsDir() {
             if(isFile())
                 context().getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant, "Bad filesystem node type.",
@@ -39,7 +39,7 @@ namespace Piper {
         }
 
     public:
-        StorageUnit(PiperContext& context, FileTag) : Object(context), mData(DynamicArray<std::byte>{ context.getAllocator() }) {}
+        StorageUnit(PiperContext& context, FileTag) : Object(context), mData(Binary{ context.getAllocator() }) {}
         StorageUnit(PiperContext& context, DirTag)
             : Object(context), mData(UMap<String, SharedPtr<StorageUnit>>{ context.getAllocator() }) {}
         [[nodiscard]] bool isFile() const noexcept {
@@ -49,7 +49,7 @@ namespace Piper {
             if(!isFile())
                 context().getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant, "Bad filesystem node type.",
                                                          PIPER_SOURCE_LOCATION());
-            return get<DynamicArray<std::byte>>(mData);
+            return get<Binary>(mData);
         }
         void remove(StorageUnit* ptr) {
             auto& dir = viewAsDir();
@@ -78,20 +78,20 @@ namespace Piper {
 
     class StreamImpl final : public Stream {
     private:
-        DynamicArray<std::byte>& mData;
+        Binary& mData;
         FileAccessMode mAccess;
 
     public:
-        StreamImpl(PiperContext& context, DynamicArray<std::byte>& data, const FileAccessMode access)
+        StreamImpl(PiperContext& context, Binary& data, const FileAccessMode access)
             : Stream(context), mData(data), mAccess(access) {}
         [[nodiscard]] size_t size() const noexcept override {
             return mData.size();
         }
-        Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) override {
+        Future<Binary> read(const size_t offset, const size_t size) override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
-            return Future<DynamicArray<std::byte>>{ nullptr };
+            return Future<Binary>{ nullptr };
         }
-        Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) override {
+        Future<void> write(const size_t offset, const Future<Binary>& data) override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return Future<void>{ nullptr };
         }
@@ -110,11 +110,11 @@ namespace Piper {
 
     class MappedMemoryImpl final : public MappedMemory {
     private:
-        DynamicArray<std::byte>& mData;
+        Binary& mData;
         const size_t mMaxSize;
 
     public:
-        MappedMemoryImpl(PiperContext& context, DynamicArray<std::byte>& data, const size_t maxSize)
+        MappedMemoryImpl(PiperContext& context, Binary& data, const size_t maxSize)
             : MappedMemory(context), mData(data), mMaxSize(maxSize) {}
         [[nodiscard]] size_t size() const noexcept override {
             return mMaxSize == std::numeric_limits<size_t>::max() ? mData.size() : mMaxSize;
@@ -180,7 +180,7 @@ namespace Piper {
             return path.back();
         }
 
-        DynamicArray<std::byte>& openFile(const StringView& path, const FileAccessMode access) {
+        Binary& openFile(const StringView& path, const FileAccessMode access) {
             const auto np = normalize(path);
             StorageUnit* parent = nullptr;
             auto* unit = locate(np, &parent);

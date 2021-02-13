@@ -27,17 +27,16 @@
 #include "../../../PiperContext.hpp"
 #include "../../../STL/USet.hpp"
 #include "../../../STL/UniquePtr.hpp"
+#include "Shared.hpp"
 #include <new>
 #include <utility>
 #pragma warning(push, 0)
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
-#include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/TargetSelect.h>
@@ -45,14 +44,19 @@
 // use LLJIT
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/Support/ManagedStatic.h>
-#define NOMINMAX
-#include <Windows.h>
+//#define NOMINMAX
+//#include <Windows.h>
 #pragma warning(pop)
 
+extern "C" void __chkstk();
+
 namespace Piper {
-    static CommandQueue currentThreadID() {
-        return GetCurrentThreadId();
+    // TODO: better implementation for cross-platform
+    /*
+    static CommandQueueHandle currentThreadID() {
+        return static_cast<CommandQueueHandle>(GetCurrentThreadId());
     }
+    */
 
     template <typename T>
     auto getLLVMResult(PiperContext& context, const SourceLocation& loc, llvm::Expected<T> value) {
@@ -86,23 +90,19 @@ namespace Piper {
         }
     };
 
-    class LLVMProgram final : public RunnableProgram {
+    class LLVMProgram final : public RunnableProgramUntyped {
     private:
         std::unique_ptr<llvm::orc::LLJIT> mJIT;
-        using KernelFunction = void (*)(uint32_t idx, const std::byte* payload);
-        KernelFunction mFunction, mUnroll;
+        using KernelFunction = void (*)(const TaskContext& ctx);
+        KernelFunction mFunction;
 
     public:
         LLVMProgram(PiperContext& context, std::unique_ptr<llvm::orc::LLJIT> JIT, const String& entry)
-            : RunnableProgram(context), mJIT(std::move(JIT)) {
+            : RunnableProgramUntyped{ context }, mJIT{ std::move(JIT) } {
             mFunction = static_cast<KernelFunction>(lookup(entry));
-            mUnroll = static_cast<KernelFunction>(lookup(entry + "_unroll"));
         }
-        void run(const uint32_t idx, const std::byte* payload) const {
-            mFunction(idx, payload);
-        }
-        void runUnroll(const uint32_t idx, const std::byte* payload) const {
-            mUnroll(idx, payload);
+        void run(const TaskContext& ctx) const {
+            mFunction(ctx);
         }
         void* lookup(const String& symbol) override {
             return reinterpret_cast<void*>(
@@ -110,144 +110,85 @@ namespace Piper {
         }
     };
 
-    class ResourceTracerImpl final : public ResourceTracer {
+    class BufferInstance final : public ResourceInstance {
     private:
-        SharedPtr<FutureImpl> mFuture;
+        Allocator& mAllocator;
+        Ptr mPtr;
 
     public:
-        ResourceTracerImpl(PiperContext& context, const ResourceHandle handle) : ResourceTracer(context, handle) {}
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const {
-            return mFuture;
+        // TODO: lazy allocation
+        BufferInstance(PiperContext& context, const size_t size, const size_t alignment)
+            : ResourceInstance{ context }, mAllocator{ context.getAllocator() }, mPtr{ mAllocator.alloc(size, alignment) } {}
+        ~BufferInstance() override {
+            mAllocator.free(mPtr);
         }
-        void setFuture(SharedPtr<FutureImpl> future) {
-            if(mFuture.unique() && !mFuture->ready())
-                context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
-            mFuture = std::move(future);
+        [[nodiscard]] ResourceHandle getHandle() const noexcept override {
+            return static_cast<ResourceHandle>(mPtr);
+        }
+        [[nodiscard]] Ptr data() const noexcept {
+            return mPtr;
         }
     };
 
-    class ResourceBindingImpl final : public ResourceBinding {
-    private:
-        DynamicArray<SharedPtr<Resource>> mInput;
-        DynamicArray<SharedPtr<Resource>> mOutput;
-
-    public:
-        explicit ResourceBindingImpl(PiperContext& context)
-            : ResourceBinding(context), mInput(context.getAllocator()), mOutput(context.getAllocator()) {}
-        void addInput(const SharedPtr<Resource>& resource) override {
-            mInput.push_back(resource);
-        }
-        void addOutput(const SharedPtr<Resource>& resource) override {
-            mOutput.push_back(resource);
-        }
-        [[nodiscard]] DynamicArray<SharedPtr<FutureImpl>> getInput() const {
-            DynamicArray<SharedPtr<FutureImpl>> input{ context().getAllocator() };
-            input.reserve(mInput.size());
-            for(auto&& in : mInput)
-                input.push_back(dynamic_cast<ResourceTracerImpl&>(in->ref()).getFuture());
-            return input;
-        }
-        void makeDirty(const SharedPtr<FutureImpl>& newFuture) {
-            for(auto&& output : mOutput)
-                dynamic_cast<ResourceTracerImpl&>(output->ref()).setFuture(newFuture);
-        }
-    };
-
-    class PayloadImpl final : public Payload {
-    private:
-        DynamicArray<std::byte> mPayload;
-        SharedPtr<ResourceBindingImpl> mResourceBinding;
-
-    public:
-        explicit PayloadImpl(PiperContext& context)
-            : Payload(context), mPayload(STLAllocator{ context.getAllocator() }),
-              mResourceBinding(makeSharedObject<ResourceBindingImpl>(context)) {}
-        void append(const void* data, const size_t size, const size_t alignment) override {
-            const auto rem = mPayload.size() % alignment;
-            if(rem) {
-                auto& logger = context().getLogger();
-                if(logger.allow(LogLevel::Warning))
-                    logger.record(LogLevel::Warning, "Inefficient payload layout", PIPER_SOURCE_LOCATION());
-                mPayload.insert(mPayload.cend(), alignment - rem, std::byte{ 0 });
-            }
-            const auto* beg = static_cast<const std::byte*>(data);
-            const auto* end = beg + size;
-            mPayload.insert(mPayload.cend(), beg, end);
-        }
-        void addExtraInput(const SharedPtr<Resource>& resource) override {
-            mResourceBinding->addInput(resource);
-        }
-        void addExtraOutput(const SharedPtr<Resource>& resource) override {
-            mResourceBinding->addOutput(resource);
-        }
-        [[nodiscard]] DynamicArray<std::byte> data() const {
-            return mPayload;
-        }
-        [[nodiscard]] SharedPtr<ResourceBindingImpl> getResourceBinding() const {
-            return mResourceBinding;
-        }
-    };
-
-    // TODO:lazy allocation
     class BufferImpl final : public Buffer, public eastl::enable_shared_from_this<BufferImpl> {
     private:
-        Ptr mData;
         size_t mSize;
-        Allocator& mAllocator;
-        SharedPtr<ResourceTracerImpl> mTracer;
+        size_t mAlignment;
 
     public:
-        BufferImpl(PiperContext& context, const Ptr data, const size_t size, Allocator& allocator,
-                   SharedPtr<ResourceTracerImpl> tracer)
-            : Buffer(context), mData(data), mSize(size), mAllocator(allocator), mTracer(std::move(tracer)) {}
-        ~BufferImpl() override {
-            mAllocator.free(mData);
+        BufferImpl(PiperContext& context, const size_t size, const size_t alignment)
+            : Buffer{ context }, mSize{ size }, mAlignment{ alignment } {}
+        [[nodiscard]] ResourceShareMode getShareMode() const noexcept override {
+            return ResourceShareMode::Unique;
         }
-        size_t size() const noexcept override {
+        void flushBeforeRead(const Instance& dest) const override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+        }
+        [[nodiscard]] Instance instantiateMain() const override {
+            return instantiateReference(nullptr);
+        }
+        [[nodiscard]] Instance instantiateReference(const ContextHandle ctx) const override {
+            return Instance{ ctx, makeSharedObject<BufferInstance>(context(), mSize, mAlignment) };
+        }
+        [[nodiscard]] size_t size() const noexcept override {
             return mSize;
         }
-        void upload(Future<DataHolder> data) override {
+        void upload(Function<void, Ptr> prepare) override {
             auto& scheduler = context().getScheduler();
-            const auto res = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
-            SharedPtr<FutureImpl> dep[] = { mTracer->getFuture(), data.raw() };
-            scheduler.spawnImpl(Closure<>{ context(),
-                                           [src = std::move(data), data = shared_from_this()] {
-                                               memcpy(reinterpret_cast<void*>(data->mData), static_cast<void*>(src.get().get()),
-                                                      data->mSize);
-                                           } },
-                                Span<SharedPtr<FutureImpl>>{ std::begin(dep), std::end(dep) }, res);
-            mTracer->setFuture(res);
-        }
-        Future<DynamicArray<std::byte>> download() const override {
-            auto& scheduler = context().getScheduler();
-            return scheduler.spawn(
-                [thisBuffer = shared_from_this()](PlaceHolder) {
-                    const auto* beg = reinterpret_cast<const std::byte*>(thisBuffer->mData);
-                    const auto* end = beg + thisBuffer->mSize;
-                    return DynamicArray<std::byte>{ beg, end, thisBuffer->context().getAllocator() };
+            auto&& main = requireMain().second;
+            const auto res = scheduler.spawn(
+                [self = shared_from_this(), &main, func = std::move(prepare)](PlaceHolder) {
+                    const auto ptr = dynamic_cast<BufferInstance*>(main.get())->data();
+                    // TODO: support async
+                    func(ptr);
                 },
-                Future<void>{ mTracer->getFuture() });
+                Future<void>{ main->getFuture() });
+            main->setFuture(res.raw());
+        }
+        Future<Binary> download() const override {
+            auto& scheduler = context().getScheduler();
+            auto&& main = requireMain().second;
+            return scheduler.spawn(
+                [thisBuffer = shared_from_this(), &main](PlaceHolder) {
+                    const auto* beg = reinterpret_cast<std::byte*>(dynamic_cast<BufferInstance*>(main.get())->data());
+                    const auto* end = beg + thisBuffer->mSize;
+                    return Binary{ beg, end, thisBuffer->context().getAllocator() };
+                },
+                Future<void>{ main->getFuture() });
         }
         void reset() override {
             auto& scheduler = context().getScheduler();
-            const auto res = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
-            SharedPtr<FutureImpl> dep[] = { mTracer->getFuture() };
-            scheduler.spawnImpl(Closure<>{ context(),
-                                           [thisData = shared_from_this()] {
-                                               memset(reinterpret_cast<void*>(thisData->mData), 0x00, thisData->mSize);
-                                           } },
-                                Span<SharedPtr<FutureImpl>>{ std::begin(dep), std::end(dep) }, res);
-            mTracer->setFuture(res);
-        }
-        ResourceTracer& ref() const override {
-            return *mTracer;
-        }
-        ResourceHandle getHandle() const noexcept override {
-            return mData;
+            auto&& main = requireMain().second;
+            const auto res = scheduler.spawn(
+                [self = shared_from_this(), &main](PlaceHolder) {
+                    memset(reinterpret_cast<void*>(dynamic_cast<BufferInstance*>(main.get())->data()), 0x00, self->mSize);
+                },
+                Future<void>{ main->getFuture() });
+            main->setFuture(res.raw());
         }
     };
 
-    static void parseNative(PiperContext& context, const DynamicArray<std::byte>& data, UMap<String, void*>& symbol) {
+    static void parseNative(PiperContext& context, const Binary& data, UMap<String, void*>& symbol) {
         static_assert(sizeof(void*) == 8);
         const auto* ptr = reinterpret_cast<const char8_t*>(data.data());
         const auto* end = ptr + data.size();
@@ -271,39 +212,53 @@ namespace Piper {
         }
     }
 
+    struct TaskContextEx {
+        TaskContext ctx;
+        const ArgumentPackage& args;
+        const DynamicArray<ResourceView>& resources;
+    };
+
+    static void piperGetArgument(const TaskContext& context, const uint32_t index, void* ptr) {
+        auto&& ctxEx = *reinterpret_cast<const TaskContextEx*>(&context);
+        const auto [offset, size] = ctxEx.args.offset[index];
+        memcpy(ptr, ctxEx.args.data.data() + offset, size);
+    }
+    static void piperGetResourceHandle(const TaskContext& context, const uint32_t index, ResourceHandle& handle) {
+        auto&& ctxEx = *reinterpret_cast<const TaskContextEx*>(&context);
+        handle = ctxEx.resources[index].resource->require(nullptr)->getHandle();
+    }
+
     class ParallelAccelerator final : public Accelerator {
     private:
         static constexpr uint32_t chunkSize = 1024;
+        LinkableProgram mRuntime;
 
     public:
-        explicit ParallelAccelerator(PiperContext& context) : Accelerator(context) {}
-        [[nodiscard]] Span<const CString> getSupportedLinkableFormat() const override {
+        explicit ParallelAccelerator(PiperContext& context, LinkableProgram runtime)
+            : Accelerator{ context }, mRuntime{ std::move(runtime) } {}
+        [[nodiscard]] Span<const CString> getSupportedLinkableFormat() const noexcept override {
             // about LLVM IR Version: https://llvm.org/docs/DeveloperPolicy.html#ir-backwards-compatibility
             static CString format[] = { "LLVM IR", "Native" };
             return Span<const CString>{ format };
         }
-        [[nodiscard]] SharedPtr<ResourceBinding> createResourceBinding() const override {
-            return eastl::static_shared_pointer_cast<ResourceBinding>(makeSharedObject<ResourceBindingImpl>(context()));
+        [[nodiscard]] CString getNativePlatform() const noexcept override {
+            return "CPU";
         }
-        [[nodiscard]] SharedPtr<Payload> createPayloadImpl() const override {
-            return eastl::static_shared_pointer_cast<Payload>(makeSharedObject<PayloadImpl>(context()));
-        }
-        [[nodiscard]] UniqueObject<ResourceTracer> createResourceTracer(const ResourceHandle handle) const override {
-            return makeUniqueObject<ResourceTracer, ResourceTracerImpl>(context(), handle);
-        }
-        Future<SharedPtr<RunnableProgram>> compileKernel(const Span<LinkableProgram>& linkable, const String& entry) override {
+        [[nodiscard]] Future<SharedPtr<RunnableProgramUntyped>> compileKernelImpl(const Span<LinkableProgram>& linkable,
+                                                                                  const String& entry) override {
             DynamicArray<Future<std::unique_ptr<llvm::Module>>> modules{ context().getAllocator() };
             USet<size_t> hashPool{ context().getAllocator() };
             UMap<String, void*> nativeSymbol{ context().getAllocator() };
             auto& scheduler = context().getScheduler();
             auto llCtx = std::make_unique<llvm::LLVMContext>();
+
             // TODO:parallel load?
-            for(auto&& unit : linkable) {
+            auto addModule = [&](LinkableProgram& unit) {
                 // TODO:concurrency
                 unit.exchange.wait();
 
                 if(!hashPool.insert(unit.UID).second)
-                    continue;
+                    return;
 
                 if(unit.format == "LLVM IR") {
                     // TODO:concurrency
@@ -311,19 +266,23 @@ namespace Piper {
                     //    [ctx = &context(), llvmctx = llctx.get()](const Future<LinkableProgram>& linkable) {
                     auto stage = context().getErrorHandler().enterStage("parse LLVM Bitcode", PIPER_SOURCE_LOCATION());
                     auto res = llvm::parseBitcodeFile(
-                        llvm::MemoryBufferRef{
-                            toStringRef(llvm::ArrayRef<uint8_t>{ reinterpret_cast<const uint8_t*>(unit.exchange.get().data()),
-                                                                 unit.exchange.get().size() }),
-                            "bitcode data" },
+                        llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{
+                                                   reinterpret_cast<const uint8_t*>(unit.exchange.getUnsafe().data()),
+                                                   unit.exchange.getUnsafe().size() }),
+                                               "bitcode data" },
                         *llCtx);
                     modules.push_back(scheduler.value(getLLVMResult(context(), PIPER_SOURCE_LOCATION(), std::move(res))));
                 } else if(unit.format == "Native") {
-                    parseNative(context(), unit.exchange.get(), nativeSymbol);
+                    parseNative(context(), unit.exchange.getUnsafe(), nativeSymbol);
                 } else
                     context().getErrorHandler().raiseException("Unsupported linkable format " +
                                                                    String{ unit.format, context().getAllocator() },
                                                                PIPER_SOURCE_LOCATION());
-            }
+            };
+            addModule(mRuntime);
+            for(auto&& unit : linkable)
+                addModule(unit);
+
             // TODO:reduce Module cloning by std::move
             // TODO:remove unused functions/maintain symbol reference
             const bool entryInNative = nativeSymbol.count(entry);
@@ -336,60 +295,7 @@ namespace Piper {
                     for(auto&& unit : units)
                         llvm::Linker::linkModules(*module, llvm::CloneModule(*unit));
 
-                    auto* func = module->getFunction(llvm::StringRef{ entry.data(), entry.size() });
-                    if(!func) {
-                        if(entryInNative) {
-                            llvm::Type* params[] = { llvm::Type::getInt32Ty(*llvmCtx), llvm::Type::getInt8PtrTy(*llvmCtx) };
-                            auto* FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*llvmCtx),
-                                                               llvm::ArrayRef<llvm::Type*>{ params, 2 }, false);
-                            func = llvm::Function::Create(FT, llvm::GlobalValue::ExternalLinkage,
-                                                          llvm::Twine{ llvm::StringRef{ entry.data(), entry.size() } }, *module);
-                        } else
-                            errorHandler.raiseException("Undefined entry " + entry, PIPER_SOURCE_LOCATION());
-                    }
-                    {
-                        auto* payload = func->getArg(1);
-                        payload->addAttr(llvm::Attribute::NonNull);
-                        payload->addAttr(llvm::Attribute::ReadOnly);
-                    }
-
                     // TODO:check interface
-                    stage.next("build for-loop unroll helper", PIPER_SOURCE_LOCATION());
-                    {
-                        llvm::Type* argTypes[] = { llvm::Type::getInt32Ty(*llvmCtx), func->getFunctionType()->getParamType(1) };
-                        auto* sig = llvm::FunctionType::get(llvm::Type::getVoidTy(*llvmCtx), argTypes, false);
-                        auto* unroll = llvm::Function::Create(sig, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
-                                                              (entry + "_unroll").c_str(), *module);
-                        auto* body = llvm::BasicBlock::Create(*llvmCtx, "body", unroll);
-                        llvm::IRBuilder<> builder{ body };
-                        auto *idx = unroll->getArg(0), *payload = unroll->getArg(1);
-                        payload->addAttr(llvm::Attribute::NonNull);
-                        payload->addAttr(llvm::Attribute::ReadOnly);
-
-                        auto* loop = llvm::BasicBlock::Create(*llvmCtx, "loop", unroll);
-                        auto* pre = builder.GetInsertBlock();
-                        builder.CreateBr(loop);
-                        builder.SetInsertPoint(loop);
-                        auto* offset = builder.CreatePHI(idx->getType(), 2, "offset");
-                        offset->addIncoming(llvm::ConstantInt::get(idx->getType(), 0), pre);
-
-                        llvm::Value* args[] = { builder.CreateAdd(idx, offset), payload };
-                        builder.CreateCall(func, args);
-
-                        auto* step = llvm::ConstantInt::get(idx->getType(), 1);
-                        auto* next = builder.CreateAdd(offset, step, "next");
-
-                        auto* cond = builder.CreateICmpULT(next, llvm::ConstantInt::get(idx->getType(), chunkSize), "cond");
-
-                        auto* loopEnd = builder.GetInsertBlock();
-                        offset->addIncoming(next, loopEnd);
-
-                        auto* after = llvm::BasicBlock::Create(*llvmCtx, "after", unroll);
-                        builder.CreateCondBr(cond, loop, after);
-
-                        builder.SetInsertPoint(after);
-                        builder.CreateRetVoid();
-                    }
 
                     stage.next("verify kernel", PIPER_SOURCE_LOCATION());
 
@@ -446,20 +352,27 @@ namespace Piper {
                         const auto flag =
                             llvm::JITSymbolFlags::Callable | llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Absolute;
                         llvm::orc::SymbolMap map = {
-#define PIPER_LIBC_FUNC(name)                                                   \
+#define PIPER_NATIVE_FUNC(name)                                                 \
     {                                                                           \
         engine->getExecutionSession().intern(#name), llvm::JITEvaluatedSymbol { \
             reinterpret_cast<llvm::JITTargetAddress>(name), flag                \
         }                                                                       \
     }
-                            PIPER_LIBC_FUNC(cosf), PIPER_LIBC_FUNC(sinf), PIPER_LIBC_FUNC(fabsf), PIPER_LIBC_FUNC(fmaxf),
-                            PIPER_LIBC_FUNC(fminf), PIPER_LIBC_FUNC(sqrtf), PIPER_LIBC_FUNC(cbrtf), PIPER_LIBC_FUNC(hypotf),
-                            PIPER_LIBC_FUNC(acosf), PIPER_LIBC_FUNC(atan2f), PIPER_LIBC_FUNC(asinf), PIPER_LIBC_FUNC(floorf),
-                            PIPER_LIBC_FUNC(ceilf), PIPER_LIBC_FUNC(remainderf), PIPER_LIBC_FUNC(memset), PIPER_LIBC_FUNC(memcpy),
-                            PIPER_LIBC_FUNC(memmove), PIPER_LIBC_FUNC(logf), PIPER_LIBC_FUNC(expf),
-                            // TODO:cross C library
-                            PIPER_LIBC_FUNC(_fdtest)
-#undef PIPER_LIBC_FUNC
+                            // Math functions
+                            PIPER_NATIVE_FUNC(cosf), PIPER_NATIVE_FUNC(sinf), PIPER_NATIVE_FUNC(fabsf), PIPER_NATIVE_FUNC(fmaxf),
+                            PIPER_NATIVE_FUNC(fminf), PIPER_NATIVE_FUNC(sqrtf), PIPER_NATIVE_FUNC(cbrtf),
+                            PIPER_NATIVE_FUNC(hypotf), PIPER_NATIVE_FUNC(acosf), PIPER_NATIVE_FUNC(atan2f),
+                            PIPER_NATIVE_FUNC(asinf), PIPER_NATIVE_FUNC(floorf), PIPER_NATIVE_FUNC(ceilf),
+                            PIPER_NATIVE_FUNC(remainderf), PIPER_NATIVE_FUNC(logf), PIPER_NATIVE_FUNC(expf),
+                            // TODO: cross C library
+                            PIPER_NATIVE_FUNC(_fdtest),
+                            // Memory operations
+                            PIPER_NATIVE_FUNC(memset), PIPER_NATIVE_FUNC(memcpy), PIPER_NATIVE_FUNC(memmove),
+                            // Runtime interface
+                            PIPER_NATIVE_FUNC(piperGetArgument), PIPER_NATIVE_FUNC(piperGetResourceHandle),
+                            // MSVC internal functions
+                            PIPER_NATIVE_FUNC(__chkstk)
+#undef PIPER_NATIVE_FUNC
                         };
                         for(const auto& symbol : nativeSymbol)
                             map.insert(std::make_pair(
@@ -472,67 +385,67 @@ namespace Piper {
                                                                   PIPER_SOURCE_LOCATION());
                     }
 
-                    return eastl::static_shared_pointer_cast<RunnableProgram>(
+                    return eastl::static_shared_pointer_cast<RunnableProgramUntyped>(
                         makeSharedObject<LLVMProgram>(*ctx, std::move(engine), entry));
                 },
                 std::move(kernel));
         }
-        Future<void> runKernel(const uint32_t n, const Future<SharedPtr<RunnableProgram>>& kernel,
-                               const SharedPtr<Payload>& payload) override {
-            // TODO:for small n,run in the thread
+        Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block,
+                                      const Future<SharedPtr<RunnableProgramUntyped>>& kernel,
+                                      const DynamicArray<ResourceView>& resources, const ArgumentPackage& args) override {
+            // TODO: for small n,run in this thread
+            const auto blockCount = grid.x * grid.y * grid.z;
+            const auto taskPerBlock = block.x * block.y * block.z;
+
             auto& scheduler = context().getScheduler();
-            auto* payloadImpl = dynamic_cast<PayloadImpl*>(payload.get());
-            auto binding = payloadImpl->getResourceBinding();
-            // TODO:reduce copy
-            auto inputFuture = binding->getInput();
+            // TODO: reduce copy
             DynamicArray<Future<void>> input{ context().getAllocator() };
-            input.reserve(inputFuture.size());
-            for(auto&& in : inputFuture)
-                input.push_back(Future<void>{ in });
-            auto future = scheduler
-                              .parallelFor((n + chunkSize - 1) / chunkSize,
-                                           [input = payloadImpl->data(), n,
-                                            binding](const uint32_t idx, const SharedPtr<RunnableProgram>& func, PlaceHolder) {
-                                               auto beg = idx * chunkSize;
-                                               const auto end = beg + chunkSize;
-                                               auto& kernel = dynamic_cast<LLVMProgram&>(*func);
-                                               if(end < n)
-                                                   kernel.runUnroll(beg, input.data());
-                                               else {
-                                                   while(beg < n) {
-                                                       kernel.run(beg, input.data());
-                                                       ++beg;
-                                                   }
-                                               }
-                                           },
-                                           kernel, scheduler.wrap(input))
-                              .raw();
-            binding->makeDirty(future);
+            for(auto&& [resource, access] : resources)
+                input.push_back(Future<void>{ resource->access() });
+
+            auto future =
+                scheduler
+                    .parallelFor(
+                        blockCount,
+                        [taskPerBlock, resources, input = args, grid,
+                         block](const uint32_t idx, const SharedPtr<RunnableProgramUntyped>& func, PlaceHolder) {
+                            auto& program = dynamic_cast<LLVMProgram&>(*func);
+
+                            TaskContextEx ctxEx{ { grid,
+                                                   { idx / grid.z / grid.y, idx / grid.z % grid.y, idx % grid.z },
+                                                   block,
+                                                   idx,
+                                                   idx * taskPerBlock,
+                                                   0,
+                                                   { 0, 0, 0 } },
+                                                 input,
+                                                 resources };
+                            auto&& ctx = ctxEx.ctx;
+
+                            // TODO: support unroll
+                            for(auto& i = ctx.blockIndex.x = 0; i < block.x; ++i)
+                                for(auto& j = ctx.blockIndex.y = 0; j < block.y; ++j)
+                                    for(auto& k = ctx.blockIndex.z = 0; k < block.z; ++k, ++ctx.blockLinearIndex, ++ctx.index) {
+                                        program.run(ctx);
+                                    }
+                        },
+                        kernel, scheduler.wrap(input))
+                    .raw();
+            // TODO: better interface
+            for(auto&& [resource, access] : resources)
+                if(access == ResourceAccessMode::ReadWrite)
+                    resource->makeDirty(future);
             return Future<void>{ std::move(future) };
         }
-        void apply(Function<void, Context, CommandQueue> func, const SharedPtr<ResourceBinding>& binding) override {
-            auto* bind = dynamic_cast<ResourceBindingImpl*>(binding.get());
-            auto input = bind->getInput();
-            auto& scheduler = context().getScheduler();
-            const auto result = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
-            scheduler.spawnImpl(
-                Closure<>{ context(), [call = std::move(func)] { call(static_cast<Context>(0), currentThreadID()); } },
-                Span<SharedPtr<FutureImpl>>{ input.data(), input.size() }, result);
-            bind->makeDirty(result);
-        }
-        Future<void> available(const SharedPtr<Resource>& resource) override {
-            return Future<void>{ dynamic_cast<ResourceTracerImpl&>(resource->ref()).getFuture() };
-        }
         SharedPtr<Buffer> createBuffer(const size_t size, const size_t alignment) override {
-            auto& allocator = context().getAllocator();
-            auto ptr = allocator.alloc(size, alignment);
-            return eastl::static_shared_pointer_cast<Buffer>(makeSharedObject<BufferImpl>(
-                context(), ptr, size, allocator, makeSharedObject<ResourceTracerImpl>(context(), ptr)));
+            return eastl::static_shared_pointer_cast<Buffer>(makeSharedObject<BufferImpl>(context(), size, alignment));
         }
     };
+
     class ModuleImpl final : public Module {
     private:
         String mPath;
+        Optional<LinkableProgram> mRuntime;
 
     public:
         explicit ModuleImpl(PiperContext& context, const char* path) : Module(context), mPath(path, context.getAllocator()) {
@@ -541,12 +454,16 @@ namespace Piper {
                                                          PIPER_SOURCE_LOCATION());
             llvm::InitializeNativeTarget();
             llvm::InitializeNativeTargetAsmPrinter();
+            mRuntime = context.getPITUManager()
+                           .loadPITU(String{ path, context.getAllocator() } + "/Kernel.bc")
+                           .getSync()
+                           ->generateLinkable({ { "LLVM IR" } });
         }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "Accelerator") {
-                return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<ParallelAccelerator>(context())));
+                return context().getScheduler().value(eastl::static_shared_pointer_cast<Object>(
+                    makeSharedObject<ParallelAccelerator>(context(), mRuntime.value())));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }

@@ -23,7 +23,7 @@
 
 namespace Piper {
 
-    using Ptr = uint64_t;
+    using Ptr = ptrdiff_t;
 
     /*
     class MemoryProvider : public Object {
@@ -41,8 +41,8 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Allocator, Object)
         // TODO:hardware_constructive_interference_size
         // http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0154r1.html
-        virtual Ptr alloc(const size_t size, const size_t align = alignof(max_align_t)) = 0;
-        virtual void free(const Ptr ptr) noexcept = 0;
+        virtual Ptr alloc(size_t size, size_t align = alignof(max_align_t)) = 0;
+        virtual void free(Ptr ptr) noexcept = 0;
         virtual ~Allocator() = default;
     };
 
@@ -55,7 +55,7 @@ namespace Piper {
 
     public:
         MemoryArena(Allocator& allocator, size_t blockSize);
-        Ptr allocRaw(const size_t size, const size_t align = alignof(max_align_t));
+        Ptr allocRaw(size_t size, size_t align = alignof(max_align_t));
         template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
         T* alloc(const size_t size = 1, const size_t align = alignof(T)) {
             return reinterpret_cast<T*>(allocRaw(sizeof(T) * size, align));

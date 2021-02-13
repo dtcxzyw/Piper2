@@ -37,7 +37,7 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(MathKernelLibrary, Object)
         virtual bool supportFPType(FloatingPointLibrary::Instruction fpType) const noexcept = 0;
-        virtual Pair<Future<DynamicArray<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat,
+        virtual Pair<Future<Binary>, CString> generateLinkable(const Span<CString>& acceptableFormat,
                                                                           FloatingPointLibrary::Instruction fpType,
                                                                           const StringView& fpName = {}) const = 0;
         virtual ~MathKernelLibrary() = default;
@@ -46,7 +46,7 @@ namespace Piper {
     class TransformLibrary : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(TransformLibrary, Object)
-        virtual Pair<Future<DynamicArray<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat,
+        virtual Pair<Future<Binary>, CString> generateLinkable(const Span<CString>& acceptableFormat,
                                                                           FloatingPointLibrary::Instruction fpType,
                                                                           const StringView& fpName = {}) const = 0;
         virtual ~TransformLibrary() = default;
@@ -55,7 +55,7 @@ namespace Piper {
     class GeometryLibrary : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(GeometryLibrary, Object)
-        virtual Pair<Future<DynamicArray<std::byte>>, CString> generateLinkable(const Span<CString>& acceptableFormat,
+        virtual Pair<Future<Binary>, CString> generateLinkable(const Span<CString>& acceptableFormat,
                                                                           FloatingPointLibrary::Instruction fpType,
                                                                           const StringView& fpName = {}) const = 0;
         virtual ~GeometryLibrary() = default;

@@ -32,14 +32,14 @@ void valueAndReady(Piper::Scheduler& scheduler) {
     {
         auto val = scheduler.value(magic);
         ASSERT_TRUE(val.ready());
-        ASSERT_EQ(val.get(), magic);
+        ASSERT_EQ(val.getUnsafe(), magic);
     }
     {
         auto hold = std::make_unique<int32_t>(magic);
         auto val = scheduler.value(std::move(hold));
         ASSERT_FALSE(hold.get());
-        ASSERT_TRUE(val.get());
-        ASSERT_EQ(*val.get(), magic);
+        ASSERT_TRUE(val.getUnsafe());
+        ASSERT_EQ(*val.getUnsafe(), magic);
     }
     {
         const auto ready = scheduler.ready();
@@ -50,14 +50,14 @@ void commonSpawn(Piper::Scheduler& scheduler) {
     // T
     auto a = scheduler.value(1);
     ASSERT_TRUE(a.ready());
-    ASSERT_EQ(a.get(), 1);
+    ASSERT_EQ(a.getUnsafe(), 1);
     auto b = scheduler.value(2);
     ASSERT_TRUE(b.ready());
-    ASSERT_EQ(b.get(), 2);
+    ASSERT_EQ(b.getUnsafe(), 2);
     auto c = scheduler.spawn([](const int32_t x, const int32_t y) { return x + y; }, a, b);
     c.wait();
     ASSERT_TRUE(c.ready());
-    ASSERT_EQ(c.get(), 3);
+    ASSERT_EQ(c.getUnsafe(), 3);
     // void
     auto call1 = false, call2 = false, call3 = false;
     auto foo1 = scheduler.spawn([&call1] {
@@ -93,7 +93,7 @@ void nonBlocking(Piper::Scheduler& scheduler) {
     ASSERT_FALSE(x.ready());
     x.wait();
     ASSERT_TRUE(x.ready());
-    ASSERT_EQ(x.get(), magic);
+    ASSERT_EQ(x.getUnsafe(), magic);
 }
 void callOnce(Piper::Scheduler& scheduler) {
     std::atomic_size_t count{ 0 };
@@ -106,7 +106,7 @@ void callOnce(Piper::Scheduler& scheduler) {
         1, 2);
     c.wait();
     ASSERT_TRUE(c.ready());
-    ASSERT_EQ(c.get(), 3);
+    ASSERT_EQ(c.getUnsafe(), 3);
     ASSERT_EQ(count, 1);
 }
 void zeroCopy(Piper::Scheduler& scheduler) {
@@ -123,7 +123,7 @@ void zeroCopy(Piper::Scheduler& scheduler) {
         };
         auto trans = scheduler.spawn([](UncopyableValue x) { return std::move(x); }, scheduler.value(UncopyableValue{ magic }));
         trans.wait();
-        ASSERT_EQ(trans.get().value, magic);
+        ASSERT_EQ(trans.getUnsafe().value, magic);
     }
     // runtime
     {
@@ -131,7 +131,7 @@ void zeroCopy(Piper::Scheduler& scheduler) {
             size_t copyCount;
             CopyCount() : copyCount(0) {}
             CopyCount(const CopyCount& rhs) : copyCount(rhs.copyCount + 1) {}
-            void operator=(const CopyCount&) const {
+            [[noreturn]] void operator=(const CopyCount&) const {
                 FAIL();
             }
             CopyCount(CopyCount&& rhs) = default;
@@ -139,7 +139,7 @@ void zeroCopy(Piper::Scheduler& scheduler) {
         };
         auto trans = scheduler.spawn([](CopyCount x) { return x; }, scheduler.value(CopyCount{}));
         trans.wait();
-        ASSERT_EQ(trans.get().copyCount, 0);
+        ASSERT_EQ(trans.getUnsafe().copyCount, 0);
     }
 }
 void ownership(Piper::Scheduler& scheduler) {
@@ -147,8 +147,8 @@ void ownership(Piper::Scheduler& scheduler) {
     auto trans = scheduler.spawn([](std::unique_ptr<int32_t> x) { return std::move(x); }, scheduler.value(std::move(src)));
     ASSERT_FALSE(src.get());
     trans.wait();
-    ASSERT_TRUE(trans.get().get());
-    ASSERT_EQ(*trans.get().get(), magic);
+    ASSERT_TRUE(trans.getUnsafe().get());
+    ASSERT_EQ(*trans.getUnsafe().get(), magic);
 }
 void wrap(Piper::Scheduler& scheduler) {
     // T
@@ -162,16 +162,16 @@ void wrap(Piper::Scheduler& scheduler) {
             i));
     auto wrap = scheduler.wrap(data);
     wrap.wait();
-    ASSERT_EQ(wrap.get().size(), 10);
+    ASSERT_EQ(wrap.getUnsafe().size(), 10);
     for(size_t i = 0; i < 10; ++i)
-        ASSERT_EQ(wrap.get()[i], i + 1);
+        ASSERT_EQ(wrap.getUnsafe()[i], i + 1);
     // void
     Piper::DynamicArray<Piper::Future<void>> events(scheduler.context().getAllocator());
 }
 void returnFuture(Piper::Scheduler& scheduler) {
     auto future = scheduler.spawn([ctx = &scheduler.context()] { return ctx->getScheduler().value(magic); });
     future.wait();
-    ASSERT_EQ(future.get(), magic);
+    ASSERT_EQ(future.getUnsafe(), magic);
 }
 void parallel(Piper::Scheduler& scheduler) {
     Piper::DynamicArray<int32_t> res(100, scheduler.context().getAllocator());
@@ -218,7 +218,7 @@ void notify(Piper::Scheduler& scheduler) {
     future.wait();
     ASSERT_TRUE(yetAnotherThread.wait_for(0ms) == std::future_status::ready);
     ASSERT_TRUE(future.ready());
-    ASSERT_EQ(future.get(), 2 * magic);
+    ASSERT_EQ(future.getUnsafe(), 2 * magic);
 }
 void futureCallProxy(Piper::Scheduler& scheduler) {
     class Instance final : public Piper::Object {
@@ -243,7 +243,7 @@ void futureCallProxy(Piper::Scheduler& scheduler) {
     future.wait();
     ASSERT_TRUE(inst.ready());
     ASSERT_TRUE(future.ready());
-    ASSERT_EQ(future.get(), magic);
+    ASSERT_EQ(future.getUnsafe(), magic);
 }
 void futureMemberAccess(Piper::Scheduler& scheduler) {
     struct Instance final : public Piper::Object {
@@ -262,7 +262,7 @@ void futureMemberAccess(Piper::Scheduler& scheduler) {
     future.wait();
     ASSERT_TRUE(inst.ready());
     ASSERT_TRUE(future.ready());
-    ASSERT_EQ(future.get(), magic);
+    ASSERT_EQ(future.getUnsafe(), magic);
 }
 void dynamicParallelism(Piper::Scheduler& scheduler) {
     auto future = scheduler.spawn([ctx = &scheduler.context()] {
@@ -276,7 +276,7 @@ void dynamicParallelism(Piper::Scheduler& scheduler) {
         });
     });
     future.wait();
-    ASSERT_EQ(future.get(), magic);
+    ASSERT_EQ(future.getUnsafe(), magic);
 }
 
 void multiTasks(Piper::Scheduler& scheduler) {

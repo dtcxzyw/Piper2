@@ -48,10 +48,10 @@ namespace Piper {
     class LLVMStream final : public llvm::raw_pwrite_stream {
     private:
         PiperContext& mContext;
-        DynamicArray<std::byte>& mData;
+        Binary& mData;
 
     public:
-        explicit LLVMStream(PiperContext& context, DynamicArray<std::byte>& data)
+        explicit LLVMStream(PiperContext& context, Binary& data)
             : raw_pwrite_stream(true), mContext(context), mData(data) {}
         void pwrite_impl(const char* ptr, const size_t size, const uint64_t offset) override {
             if(offset != mData.size())
@@ -111,7 +111,7 @@ namespace Piper {
                     // TODO:lazy parse linkable and directly return data
                     return LinkableProgram{ scheduler.spawn([self = shared_from_this()] {
                                                return self->mModule.withModuleDo([&](llvm::Module& module) {
-                                                   DynamicArray<std::byte> data{ self->context().getAllocator() };
+                                                   Binary data{ self->context().getAllocator() };
                                                    LLVMStream stream(self->context(), data);
                                                    llvm::WriteBitcodeToFile(module, stream);
                                                    stream.flush();
@@ -139,7 +139,7 @@ namespace Piper {
                                                    mod.setTargetTriple(format);
 
                                                    llvm::legacy::PassManager pass;
-                                                   DynamicArray<std::byte> data{ self->context().getAllocator() };
+                                                   Binary data{ self->context().getAllocator() };
                                                    LLVMStream stream(self->context(), data);
                                                    if(!(targetMachine->addPassesToEmitFile(
                                                           pass, stream, nullptr, llvm::CodeGenFileType::CGFT_ObjectFile)))

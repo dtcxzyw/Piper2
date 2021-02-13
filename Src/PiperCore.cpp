@@ -140,8 +140,7 @@ namespace Piper {
         MemoryTracer(PiperContext& context, const SharedPtr<Config>& config) : Allocator(context) {
             // TODO:concurrency
             auto allocator = context.getModuleLoader().newInstanceT<Allocator>(config);
-            allocator.wait();
-            mImpl = std::move(allocator.get());
+            mImpl = std::move(allocator.getSync());
             mTrace.set_allocator(STLAllocator{ *mImpl });
             mFlag.set_allocator(STLAllocator{ *mImpl });
         }
@@ -461,7 +460,7 @@ namespace Piper {
         FutureStorage(PiperContext& context, const size_t size, Closure<void*> deleter)
             : FutureImpl(context), mAllocator(context.getAllocator()), mPtr(alloc(mAllocator, size)),
               mDeleter(std::move(deleter)) {}
-        ~FutureStorage() {
+        ~FutureStorage() override {
             mDeleter(mPtr);
             mAllocator.free(reinterpret_cast<Ptr>(mPtr));
         }
@@ -585,7 +584,7 @@ namespace Piper {
     class DummyPITUManager final : public PITUManager {
     public:
         PIPER_INTERFACE_CONSTRUCT(DummyPITUManager, PITUManager)
-        Future<SharedPtr<PITU>> loadPITU(const String& path) const override {
+        [[nodiscard]] Future<SharedPtr<PITU>> loadPITU(const String& path) const override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return Future<SharedPtr<PITU>>{ nullptr };  // make compiler happy
         }

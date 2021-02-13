@@ -16,20 +16,21 @@
 */
 
 #include "conv.hpp"
+#include "../Kernel/DeviceRuntime.hpp"
 #include <cstdint>
 
-struct Payload final {
-    uint64_t pX;
-    uint64_t pY;
-    uint64_t pZ;
-    uint32_t width;
-    uint32_t height;
-    uint32_t kernelSize;
-};
+extern "C" void conv(const Piper::TaskContext& context) {
+    using namespace Piper;
+    uint32_t idx, width, height, kernelSize;
+    piperGetTaskIndex(context, idx);
+    piperGetArgument(context, 0, &width);
+    piperGetArgument(context, 1, &height);
+    piperGetArgument(context, 2, &kernelSize);
 
-extern "C" void conv(const uint32_t idx, const Payload* payload) {
-    const auto* X = reinterpret_cast<const Float*>(payload->pX);
-    const auto* Y = reinterpret_cast<const Float*>(payload->pY);
-    auto* Z = reinterpret_cast<Float*>(payload->pZ);
-    conv(idx, X, Y, Z, payload->width, payload->height, payload->kernelSize);
+    ResourceHandle X, Y, Z;
+    piperGetResourceHandle(context, 0, X);
+    piperGetResourceHandle(context, 1, Y);
+    piperGetResourceHandle(context, 2, Z);
+    conv(idx, reinterpret_cast<const Float*>(X), reinterpret_cast<const Float*>(Y), reinterpret_cast<Float*>(Z), width, height,
+         kernelSize);
 }

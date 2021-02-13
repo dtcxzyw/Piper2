@@ -15,10 +15,63 @@
    limitations under the License.
 */
 
+#include "../../../Kernel/DeviceRuntime.hpp"
 #include "Shared.hpp"
 
 namespace Piper {
     extern "C" {
+    float piperSample(const FullContext context) {
+        auto* ctx = reinterpret_cast<PerSampleContext*>(context);
+        if(ctx->currentDimension < ctx->argument.maxDimension) {
+            float res;
+            ctx->argument.generate(ctx->argument.SAPayload, ctx->sampleIndex, ctx->currentDimension++, res);
+            return res;
+        }
+        return std::generate_canonical<float, std::numeric_limits<size_t>::max()>(ctx->randomEngine);
+    }
+
+    void piperMain(const TaskContext& ctx) {
+        uint64_t beg;
+        piperGetTime(nullptr, beg);
+        KernelArgument SBT{};
+        piperGetArgument(ctx, 0, &SBT);
+        uint32_t sampleIdx;
+        piperGetBlockLinearIndex(ctx, sampleIdx);
+        Dim3 pixelIdx;
+        piperGetGridIndex(ctx, pixelIdx);
+
+        const auto x = SBT.rect.left + pixelIdx.x;
+        const auto y = SBT.rect.top + pixelIdx.y;
+
+        PerSampleContext context{
+            SBT, { 0.0f }, 5, 0, RandomEngine{ static_cast<uint64_t>((y * SBT.width + x) * SBT.sampleCount + sampleIdx) }
+        };
+        Vector2<float> point;
+        SBT.start(SBT.SAPayload, x, y, sampleIdx, context.sampleIndex, point);
+        SBT.generate(SBT.SAPayload, context.sampleIndex, 2, context.time.val);
+
+        // TODO:move to transform
+        const auto& transform = SBT.transform;
+        const auto NDC = Vector2<float>{ transform.ox + transform.sx * point.x / static_cast<float>(SBT.width),
+                                         transform.oy + transform.sy * point.y / static_cast<float>(SBT.height) };
+        RayInfo<FOR::World> ray;
+        Dimensionless<float> weight;
+        {
+            float u1, u2;
+            SBT.generate(SBT.SAPayload, context.sampleIndex, 3, u1);
+            SBT.generate(SBT.SAPayload, context.sampleIndex, 4, u2);
+            SBT.rayGen(reinterpret_cast<RestrictedContext>(&context), SBT.RGPayload, NDC, u1, u2, ray, weight);
+        }
+
+        Spectrum<Radiance> sample;
+        SBT.trace(reinterpret_cast<FullContext>(&context), SBT.TRPayload, ray, sample);
+        SBT.accumulate(reinterpret_cast<RestrictedContext>(&context), SBT.ACPayload, SBT.launchData, point, sample * weight);
+
+        uint64_t end;
+        piperGetTime(nullptr, end);
+        piperStatisticsTime(reinterpret_cast<RestrictedContext>(&context), SBT.profileSampleTime, end - beg);
+    }
+
     Time<float> piperQueryTime(const RestrictedContext context) {
         return reinterpret_cast<PerSampleContext*>(context)->time;
     }

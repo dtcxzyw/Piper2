@@ -104,7 +104,7 @@ namespace Piper {
         uint32_t currentDimension;
         uint64_t sampleIndex;
 
-        RandomEngine eng;
+        RandomEngine randomEngine;
     };
 
     struct BuiltinHitInfo final {

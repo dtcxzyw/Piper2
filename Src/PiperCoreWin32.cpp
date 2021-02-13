@@ -96,16 +96,16 @@ namespace Piper {
         FutureImpl* future;
         std::atomic_size_t remainCount;
         std::atomic_size_t remainSize;
-        SharedPtr<Pair<bool, DynamicArray<std::byte>>> data;
+        SharedPtr<Pair<bool, Binary>> data;
         SharedPtr<void> file;
     };
 
     struct ReadFuture final : public FutureImpl {
-        SharedPtr<Pair<bool, DynamicArray<std::byte>>> data;
+        SharedPtr<Pair<bool, Binary>> data;
 
         ReadFuture(PiperContext& context, const STLAllocator& allocator, const size_t size)
-            : FutureImpl(context), data(makeSharedPtr<Pair<bool, DynamicArray<std::byte>>>(
-                                       allocator, false, DynamicArray<std::byte>{ size, allocator })) {}
+            : FutureImpl(context), data(makeSharedPtr<Pair<bool, Binary>>(
+                                       allocator, false, Binary{ size, allocator })) {}
 
         [[nodiscard]] bool fastReady() const noexcept override {
             return data->first;
@@ -142,7 +142,7 @@ namespace Piper {
         [[nodiscard]] size_t size() const noexcept override {
             return mSize;
         }
-        Future<DynamicArray<std::byte>> read(const size_t offset, const size_t size) override {
+        Future<Binary> read(const size_t offset, const size_t size) override {
             auto future = makeSharedObject<ReadFuture>(context(), context().getAllocator(), size);
             auto& allocator = context().getAllocator();
             auto* payload = reinterpret_cast<IOPayload*>(allocator.alloc(sizeof(IOPayload)));
@@ -171,14 +171,14 @@ namespace Piper {
                     readCount += needRead;
                 }
             }
-            return Future<DynamicArray<std::byte>>{ future };
+            return Future<Binary>{ future };
         }
-        Future<void> write(const size_t offset, const Future<DynamicArray<std::byte>>& data) override {
+        Future<void> write(const size_t offset, const Future<Binary>& data) override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return Future<void>{ nullptr };
             /*
             return context().getScheduler().spawn(
-                [offset, context = &context(), handle = mHandle, this](const Future<DynamicArray<std::byte>>& span) {
+                [offset, context = &context(), handle = mHandle, this](const Future<Binary>& span) {
                     auto& data = span.get();
                     auto size = data.size();
                     auto low = static_cast<LONG>(offset), high = static_cast<LONG>(offset >> 32);
