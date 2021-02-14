@@ -62,7 +62,7 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     linkable.wait();
 
     auto kernel = accelerator->compileKernel<uint32_t, uint32_t, uint32_t>(
-        Piper::Span<Piper::LinkableProgram>{ &linkable.getUnsafe(), 1 }, "conv");
+        Piper::Span<Piper::LinkableProgram>{ &linkable.getUnsafe(), 1 }, "convEntry");
     // TODO:better interface
     Piper::DynamicArray<Piper::ResourceView> resources{ context.getAllocator() };
     resources.push_back({ devX, Piper::ResourceAccessMode::ReadOnly });

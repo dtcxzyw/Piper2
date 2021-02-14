@@ -51,7 +51,7 @@ namespace Piper {
         GeometryUsage usage;
     };
 
-    struct GSMInstanceUserData final : public GeometryUserData {
+    struct GSMInstanceUserData final : GeometryUserData {
         SurfaceInitFunc init;
         SurfaceSampleFunc sample;
         SurfaceEvaluateFunc evaluate;
@@ -61,7 +61,7 @@ namespace Piper {
         // TODO:medium
     };
 
-    struct AreaLightUserData final : public GeometryUserData {
+    struct AreaLightUserData final : GeometryUserData {
         LightHandle light;
     };
 
@@ -100,6 +100,7 @@ namespace Piper {
     using RandomEngine = std::mt19937_64;
     struct PerSampleContext final {
         KernelArgument argument;
+        TaskContext ctx;
         Time<float> time;
         uint32_t currentDimension;
         uint64_t sampleIndex;

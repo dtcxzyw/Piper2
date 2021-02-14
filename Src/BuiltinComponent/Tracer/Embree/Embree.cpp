@@ -288,7 +288,7 @@ namespace Piper {
 
         hit.hit.geomID = hit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 
-        // TODO:Coroutine+SIMD?
+        // TODO: SIMD
         rtcIntersect1(ctx->argument.scene, reinterpret_cast<RTCIntersectContext*>(&intersectCtx), &hit);
 
         if(hit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
@@ -470,67 +470,77 @@ namespace Piper {
     };
     using SceneHandle = UniquePtr<RTCSceneTy, SceneDeleter>;
 
+    struct BufferDeleter {
+        void operator()(const RTCBuffer buffer) const {
+            rtcReleaseBuffer(buffer);
+        }
+    };
+    using BufferHandle = UniquePtr<RTCBufferTy, BufferDeleter>;
+
     struct CustomBuffer final {
         const void* payload;
         GeometryIntersectFunc intersect;
         GeometryOccludeFunc occlude;
     };
 
-    // TODO:sub class
+    // TODO: sub class
     class EmbreeAcceleration final : public AccelerationStructure {
     private:
         GeometryHandle mGeometry;
         SceneHandle mScene;
         BuiltinTriangleBuffer mBuffer;
         CustomBuffer mCustomBuffer;
+        SharedPtr<Buffer> mResource;
 
     public:
         EmbreeAcceleration(PiperContext& context, const RTCDevice device, const GeometryDesc& desc)
-            : AccelerationStructure(context), mBuffer{} {
-            switch(desc.type) {
-                case PrimitiveShapeType::TriangleIndexed: {
+            : AccelerationStructure{ context } {
+            switch(desc.desc.index()) {
+                case 0: {
+                    // TODO: motion blur
                     mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE));
-                    auto&& triDesc = desc.triangleIndexed;
-                    auto* const vert = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3,
-                                                               3 * sizeof(float), triDesc.vertCount);
-                    memcpy(vert, reinterpret_cast<void*>(triDesc.vertices), 3 * sizeof(float) * triDesc.vertCount);
-                    auto* const index = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3,
-                                                                sizeof(uint32_t) * 3, triDesc.triCount);
-                    memcpy(index, reinterpret_cast<void*>(triDesc.index), sizeof(uint32_t) * 3 * triDesc.triCount);
-                    mBuffer.index = static_cast<const uint32_t*>(index);
+                    auto&& triDesc = eastl::get<TriangleIndexedGeometryDesc>(desc.desc);
 
-                    // rtcSetGeometryTimeStepCount(mGeometry.get(), 1);
+                    // TODO: concurrency
+                    triDesc.buffer->access()->wait();
+                    mResource = triDesc.buffer;
 
-                    rtcSetGeometryVertexAttributeCount(
-                        mGeometry.get(), (triDesc.texCoords ? 1 : 0) + (triDesc.normal ? 1 : 0) + (triDesc.tangent ? 1 : 0));
-                    uint32_t slot = 0;
-                    // TODO: rtcSetGeometryVertexAttributeTopology
-                    if(triDesc.texCoords) {
-                        auto* const texCoord = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE, slot++,
-                                                                       RTC_FORMAT_FLOAT2, 2 * sizeof(float), triDesc.vertCount);
-                        memcpy(texCoord, reinterpret_cast<void*>(triDesc.texCoords), 2 * sizeof(float) * triDesc.vertCount);
-                        mBuffer.texCoord = static_cast<const Vector2<float>*>(texCoord);
-                    }
+                    const auto ptr = reinterpret_cast<std::byte*>(triDesc.buffer->require(nullptr)->getHandle());
+                    const BufferHandle buffer{ rtcNewSharedBuffer(device, ptr, triDesc.buffer->size()) };
+                    rtcSetGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, buffer.get(),
+                                         triDesc.vertices, sizeof(float) * 3, triDesc.vertCount);
+                    rtcSetGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, buffer.get(), triDesc.index,
+                                         sizeof(uint32_t) * 3, triDesc.triCount);
+                    mBuffer.index = reinterpret_cast<const uint32_t*>(ptr + triDesc.index);
 
-                    if(triDesc.normal) {
-                        auto* const normal = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE, slot++,
-                                                                     RTC_FORMAT_FLOAT3, 3 * sizeof(float), triDesc.vertCount);
-                        memcpy(normal, reinterpret_cast<void*>(triDesc.normal), 3 * sizeof(float) * triDesc.vertCount);
-                        mBuffer.texCoord = static_cast<const Vector2<float>*>(normal);
-                    }
+                    if(triDesc.texCoords != invalidOffset)
+                        mBuffer.texCoord = reinterpret_cast<const Vector2<float>*>(ptr + triDesc.texCoords);
+                    else
+                        mBuffer.texCoord = nullptr;
 
-                    if(triDesc.tangent) {
-                        auto* const tangent = rtcSetNewGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE, slot,
-                                                                      RTC_FORMAT_FLOAT3, 3 * sizeof(float), triDesc.vertCount);
-                        memcpy(tangent, reinterpret_cast<void*>(triDesc.tangent), 3 * sizeof(float) * triDesc.vertCount);
-                        mBuffer.texCoord = static_cast<const Vector2<float>*>(tangent);
-                    }
+                    if(triDesc.normal != invalidOffset)
+                        mBuffer.Ns = reinterpret_cast<const Vector<float, FOR::Local>*>(ptr + triDesc.normal);
+                    else
+                        mBuffer.Ns = nullptr;
+
+                    if(triDesc.tangent != invalidOffset)
+                        mBuffer.Ts = reinterpret_cast<const Vector<float, FOR::Local>*>(ptr + triDesc.tangent);
+                    else
+                        mBuffer.Ts = nullptr;
+
                 } break;
-                case PrimitiveShapeType::Custom: {
+                case 1: {
                     mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER));
-                    const auto& custom = desc.custom;
+                    const auto& custom = eastl::get<CustomGeometryDesc>(desc.desc);
                     rtcSetGeometryUserPrimitiveCount(mGeometry.get(), custom.count);
-                    rtcSetGeometryUserData(mGeometry.get(), reinterpret_cast<void*>(custom.bounds));  // for acceleration build
+
+                    // TODO: concurrency
+                    custom.bounds->access()->wait();
+                    mResource = custom.bounds;
+
+                    rtcSetGeometryUserData(
+                        mGeometry.get(),
+                        reinterpret_cast<void*>(custom.bounds->require(nullptr)->getHandle()));  // for acceleration build
                     rtcSetGeometryBoundsFunction(
                         mGeometry.get(),
                         [](const RTCBoundsFunctionArguments* args) {
@@ -538,10 +548,10 @@ namespace Piper {
                             memcpy(&args->bounds_o->lower_x, bounds, 3 * sizeof(float));
                             memcpy(&args->bounds_o->upper_x, bounds + 3, 3 * sizeof(float));
                         },
-                        nullptr);  // NOTICE:The userPtr is not used.
+                        nullptr);  // NOTICE: This userPtr is not used.
                     rtcSetGeometryIntersectFunction(mGeometry.get(), [](const RTCIntersectFunctionNArguments* args) {
                         const auto* const sbt = static_cast<const CustomBuffer*>(args->geometryUserPtr);
-                        // TODO:allow SIMD?
+                        // TODO: allow SIMD?
                         auto* rayInfo = RTCRayHitN_RayN(args->rayhit, args->N);
                         auto* hitInfo = RTCRayHitN_HitN(args->rayhit, args->N);
                         for(uint32_t i = 0; i < args->N; ++i) {
@@ -571,7 +581,7 @@ namespace Piper {
                     });
                     rtcSetGeometryOccludedFunction(mGeometry.get(), [](const RTCOccludedFunctionNArguments* args) {
                         const auto* const sbt = static_cast<const CustomBuffer*>(args->geometryUserPtr);
-                        // TODO:allow SIMD?
+                        // TODO: allow SIMD?
                         for(uint32_t i = 0; i < args->N; ++i) {
                             if(args->valid[i] != -1)
                                 continue;
@@ -582,7 +592,7 @@ namespace Piper {
                                 Normal<float, FOR::Local>{ Vector<Dimensionless<float>, FOR::Local>{
                                     { RTCRayN_dir_x(args->ray, args->N, i) },
                                     { RTCRayN_dir_y(args->ray, args->N, i) },
-                                    { RTCRayN_dir_z(args->ray, args->N, i) } } },  // TODO:Unsafe?
+                                    { RTCRayN_dir_z(args->ray, args->N, i) } } },  // TODO: Unsafe?
                             };
 
                             auto& tFar = RTCRayN_tfar(args->ray, args->N, i);
@@ -595,6 +605,8 @@ namespace Piper {
                     });
                     // TODO:intersect filter
                 } break;
+                default:
+                    context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             }
             rtcSetGeometryMask(mGeometry.get(), gsmMask | areaLightMask);
             if(desc.transform.has_value()) {
@@ -620,7 +632,7 @@ namespace Piper {
         [[nodiscard]] RTCGeometry getGeometry() const noexcept {
             return mGeometry.get();
         }
-        [[nodiscard]] RTCScene getScene(RTCDevice device) {
+        [[nodiscard]] RTCScene getScene(const RTCDevice device) {
             if(!mScene) {
                 // TODO:lock+double check/call_once
                 mScene.reset(rtcNewScene(device));
@@ -629,6 +641,9 @@ namespace Piper {
                 rtcCommitScene(mScene.get());
             }
             return mScene.get();
+        }
+        [[nodiscard]] SharedPtr<Resource> getResource() const {
+            return mResource;
         }
     };
 
@@ -937,7 +952,7 @@ namespace Piper {
             sensor.push_back(SensorInstanceProgram{ mSensor, reinterpret_cast<TraversalHandle>(node), this });
         }
 
-        // TODO:follow
+        // TODO: follow
         // void postMaterialize(const TraversalHandle* follow, ResourceHolder& holder) const {}
     };
 
@@ -969,10 +984,13 @@ namespace Piper {
             if(!mLock.owns_lock())
                 context.getErrorHandler().raiseException("The pipeline is locked.", PIPER_SOURCE_LOCATION());
         }
-        [[nodiscard]] Future<void> launch(const RenderRECT& rect, const SBTPayload& launchData,
-                                          const SensorNDCAffineTransform& transform, const uint32_t sampleCount) override {
-            auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(launchData.size()));
-            memcpy(ptr, launchData.data(), launchData.size());
+        [[nodiscard]] Future<void> launch(const RenderRECT& rect, const Function<SBTPayload, uint32_t>& launchData,
+                                          const Span<ResourceView>& resources, const SensorNDCAffineTransform& transform,
+                                          const uint32_t sampleCount) override {
+
+            const auto launchSBT = launchData(static_cast<uint32_t>(mResources.size()));
+            auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(launchSBT.size()));
+            memcpy(ptr, launchSBT.data(), launchSBT.size());
             auto arg = mArg;
 
             arg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
@@ -980,8 +998,13 @@ namespace Piper {
             arg.sampleCount = sampleCount;
             arg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
 
-            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ sampleCount, 1, 1 }, mKernel, mResources,
-                                             arg);
+            // TODO: reduce copy
+            auto fullResources = mResources;
+            for(auto&& res : resources)
+                fullResources.push_back(res);
+
+            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ sampleCount, 1, 1 }, mKernel,
+                                             fullResources, arg);
         }
         void updateTimeInterval(const Time<float> begin, const Time<float> end) noexcept override {
             mRoot->updateTimeInterval(begin, end);
@@ -1033,9 +1056,11 @@ namespace Piper {
             DynamicArray<Pair<String, void*>> call(context.getAllocator());
 
             const MaterializeContext materialize{
-                tracer,
-                mHolder,
-                mArena,
+                tracer, ResourceRegister{ [this](SharedPtr<Resource> resource) {
+                    const auto idx = static_cast<uint32_t>(mResources.size());
+                    mResources.push_back(ResourceView{ std::move(resource), ResourceAccessMode::ReadOnly });
+                    return idx;
+                } },
                 CallSiteRegister{ [&](const SharedPtr<RTProgram>& program, const SBTPayload& payload) -> CallHandle {
                     const auto id = static_cast<uint32_t>(call.size());
                     const auto* prog = dynamic_cast<EmbreeRTProgram*>(program.get());
@@ -1043,8 +1068,7 @@ namespace Piper {
                     call.emplace_back(prog->symbol, upload(payload));
                     return reinterpret_cast<CallHandle>(static_cast<ptrdiff_t>(id));
                 } },
-                mProfiler,
-                TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> CallHandle {
+                mProfiler, TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> CallHandle {
                     const auto texture = tracer.generateTexture(desc, channel);
                     auto [SBT, prog] = texture->materialize(materialize);
                     return materialize.registerCall(prog, SBT);
@@ -1092,6 +1116,7 @@ namespace Piper {
                 const auto gp = geometry->materialize(materialize);
                 auto& info = geometryProg[geometry];
                 auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer));
+                mResources.push_back(ResourceView{ accel.getResource(), ResourceAccessMode::ReadOnly });
                 info.acceleration = &accel;
 
                 if(gp.surface) {
@@ -1396,14 +1421,14 @@ namespace Piper {
             return makeSharedObject<EmbreeAcceleration>(context(), mDevice.get(), desc);
         }
         SharedPtr<Node> buildNode(const SharedPtr<Object>& object) override {
+            // TODO: better implementation
             if(auto gsm = eastl::dynamic_shared_pointer_cast<EmbreeGSMInstance>(object))
                 return makeSharedObject<EmbreeLeafNodeWithGSM>(context(), *this, mDevice.get(), std::move(gsm));
-            if(auto light = eastl::dynamic_shared_pointer_cast<Light>(object)) {
+            if(auto light = eastl::dynamic_shared_pointer_cast<Light>(object))
                 return makeSharedObject<EmbreeLeafNodeWithLight>(context(), *this, mDevice.get(), std::move(light));
-            }
-            if(auto sensor = eastl::dynamic_shared_pointer_cast<Sensor>(object)) {
+            if(auto sensor = eastl::dynamic_shared_pointer_cast<Sensor>(object))
                 return makeSharedObject<EmbreeLeafNodeWithSensor>(context(), mDevice.get(), std::move(sensor));
-            }
+
             context().getErrorHandler().raiseException(
                 String{ "Unrecognized object ", context().getAllocator() } + typeid(*object).name(), PIPER_SOURCE_LOCATION());
         }
@@ -1431,6 +1456,19 @@ namespace Piper {
                                                                toString(context().getAllocator(), res->channel()),
                                                            PIPER_SOURCE_LOCATION());
             return res;
+        }
+        // ReSharper disable once CppNotAllPathsReturnValue
+        size_t getAlignmentRequirement(const AlignmentRequirement requirement) const noexcept override {
+            switch(requirement) {  // NOLINT(bugprone-branch-clone)
+                case AlignmentRequirement::VertexBuffer:
+                    [[fallthrough]];
+                case AlignmentRequirement::IndexBuffer:
+                    [[fallthrough]];
+                case AlignmentRequirement::TextureCoordsBuffer:
+                    return 16;
+                case AlignmentRequirement::BoundsBuffer:
+                    return alignof(RTCBounds);
+            }
         }
     };
     class ModuleImpl final : public Module {

@@ -19,7 +19,7 @@
 #include "../../../Kernel/DeviceRuntime.hpp"
 
 namespace Piper {
-    struct TaskContext final {
+    struct TaskContextImpl final {
         Dim3 gridSize;
         Dim3 gridIndex;
         Dim3 blockSize;

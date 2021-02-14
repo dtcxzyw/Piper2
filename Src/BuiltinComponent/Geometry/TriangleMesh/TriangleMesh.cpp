@@ -22,7 +22,7 @@
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #pragma warning(push, 0)
-// NOTE: assimp -> Irrlicht.dll->opengl32 will cause memory leak.
+// NOTE: assimp -> Irrlicht.dll -> opengl32.dll will cause memory leak.
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
@@ -42,56 +42,83 @@ namespace Piper {
                 reinterpret_cast<ResourceID>(this),
                 Function<SharedPtr<AccelerationStructure>>{
                     [path = mPath, &tracer, ctx = &context()]() -> SharedPtr<AccelerationStructure> {
-                        // TODO:filesystem
-                        Assimp::Importer importer;
-                        const auto* scene = importer.ReadFile(path.c_str(),
-                                                              aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
-                                                                  aiProcess_SortByPType | aiProcess_GenSmoothNormals |
-                                                                  aiProcess_FixInfacingNormals | aiProcess_ImproveCacheLocality);
+                        // TODO: filesystem
+                        auto importer = makeSharedPtr<Assimp::Importer>(ctx->getAllocator());
+                        const auto* scene = importer->ReadFile(path.c_str(),
+                                                               aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
+                                                                   aiProcess_SortByPType | aiProcess_GenSmoothNormals |
+                                                                   aiProcess_FixInfacingNormals | aiProcess_ImproveCacheLocality);
 
                         auto& errorHandler = ctx->getErrorHandler();
 
                         if(!scene || scene->mFlags == AI_SCENE_FLAGS_INCOMPLETE)
-                            errorHandler.raiseException("Failed to load scene " + path, PIPER_SOURCE_LOCATION());
+                            errorHandler.raiseException("Failed to load scene " + path + " : " + importer->GetErrorString(),
+                                                        PIPER_SOURCE_LOCATION());
                         if(scene->mNumMeshes != 1)
                             errorHandler.raiseException("Only one mesh is supported.", PIPER_SOURCE_LOCATION());
                         const auto* mesh = scene->mMeshes[0];
 
-                        TriangleIndexedGeometryDesc desc{};
-                        DynamicArray<uint32_t> index(ctx->getAllocator());
-                        index.resize(3 * mesh->mNumFaces);
-                        for(Index i = 0; i < mesh->mNumFaces; ++i) {
-                            if(mesh->mFaces[i].mNumIndices != 3)
-                                errorHandler.raiseException("Only triangle is supported.", PIPER_SOURCE_LOCATION());
-                            memcpy(index.data() + i * 3, mesh->mFaces[i].mIndices, sizeof(uint32_t) * 3);
-                        }
-
-                        desc.index = reinterpret_cast<Ptr>(index.data());
+                        TriangleIndexedGeometryDesc desc;
                         desc.triCount = mesh->mNumFaces;
                         desc.vertCount = mesh->mNumVertices;
-                        desc.vertices = reinterpret_cast<Ptr>(mesh->mVertices);
+                        desc.index = 0;
+                        auto size = 3 * sizeof(uint32_t) * mesh->mNumFaces;
+                        alignTo(size, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
 
-                        DynamicArray<Vector2<float>> texCoords(ctx->getAllocator());
+                        alignTo(size, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
+                        desc.vertices = size;
+                        size += 3 * sizeof(float) * mesh->mNumVertices;
+                        alignTo(size, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
+
                         if(mesh->mTextureCoords[0]) {
-                            if(mesh->mNumUVComponents[0] != 2)
-                                errorHandler.raiseException("Only UV channel is supported.", PIPER_SOURCE_LOCATION());
-                            const auto* uv = mesh->mTextureCoords[0];
-                            texCoords.resize(mesh->mNumVertices);
-                            for(Index i = 0; i < mesh->mNumVertices; ++i) {
-                                texCoords[i].x = uv[i].x;
-                                texCoords[i].y = uv[i].y;
+                            alignTo(size, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
+                            desc.texCoords = size;
+                            size += 2 * sizeof(float) * mesh->mNumVertices;
+                            alignTo(size, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
+                        } else
+                            desc.texCoords = invalidOffset;
+
+                        // TODO: normal and tangent
+                        desc.normal = desc.tangent = invalidOffset;
+
+                        desc.buffer = tracer.getAccelerator().createBuffer(
+                            size, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
+
+                        desc.buffer->upload([ref = std::move(importer), mesh, &errorHandler, &tracer](Ptr ptr) {
+                            for(Index i = 0; i < mesh->mNumFaces; ++i) {
+                                if(mesh->mFaces[i].mNumIndices != 3)
+                                    errorHandler.raiseException("Only triangle is supported.", PIPER_SOURCE_LOCATION());
+                                memcpy(reinterpret_cast<void*>(ptr + i * 3 * sizeof(uint32_t)), mesh->mFaces[i].mIndices,
+                                       sizeof(uint32_t) * 3);
                             }
-                            desc.texCoords = reinterpret_cast<Ptr>(texCoords.data());
-                        }
+                            ptr += 3 * sizeof(uint32_t) * mesh->mNumFaces;
+                            alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
 
-                        // TODO:normal and tangent
-                        desc.normal = desc.tangent = 0;
+                            alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
+                            memcpy(reinterpret_cast<void*>(ptr), mesh->mVertices, 3 * sizeof(float) * mesh->mNumVertices);
+                            ptr += 3 * sizeof(float) * mesh->mNumVertices;
+                            alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
 
-                        // TODO:use buffer of accelerator
-                        auto res = tracer.buildAcceleration({ PrimitiveShapeType::TriangleIndexed, eastl::nullopt, { desc } });
-                        // TODO:RAII
-                        importer.FreeScene();
-                        return std::move(res);
+                            if(mesh->mTextureCoords[0]) {
+                                alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
+
+                                if(mesh->mNumUVComponents[0] != 2)
+                                    errorHandler.raiseException("Only UV channel is supported.", PIPER_SOURCE_LOCATION());
+                                const auto* uv = mesh->mTextureCoords[0];
+                                auto* texCoords = reinterpret_cast<Vector2<float>*>(ptr);
+                                for(Index i = 0; i < mesh->mNumVertices; ++i) {
+                                    texCoords[i].x = uv[i].x;
+                                    texCoords[i].y = uv[i].y;
+                                }
+
+                                ptr += 2 * sizeof(float) * mesh->mNumVertices;
+                                alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
+                            }
+
+                            // TODO: normal and tangent
+                        });
+
+                        return tracer.buildAcceleration({ eastl::nullopt, desc });
                     } });
             return *res;
         }
@@ -115,7 +142,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mPath(path, context.getAllocator()) {}
+        explicit ModuleImpl(PiperContext& context, const CString path) : Module(context), mPath(path, context.getAllocator()) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "TriangleMesh") {

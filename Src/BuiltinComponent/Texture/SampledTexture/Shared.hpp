@@ -25,7 +25,7 @@ namespace Piper {
         uint32_t height;
         uint32_t stride;
         uint32_t channel;
-        const unsigned char* texel;
+        uint32_t texel;
         StatisticsHandle profileSample;
     };
 }  // namespace Piper

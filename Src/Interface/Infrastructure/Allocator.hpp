@@ -36,6 +36,15 @@ namespace Piper {
     };
     */
 
+    inline void alignTo(size_t& size, const size_t alignment) {
+        if(size % alignment)
+            size += alignment - size % alignment;
+    }
+    inline void alignTo(Ptr& ptr, const size_t alignment) {
+        if(ptr % alignment)
+            ptr += alignment - ptr % alignment;
+    }
+
     class Allocator : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Allocator, Object)
@@ -43,10 +52,9 @@ namespace Piper {
         // http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0154r1.html
         virtual Ptr alloc(size_t size, size_t align = alignof(max_align_t)) = 0;
         virtual void free(Ptr ptr) noexcept = 0;
-        virtual ~Allocator() = default;
     };
 
-    class PIPER_API MemoryArena final : private Uncopyable {
+    class PIPER_API MemoryArena final : Uncopyable {
     private:
         Allocator& mAllocator;
         DynamicArray<Ptr> mBlocks;

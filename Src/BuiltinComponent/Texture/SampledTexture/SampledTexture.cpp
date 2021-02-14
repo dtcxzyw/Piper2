@@ -16,7 +16,6 @@
 */
 
 #define PIPER_EXPORT
-#include <utility>
 #include "../../../Interface/BuiltinComponent/Image.hpp"
 #include "../../../Interface/BuiltinComponent/Texture.hpp"
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
@@ -25,8 +24,8 @@
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/Profiler.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
-#include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #include "Shared.hpp"
+#include <utility>
 #pragma warning(push, 0)
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -47,7 +46,8 @@ namespace Piper {
                                                       image->attributes().height,
                                                       image->attributes().width * image->attributes().channel,
                                                       image->attributes().channel,
-                                                      reinterpret_cast<const unsigned char*>(mImage->data()) },
+                                                      0,
+                                                      nullptr },
               mKernel(std::move(kernel)) {}
 
         [[nodiscard]] uint32_t channel() const noexcept override {
@@ -55,11 +55,18 @@ namespace Piper {
         }
         TextureProgram materialize(const MaterializeContext& ctx) const override {
             TextureProgram res;
-            // TODO:concurrency
+            // TODO: concurrency
             const auto linkable = mKernel.getSync()->generateLinkable(ctx.tracer.getAccelerator().getSupportedLinkableFormat());
             res.sample = ctx.tracer.buildProgram(linkable, "sampleTexture");
-            ctx.holder.retain(mImage);
+
+            // TODO: reduce copy
+            // TODO: caching
+            auto texel = ctx.tracer.getAccelerator().createBuffer(mData.width * mData.height * mData.channel, 16);
+            texel->upload([image = mImage, size = texel->size()](const Ptr ptr) {
+                memcpy(reinterpret_cast<void*>(ptr), image->data(), size);
+            });
             auto data = mData;
+            data.texel = ctx.registerResource(texel);
             static char uid;
             data.profileSample = ctx.profiler.registerDesc("Texture", "Sample Time", &uid, StatisticsType::Time);
             res.payload = packSBTPayload(context().getAllocator(), data);

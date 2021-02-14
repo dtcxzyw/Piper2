@@ -15,6 +15,7 @@
    limitations under the License.
 */
 
+#include "../../../Kernel/DeviceRuntime.hpp"
 #include "Shared.hpp"
 
 namespace Piper {
@@ -32,15 +33,18 @@ namespace Piper {
         piperQueryCall(context, static_cast<const RDData*>(SBTData)->filter, filter);
 
         const auto* data = static_cast<const LaunchData*>(launchData);
-        // TODO:filter
+        ResourceHandle rgbwHandle;
+        piperGetResourceHandleIndirect(context, data->rgbw, rgbwHandle);
+        const auto rgbw = reinterpret_cast<RGBW*>(rgbwHandle);
         const auto add = [&](const uint32_t px, const uint32_t py) {
             if(!(px < data->w && py < data->h))
                 return;
             Dimensionless<float> weight;
             reinterpret_cast<FilterFunc>(filter.address)(context, filter.SBTData, point.x - (static_cast<float>(px) + 0.5f),
                                                          point.y - (static_cast<float>(py) + 0.5f), weight);
-            // TODO:optimize access
-            atomicAdd(data->rgbw[px + py * data->w], sample, weight);
+            // TODO: optimize access
+
+            atomicAdd(rgbw[px + py * data->w], sample, weight);
         };
         const auto bx = static_cast<int32_t>(point.x - 0.5f), by = static_cast<int32_t>(point.y - 0.5f);
         add(bx, by);

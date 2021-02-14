@@ -45,10 +45,11 @@ namespace Piper {
         return s == size ? (wrap == TextureWrap::Repeat ? 0 : p) : s;
     }
 
-    void evaluate(const uint32_t u, const uint32_t v, const float weight, const Data* data, Dimensionless<float>* sample) {
+    void evaluate(const uint32_t u, const uint32_t v, const float weight, const Data* data, const uint8_t* texel,
+                  Dimensionless<float>* sample) {
         const auto idx = v * data->stride + u * data->channel;
         for(uint32_t i = 0; i < data->channel; ++i)
-            sample[i].val += weight * static_cast<float>(data->texel[idx + i]);
+            sample[i].val += weight * static_cast<float>(texel[idx + i]);
     }
 
     float evalLeftWeight(const float u) {
@@ -59,6 +60,10 @@ namespace Piper {
                                   Dimensionless<float>* sample) {
         const auto* data = static_cast<const Data*>(SBTData);
         TimeProfiler profiler{ context, data->profileSample };
+        ResourceHandle texelHandle;
+        piperGetResourceHandleIndirect(context, data->texel, texelHandle);
+        auto texel = reinterpret_cast<const uint8_t*>(texelHandle);
+
         const auto u = texCoord.x * static_cast<float>(data->width), v = texCoord.y * static_cast<float>(data->height);
         const auto plu = locate(u - 0.5f, data->width, data->wrap), pru = next(plu, data->width, data->wrap),
                    plv = locate(v - 0.5f, data->height, data->wrap), prv = next(plv, data->height, data->wrap);
@@ -66,11 +71,11 @@ namespace Piper {
         const auto rwx = 1.0f - lwx, rwy = 1.0f - lwy;
         for(uint32_t i = 0; i < data->channel; ++i)
             sample[i].val = 0.0f;
-        evaluate(plu, plv, lwx * lwy, data, sample);
-        evaluate(pru, plv, rwx * lwy, data, sample);
-        evaluate(plu, prv, lwx * rwy, data, sample);
-        evaluate(pru, prv, rwx * rwy, data, sample);
-        constexpr auto scale = 0.003921568f;
+        evaluate(plu, plv, lwx * lwy, data, texel, sample);
+        evaluate(pru, plv, rwx * lwy, data, texel, sample);
+        evaluate(plu, prv, lwx * rwy, data, texel, sample);
+        evaluate(pru, prv, rwx * rwy, data, texel, sample);
+        constexpr auto scale = 0.003921568f;  // 1/255
         for(uint32_t i = 0; i < data->channel; ++i)
             sample[i].val *= scale;
     }

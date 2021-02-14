@@ -23,7 +23,7 @@ namespace Piper {
         CallHandle filter;
     };
     struct LaunchData final {
-        RGBW* rgbw;
+        uint32_t rgbw;
         uint32_t w, h;
     };
     struct GaussianFilterData final {

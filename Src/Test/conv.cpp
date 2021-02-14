@@ -18,8 +18,9 @@
 #include "conv.hpp"
 #include "../Kernel/DeviceRuntime.hpp"
 #include <cstdint>
+#include <type_traits>
 
-extern "C" void conv(const Piper::TaskContext& context) {
+extern "C" void convEntry(const Piper::TaskContext context) {
     using namespace Piper;
     uint32_t idx, width, height, kernelSize;
     piperGetTaskIndex(context, idx);
@@ -34,3 +35,4 @@ extern "C" void conv(const Piper::TaskContext& context) {
     conv(idx, reinterpret_cast<const Float*>(X), reinterpret_cast<const Float*>(Y), reinterpret_cast<Float*>(Z), width, height,
          kernelSize);
 }
+static_assert(std::is_same_v<Piper::KernelProtocol, std::decay_t<decltype(convEntry)>>);

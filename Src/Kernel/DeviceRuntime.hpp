@@ -24,19 +24,23 @@ namespace Piper {
     };
 
     using ResourceHandle = ptrdiff_t;
-    struct TaskContext;
+    struct TaskContextReserved;
+    using TaskContext = const TaskContextReserved*;
+    struct ArgumentHandleReserved;
+
+    using KernelProtocol = void (*)(TaskContext ctx);
 
     extern "C" {
-    void piperGetGridSize(const TaskContext& context, Dim3& dim);
-    void piperGetBlockSize(const TaskContext& context, Dim3& dim);
-    void piperGetGridIndex(const TaskContext& context, Dim3& index);
-    void piperGetBlockIndex(const TaskContext& context, Dim3& index);
-    void piperGetGridLinearIndex(const TaskContext& context, uint32_t& index);
-    void piperGetBlockLinearIndex(const TaskContext& context, uint32_t& index);
-    void piperGetTaskIndex(const TaskContext& context, uint32_t& index);
+    void piperGetGridSize(TaskContext context, Dim3& dim);
+    void piperGetBlockSize(TaskContext context, Dim3& dim);
+    void piperGetGridIndex(TaskContext context, Dim3& index);
+    void piperGetBlockIndex(TaskContext context, Dim3& index);
+    void piperGetGridLinearIndex(TaskContext context, uint32_t& index);
+    void piperGetBlockLinearIndex(TaskContext context, uint32_t& index);
+    void piperGetTaskIndex(TaskContext context, uint32_t& index);
 
-    void piperGetArgument(const TaskContext& context, uint32_t index, void* ptr);
-    void piperGetResourceHandle(const TaskContext& context, uint32_t index, ResourceHandle& handle);
+    void piperGetArgument(TaskContext context, uint32_t index, void* ptr);
+    void piperGetResourceHandle(TaskContext context, uint32_t index, ResourceHandle& handle);
 
     // TODO: Atomic Intrinsic
     // TODO: Synchronize Primitive?

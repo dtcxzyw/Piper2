@@ -87,8 +87,8 @@ namespace Piper {
             return ptr;
         }
         const auto rem = mCurrent % align;
-        const auto begin = (rem == 0 ? mCurrent : mCurrent + align - rem);
-        if(begin + size > mCurEnd) {
+        const auto begin = static_cast<Ptr>(rem == 0 ? mCurrent : mCurrent + align - rem);
+        if(static_cast<Ptr>(begin + size) > mCurEnd) {
             mCurrent = mAllocator.alloc(mBlockSize, align);
             mCurEnd = mCurrent + mBlockSize;
             mBlocks.push_back(mCurrent);

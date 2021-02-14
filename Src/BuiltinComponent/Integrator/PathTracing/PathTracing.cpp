@@ -61,7 +61,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mPath(path, context.getAllocator()) {}
+        explicit ModuleImpl(PiperContext& context, const CString path) : Module(context), mPath(path, context.getAllocator()) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "Integrator") {

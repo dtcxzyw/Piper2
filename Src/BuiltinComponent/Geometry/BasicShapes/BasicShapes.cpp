@@ -94,26 +94,39 @@ namespace Piper {
                 pdf = pdf / Dimensionless<float>{ mArea.val };
         }
         AccelerationStructure& getAcceleration(Tracer& tracer) const override {
-            return *tracer.getCacheManager().materialize(reinterpret_cast<ResourceID>(this),
-                                                         Function<SharedPtr<AccelerationStructure>>{ [&] {
-                                                             GeometryDesc desc;
-                                                             desc.type = PrimitiveShapeType::Custom;
-                                                             auto& custom = desc.custom;
-                                                             custom.count = static_cast<uint32_t>(mPlanes.size());
-                                                             custom.bounds = reinterpret_cast<Ptr>(mBounds.data());
-                                                             return tracer.buildAcceleration(desc);
-                                                         } });
+            return *tracer.getCacheManager().materialize(
+                reinterpret_cast<ResourceID>(this), Function<SharedPtr<AccelerationStructure>>{ [&] {
+                    CustomGeometryDesc desc;
+                    desc.count = static_cast<uint32_t>(mPlanes.size());
+
+                    const auto alignment = tracer.getAlignmentRequirement(AlignmentRequirement::BoundsBuffer);
+                    auto size = sizeof(Bounds) * mBounds.size();
+                    alignTo(size, alignment);
+
+                    desc.bounds = tracer.getAccelerator().createBuffer(size, alignment);
+
+                    // TODO: reduce copy
+                    desc.bounds->upload([bounds = mBounds](const Ptr ptr) {
+                        memcpy(reinterpret_cast<void*>(ptr), bounds.data(), sizeof(Bounds) * bounds.size());
+                    });
+
+                    return tracer.buildAcceleration({ eastl::nullopt, desc });
+                } });
         }
         [[nodiscard]] GeometryProgram materialize(const MaterializeContext& ctx) const override {
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
-            // TODO:use buffer of accelerator
-            auto* const ptr = ctx.arena.alloc<PerPlaneData>(mPlanes.size());
-            memcpy(ptr, mPlanes.data(), sizeof(PerPlaneData) * mPlanes.size());
+
+            auto planeData =
+                ctx.tracer.getAccelerator().createBuffer(sizeof(PerPlaneData) * mPlanes.size(), alignof(PerPlaneData));
+            // TODO: reduce copy
+            planeData->upload([planes = mPlanes](const Ptr ptr) {
+                memcpy(reinterpret_cast<void*>(ptr), planes.data(), sizeof(PerPlaneData) * planes.size());
+            });
 
             GeometryProgram prog;
-            prog.payload = packSBTPayload(context().getAllocator(), PlaneData{ ptr });
+            prog.payload = packSBTPayload(context().getAllocator(), PlaneData{ ctx.registerResource(planeData) });
             prog.surface = ctx.tracer.buildProgram(linkable, "planeSurface");
             prog.intersect = ctx.tracer.buildProgram(linkable, "planeIntersect");
             prog.occlude = ctx.tracer.buildProgram(linkable, "planeOcclude");
@@ -126,22 +139,36 @@ namespace Piper {
             auto linkable =
                 PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
 
-            // TODO:reuse buffer by caching
-            auto* const ptr = ctx.arena.alloc<PerPlaneData>(mPlanes.size());
-            memcpy(ptr, mPlanes.data(), sizeof(PerPlaneData) * mPlanes.size());
-            auto* const cdf = ctx.arena.alloc<Dimensionless<float>>(mCDF.size());
-            memcpy(cdf, mCDF.data(), sizeof(Dimensionless<float>) * mCDF.size());
-            auto* const pdf = ctx.arena.alloc<Dimensionless<float>>(mPDF.size());
-            memcpy(pdf, mPDF.data(), sizeof(Dimensionless<float>) * mPDF.size());
+            // TODO: reuse buffer by caching
+            auto planeData =
+                ctx.tracer.getAccelerator().createBuffer(sizeof(PerPlaneData) * mPlanes.size(), alignof(PerPlaneData));
+            // TODO: reduce copy
+            planeData->upload([planes = mPlanes](const Ptr ptr) {
+                memcpy(reinterpret_cast<void*>(ptr), planes.data(), sizeof(PerPlaneData) * planes.size());
+            });
+
+            auto cdfData = ctx.tracer.getAccelerator().createBuffer(sizeof(Dimensionless<float>) * mCDF.size(),
+                                                                    alignof(Dimensionless<float>));
+            // TODO: reduce copy
+            cdfData->upload([cdf = mCDF](const Ptr ptr) {
+                memcpy(reinterpret_cast<void*>(ptr), cdf.data(), sizeof(Dimensionless<float>) * cdf.size());
+            });
+
+            auto pdfData = ctx.tracer.getAccelerator().createBuffer(sizeof(Dimensionless<float>) * mPDF.size(),
+                                                                    alignof(Dimensionless<float>));
+            // TODO: reduce copy
+            pdfData->upload([pdf = mPDF](const Ptr ptr) {
+                memcpy(reinterpret_cast<void*>(ptr), pdf.data(), sizeof(Dimensionless<float>) * pdf.size());
+            });
 
             SampledGeometryProgram prog;
             prog.sample = ctx.tracer.buildProgram(linkable, "planeSample");
             prog.payload = packSBTPayload(context().getAllocator(),
                                           CDFData{
-                                              ptr,
+                                              ctx.registerResource(planeData),
                                               traversal,
-                                              cdf,
-                                              pdf,
+                                              ctx.registerResource(cdfData),
+                                              ctx.registerResource(pdfData),
                                               Dimensionless<float>{ 1.0f / mArea.val },
                                               static_cast<uint32_t>(mCDF.size()),
                                           });
@@ -158,7 +185,8 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mKernelPath(path, context.getAllocator()) {
+        explicit ModuleImpl(PiperContext& context, const CString path)
+            : Module(context), mKernelPath(path, context.getAllocator()) {
             mKernelPath += "/Kernel.bc";
         }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,

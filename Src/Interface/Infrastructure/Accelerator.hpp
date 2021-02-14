@@ -100,6 +100,7 @@ namespace Piper {
             if(getShareMode() == ResourceShareMode::Unique) {
                 std::shared_lock<std::shared_mutex> guard{ mReferenceMutex };
                 DynamicArray<Future<void>> futures{ context().getAllocator() };
+                futures.push_back(available());
                 for(auto&& inst : mReferences) {
                     flushBeforeRead(inst);
                     futures.push_back(Future<void>{ inst.second->getFuture() });
@@ -149,7 +150,9 @@ namespace Piper {
             return requireReference(ctx).second;
         }
         [[nodiscard]] SharedPtr<FutureImpl> access() {
-            return syncToReferences().raw();
+            if(getShareMode() == ResourceShareMode::Sharable)
+                return syncToReferences().raw();
+            return requireMain().second->getFuture();
         }
         void makeDirty(const SharedPtr<FutureImpl>& future) const {
             requireMain().second->setFuture(future);
@@ -193,9 +196,10 @@ namespace Piper {
         }
     };
 
+    // TODO: type-check?
     class Buffer : public Resource {
     public:
-        Buffer(PiperContext& context) : Resource{ context } {}
+        PIPER_INTERFACE_CONSTRUCT(Buffer, Resource);
         [[nodiscard]] virtual size_t size() const noexcept = 0;
 
         // For CPU: reduce copy

@@ -71,10 +71,9 @@ namespace Piper {
                          const RenderRECT& rect, const SensorNDCAffineTransform& transform, Tracer& tracer,
                          TraceLauncher& launcher) override {
             // TODO:use buffer (pass dependencies to tracer)
-            // auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(Spectrum<Radiance>), 128);
-            // payload.res = reinterpret_cast<Spectrum<Radiance>*>(buffer->ref()->getHandle());
-            // buffer->reset();
-            DynamicArray<RGBW> buffer{ res.size(), context().getAllocator() };
+            auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(RGBW), alignof(RGBW));
+            buffer->reset();
+
             const auto spp = launcher.getSamplesPerPixel();
             constexpr uint32_t tileSize = 32;
             const auto blockX = (rect.width + tileSize - 1) / tileSize;
@@ -84,17 +83,25 @@ namespace Piper {
 
             List<Future<void>> tiles{ context().getAllocator() };
 
-            const auto launchData = packSBTPayload(context().getAllocator(), LaunchData{ buffer.data(), width, height });
+            const Function<SBTPayload, uint32_t> launchData =
+                [width, height, allocator = STLAllocator{ context().getAllocator() }](const uint32_t offset) {
+                    return packSBTPayload(allocator, LaunchData{ offset, width, height });
+                };
+
+            ResourceView bufferRef{ buffer, ResourceAccessMode::ReadOnly };  // Not ReadWrite!!
+            const Span<ResourceView> resources = { &bufferRef, 1 };
 
             for(uint32_t bx = 0; bx < blockX; ++bx)
                 for(uint32_t by = 0; by < blockY; ++by) {
                     const auto left = rect.left + bx * tileSize, top = rect.top + by * tileSize;
                     const auto tile = RenderRECT{ left, top, std::min(tileSize, rect.width - bx * tileSize),
                                                   std::min(tileSize, rect.height - by * tileSize) };
-                    tiles.emplace_back(launcher.launch(tile, launchData, transform, spp));
-                    //tiles.back().wait();
+                    // TODO: use standard tiled computation interface
+
+                    tiles.emplace_back(launcher.launch(tile, launchData, resources, transform, spp));
                 }
 
+            // TODO: move progress computation to Concurrency.hpp
             uint32_t progress = 0;
             while(!tiles.empty()) {
                 tiles.remove_if([](Future<void>& future) { return future.ready(); });
@@ -114,11 +121,11 @@ namespace Piper {
                 std::this_thread::sleep_for(100ms);
             }
 
-            // auto bufferCPU = buffer->download();
-            // bufferCPU.wait();
-            // memcpy(res.data(),bufferCPU->data(), bufferCPU->size());
+            // TODO: use accelerator
+            auto bufferCPU = buffer->download().getSync();
+            const auto bufferData = reinterpret_cast<const RGBW*>(bufferCPU.data());
             for(size_t idx = 0; idx < res.size(); ++idx) {
-                auto& rgbw = buffer[idx];
+                auto& rgbw = bufferData[idx];
                 if(rgbw.weight.val != 0.0f)
                     res[idx] = rgbw.radiance / rgbw.weight;
                 else
@@ -143,7 +150,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path)
+        explicit ModuleImpl(PiperContext& context, const CString path)
             : Module(context), mPath{ String{ path, context.getAllocator() } + "/Kernel.bc" } {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {

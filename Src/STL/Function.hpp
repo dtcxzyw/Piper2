@@ -17,10 +17,12 @@
 
 #pragma once
 //#include "STLAllocator.hpp"
-// TODO:custom allocator
+// TODO: custom allocator
 #include <functional>
 
 namespace Piper {
     template <typename R, typename... Args>
     using Function = std::function<R(Args...)>;
+    // TODO: support uncopyable function for call once
+
 }  // namespace Piper

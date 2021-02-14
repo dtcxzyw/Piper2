@@ -93,7 +93,7 @@ namespace Piper {
     class LLVMProgram final : public RunnableProgramUntyped {
     private:
         std::unique_ptr<llvm::orc::LLJIT> mJIT;
-        using KernelFunction = void (*)(const TaskContext& ctx);
+        using KernelFunction = void (*)(const TaskContext ctx);
         KernelFunction mFunction;
 
     public:
@@ -101,7 +101,7 @@ namespace Piper {
             : RunnableProgramUntyped{ context }, mJIT{ std::move(JIT) } {
             mFunction = static_cast<KernelFunction>(lookup(entry));
         }
-        void run(const TaskContext& ctx) const {
+        void run(const TaskContext ctx) const {
             mFunction(ctx);
         }
         void* lookup(const String& symbol) override {
@@ -212,19 +212,19 @@ namespace Piper {
         }
     }
 
-    struct TaskContextEx {
-        TaskContext ctx;
+    struct TaskContextImplEx {
+        TaskContextImpl ctx;
         const ArgumentPackage& args;
         const DynamicArray<ResourceView>& resources;
     };
 
-    static void piperGetArgument(const TaskContext& context, const uint32_t index, void* ptr) {
-        auto&& ctxEx = *reinterpret_cast<const TaskContextEx*>(&context);
+    static void piperGetArgument(const TaskContext context, const uint32_t index, void* ptr) {
+        auto&& ctxEx = *reinterpret_cast<const TaskContextImplEx*>(context);
         const auto [offset, size] = ctxEx.args.offset[index];
         memcpy(ptr, ctxEx.args.data.data() + offset, size);
     }
-    static void piperGetResourceHandle(const TaskContext& context, const uint32_t index, ResourceHandle& handle) {
-        auto&& ctxEx = *reinterpret_cast<const TaskContextEx*>(&context);
+    static void piperGetResourceHandle(const TaskContext context, const uint32_t index, ResourceHandle& handle) {
+        auto&& ctxEx = *reinterpret_cast<const TaskContextImplEx*>(context);
         handle = ctxEx.resources[index].resource->require(nullptr)->getHandle();
     }
 
@@ -399,6 +399,7 @@ namespace Piper {
 
             auto& scheduler = context().getScheduler();
             // TODO: reduce copy
+            // TODO: remove same resource reference
             DynamicArray<Future<void>> input{ context().getAllocator() };
             for(auto&& [resource, access] : resources)
                 input.push_back(Future<void>{ resource->access() });
@@ -411,22 +412,22 @@ namespace Piper {
                          block](const uint32_t idx, const SharedPtr<RunnableProgramUntyped>& func, PlaceHolder) {
                             auto& program = dynamic_cast<LLVMProgram&>(*func);
 
-                            TaskContextEx ctxEx{ { grid,
-                                                   { idx / grid.z / grid.y, idx / grid.z % grid.y, idx % grid.z },
-                                                   block,
-                                                   idx,
-                                                   idx * taskPerBlock,
-                                                   0,
-                                                   { 0, 0, 0 } },
-                                                 input,
-                                                 resources };
+                            TaskContextImplEx ctxEx{ { grid,
+                                                       { idx / grid.z / grid.y, idx / grid.z % grid.y, idx % grid.z },
+                                                       block,
+                                                       idx,
+                                                       idx * taskPerBlock,
+                                                       0,
+                                                       { 0, 0, 0 } },
+                                                     input,
+                                                     resources };
                             auto&& ctx = ctxEx.ctx;
 
                             // TODO: support unroll
                             for(auto& i = ctx.blockIndex.x = 0; i < block.x; ++i)
                                 for(auto& j = ctx.blockIndex.y = 0; j < block.y; ++j)
                                     for(auto& k = ctx.blockIndex.z = 0; k < block.z; ++k, ++ctx.blockLinearIndex, ++ctx.index) {
-                                        program.run(ctx);
+                                        program.run(reinterpret_cast<TaskContext>(&ctx));
                                     }
                         },
                         kernel, scheduler.wrap(input))

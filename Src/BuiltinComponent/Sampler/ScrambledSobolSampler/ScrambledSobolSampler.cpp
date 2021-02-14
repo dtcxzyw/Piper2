@@ -40,7 +40,10 @@ namespace Piper {
             : Sampler(context), mKernelPath(path + "/Kernel.bc"),
               mSamplesPerPixel(static_cast<uint32_t>(config->at("SamplesPerPixel")->get<uintmax_t>())),
               mScramble(static_cast<uint32_t>(config->at("Scramble")->get<uintmax_t>())) {
+#pragma warning(push, 4)
+#pragma warning(disable : 4146)
             if((mSamplesPerPixel & -mSamplesPerPixel) != mSamplesPerPixel) {
+#pragma warning(pop)
                 mSamplesPerPixel = 1U << static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(mSamplesPerPixel))));
                 if(context.getLogger().allow(LogLevel::Warning))
                     context.getLogger().record(LogLevel::Warning,

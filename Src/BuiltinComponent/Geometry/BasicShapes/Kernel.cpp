@@ -55,10 +55,12 @@ namespace Piper {
         return { (x * invDet).val, (y * invDet).val };
     }
 
-    // TODO:handle degeneracy
-    extern "C" void planeIntersect(RestrictedContext, const void* SBTData, const uint32_t primitiveID,
+    // TODO: handle degeneracy
+    extern "C" void planeIntersect(const RestrictedContext context, const void* SBTData, const uint32_t primitiveID,
                                    const RayInfo<FOR::Local>& ray, const float tNear, float& tFar, void* storage) {
-        const auto& data = static_cast<const PlaneData*>(SBTData)->primitives[primitiveID];
+        ResourceHandle primitivesHandle;
+        piperGetResourceHandleIndirect(context, static_cast<const PlaneData*>(SBTData)->primitives, primitivesHandle);
+        const auto& data = reinterpret_cast<const PerPlaneData*>(primitivesHandle)[primitiveID];
         // dot(ray.origin + ray.direction * t - plane.origin, plane.normal) = 0 -> kt=b
         const auto delta = data.origin - ray.origin;
         const auto b = dot(delta, data.normal);
@@ -76,9 +78,11 @@ namespace Piper {
     }
     static_assert(std::is_same_v<GeometryIntersectFunc, decltype(&planeIntersect)>);
 
-    extern "C" void planeOcclude(RestrictedContext, const void* SBTData, const uint32_t primitiveID,
+    extern "C" void planeOcclude(const RestrictedContext context, const void* SBTData, const uint32_t primitiveID,
                                  const RayInfo<FOR::Local>& ray, const float tNear, const float tFar, bool& hit) {
-        const auto& data = static_cast<const PlaneData*>(SBTData)->primitives[primitiveID];
+        ResourceHandle primitivesHandle;
+        piperGetResourceHandleIndirect(context, static_cast<const PlaneData*>(SBTData)->primitives, primitivesHandle);
+        const auto& data = reinterpret_cast<const PerPlaneData*>(primitivesHandle)[primitiveID];
         // dot(ray.origin + ray.direction * t - plane.origin, plane.normal) = 0 -> kt=b
         const auto delta = data.origin - ray.origin;
         const auto b = dot(delta, data.normal);
@@ -110,8 +114,16 @@ namespace Piper {
                                 float u1, const float u2, Point<Distance, FOR::World>& src, Normal<float, FOR::World>& n,
                                 Dimensionless<float>& pdf) {
         const auto* data = static_cast<const CDFData*>(SBTData);
-        const auto idx = select(data->cdf, data->pdf, data->size, u1);
-        const auto& plane = data->primitives[idx];
+
+        ResourceHandle cdfHandle, pdfHandle;
+        piperGetResourceHandleIndirect(context, data->cdf, cdfHandle);
+        piperGetResourceHandleIndirect(context, data->pdf, pdfHandle);
+        const auto idx = select(reinterpret_cast<const Dimensionless<float>*>(cdfHandle),
+                                reinterpret_cast<const Dimensionless<float>*>(pdfHandle), data->size, u1);
+
+        ResourceHandle primitivesHandle;
+        piperGetResourceHandleIndirect(context, data->primitives, primitivesHandle);
+        const auto& plane = reinterpret_cast<const PerPlaneData*>(primitivesHandle)[idx];
         Transform<Distance, FOR::Local, FOR::World> transform;
         piperQueryTransform(context, data->traversal, transform);
         src = transform(plane.origin + Dimensionless<float>{ u1 } * plane.u + Dimensionless<float>{ u2 } * plane.v);

@@ -19,26 +19,26 @@
 
 namespace Piper {
     extern "C" {
-    void piperGetGridSize(const TaskContext& context, Dim3& dim) {
-        dim = context.gridSize;
+    void piperGetGridSize(const TaskContext context, Dim3& dim) {
+        dim = reinterpret_cast<const TaskContextImpl*>(context)->gridSize;
     }
-    void piperGetBlockSize(const TaskContext& context, Dim3& dim) {
-        dim = context.blockSize;
+    void piperGetBlockSize(const TaskContext context, Dim3& dim) {
+        dim = reinterpret_cast<const TaskContextImpl*>(context)->blockSize;
     }
-    void piperGetGridIndex(const TaskContext& context, Dim3& index) {
-        index = context.gridIndex;
+    void piperGetGridIndex(const TaskContext context, Dim3& index) {
+        index = reinterpret_cast<const TaskContextImpl*>(context)->gridIndex;
     }
-    void piperGetBlockIndex(const TaskContext& context, Dim3& index) {
-        index = context.blockIndex;
+    void piperGetBlockIndex(const TaskContext context, Dim3& index) {
+        index = reinterpret_cast<const TaskContextImpl*>(context)->blockIndex;
     }
-    void piperGetGridLinearIndex(const TaskContext& context, uint32_t& index) {
-        index = context.gridLinearIndex;
+    void piperGetGridLinearIndex(const TaskContext context, uint32_t& index) {
+        index = reinterpret_cast<const TaskContextImpl*>(context)->gridLinearIndex;
     }
-    void piperGetBlockLinearIndex(const TaskContext& context, uint32_t& index) {
-        index = context.blockLinearIndex;
+    void piperGetBlockLinearIndex(const TaskContext context, uint32_t& index) {
+        index = reinterpret_cast<const TaskContextImpl*>(context)->blockLinearIndex;
     }
-    void piperGetTaskIndex(const TaskContext& context, uint32_t& index) {
-        index = context.index;
+    void piperGetTaskIndex(const TaskContext context, uint32_t& index) {
+        index = reinterpret_cast<const TaskContextImpl*>(context)->index;
     }
     }
 }  // namespace Piper

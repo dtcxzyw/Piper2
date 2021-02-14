@@ -30,7 +30,7 @@ namespace Piper {
         return std::generate_canonical<float, std::numeric_limits<size_t>::max()>(ctx->randomEngine);
     }
 
-    void piperMain(const TaskContext& ctx) {
+    void piperMain(const TaskContext ctx) {
         uint64_t beg;
         piperGetTime(nullptr, beg);
         KernelArgument SBT{};
@@ -44,7 +44,7 @@ namespace Piper {
         const auto y = SBT.rect.top + pixelIdx.y;
 
         PerSampleContext context{
-            SBT, { 0.0f }, 5, 0, RandomEngine{ static_cast<uint64_t>((y * SBT.width + x) * SBT.sampleCount + sampleIdx) }
+            SBT, ctx, { 0.0f }, 5, 0, RandomEngine{ static_cast<uint64_t>((y * SBT.width + x) * SBT.sampleCount + sampleIdx) }
         };
         Vector2<float> point;
         SBT.start(SBT.SAPayload, x, y, sampleIdx, context.sampleIndex, point);
@@ -71,6 +71,7 @@ namespace Piper {
         piperGetTime(nullptr, end);
         piperStatisticsTime(reinterpret_cast<RestrictedContext>(&context), SBT.profileSampleTime, end - beg);
     }
+    static_assert(std::is_same_v<KernelProtocol, std::decay_t<decltype(piperMain)>>);
 
     Time<float> piperQueryTime(const RestrictedContext context) {
         return reinterpret_cast<PerSampleContext*>(context)->time;
@@ -162,5 +163,8 @@ namespace Piper {
         info.face = hit.face;
     }
     static_assert(std::is_same_v<GeometryPostProcessFunc, decltype(&calcTriangleMeshSurface)>);
+    void piperGetResourceHandleIndirect(const RestrictedContext context, const uint32_t index, ResourceHandle& handle) {
+        piperGetResourceHandle(reinterpret_cast<PerSampleContext*>(context)->ctx, index, handle);
+    }
     }
 }  // namespace Piper

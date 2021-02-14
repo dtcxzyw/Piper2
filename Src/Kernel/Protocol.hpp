@@ -16,6 +16,7 @@
 */
 
 #pragma once
+#include "DeviceRuntime.hpp"
 #include "PhysicalQuantitySI.hpp"
 #include "Transform.hpp"
 #include <cstdint>
@@ -299,6 +300,7 @@ namespace Piper {
     void piperPrintFloat(RestrictedContext context, const char* name, float val);
 
     void piperFloatAtomicAdd(float& x, float y);
+    void piperGetResourceHandleIndirect(RestrictedContext context, uint32_t index, ResourceHandle& handle);
     }
     // TODO:better interface? consider optix
     template <typename Func, typename... Args>

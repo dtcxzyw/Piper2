@@ -44,7 +44,7 @@ namespace Piper {
         [[nodiscard]] uint32_t channel() const noexcept override {
             return mData.channel;
         }
-        TextureProgram materialize(const MaterializeContext& ctx) const override {
+        [[nodiscard]] TextureProgram materialize(const MaterializeContext& ctx) const override {
             TextureProgram res;
             // TODO:concurrency
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
@@ -84,7 +84,7 @@ namespace Piper {
         [[nodiscard]] uint32_t channel() const noexcept override {
             return mData.channel;
         }
-        TextureProgram materialize(const MaterializeContext& ctx) const override {
+        [[nodiscard]] TextureProgram materialize(const MaterializeContext& ctx) const override {
             TextureProgram res;
             // TODO:concurrency
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);

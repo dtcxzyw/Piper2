@@ -27,13 +27,13 @@ namespace Piper {
         uint32_t maxDetComp;
     };
     struct PlaneData final {
-        const PerPlaneData* primitives;
+        uint32_t primitives;
     };
     struct CDFData final {
-        const PerPlaneData* primitives;
+        uint32_t primitives;
         TraversalHandle traversal;
-        const Dimensionless<float>* cdf;
-        const Dimensionless<float>* pdf;
+        uint32_t cdf;
+        uint32_t pdf;
         Dimensionless<float> inverseArea;
         uint32_t size;
     };

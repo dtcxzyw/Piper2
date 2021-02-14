@@ -67,7 +67,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mKernelPath(path, context.getAllocator()) {
+        explicit ModuleImpl(PiperContext& context, const CString path) : Module(context), mKernelPath(path, context.getAllocator()) {
             mKernelPath += "/Kernel.bc";
         }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,

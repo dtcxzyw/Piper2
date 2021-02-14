@@ -131,7 +131,7 @@ void zeroCopy(Piper::Scheduler& scheduler) {
             size_t copyCount;
             CopyCount() : copyCount(0) {}
             CopyCount(const CopyCount& rhs) : copyCount(rhs.copyCount + 1) {}
-            [[noreturn]] void operator=(const CopyCount&) const {
+            void operator=(const CopyCount&) const {
                 FAIL();
             }
             CopyCount(CopyCount&& rhs) = default;
