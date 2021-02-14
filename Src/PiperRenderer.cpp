@@ -21,6 +21,7 @@
 #include "Interface/BuiltinComponent/Light.hpp"
 #include "Interface/BuiltinComponent/RenderDriver.hpp"
 #include "Interface/BuiltinComponent/Sampler.hpp"
+#include "Interface/BuiltinComponent/Sensor.hpp"
 #include "Interface/BuiltinComponent/StructureParser.hpp"
 #include "Interface/BuiltinComponent/Surface.hpp"
 #include "Interface/BuiltinComponent/Tracer.hpp"
@@ -33,14 +34,18 @@
 #include <OpenEXR/ImfRgbaFile.h>
 #undef _CRT_SECURE_NO_WARNINGS
 #pragma warning(pop)
+
 #include <filesystem>
 
 namespace Piper {
-    // TODO:instancing of lights and geometries
+    // TODO: instancing of lights and geometries
+    // TODO: JPG/PNG/DNG/WebP/HEIF/EXIF output
+    // EXR: HDR
+    // JPG/PNG/WebP/HEIF: exchange on the Internet (lossy/lossless)
+    // DNG/EXIF: HDR RAW lossless
 
     class Render final : public Operator {
     private:
-        enum class FitMode { Fill, OverScan };
         [[nodiscard]] FitMode str2FitMode(const String& mode) const {
             if(mode == "Fill")
                 return FitMode::Fill;
@@ -295,44 +300,6 @@ namespace Piper {
                 saveImage(dest + "/Frame" + toString(context().getAllocator(), idx), frames[idx], width, height);
         }
 
-        [[nodiscard]] Pair<SensorNDCAffineTransform, RenderRECT>
-        calcRenderRECT(const uint32_t width, const uint32_t height, const float deviceAspectRatio, const FitMode fitMode) const {
-            RenderRECT rect;
-            SensorNDCAffineTransform transform;
-            const auto imageAspectRatio = static_cast<float>(width) / static_cast<float>(height);
-            const auto iiar = 1.0f / imageAspectRatio;
-            const auto idar = 1.0f / deviceAspectRatio;
-            if(fitMode == FitMode::Fill) {
-                rect = { 0, 0, width, height };
-                if(imageAspectRatio > deviceAspectRatio) {
-                    transform = { 0.0f, (idar - iiar) * 0.5f * deviceAspectRatio, 1.0f, iiar * deviceAspectRatio };
-                } else {
-                    transform = { (deviceAspectRatio - imageAspectRatio) * 0.5f * idar, 0.0f, imageAspectRatio * idar, 1.0f };
-                }
-            } else {
-                if(imageAspectRatio > deviceAspectRatio) {
-                    transform = { -(imageAspectRatio - deviceAspectRatio) * 0.5f * idar, 0.0f, imageAspectRatio * idar, 1.0f };
-                    rect = { static_cast<uint32_t>(floorf(std::max(
-                                 0.0f, static_cast<float>(width) * (imageAspectRatio - deviceAspectRatio) * 0.5f * iiar))),
-                             0,
-                             std::min(width,
-                                      static_cast<uint32_t>(ceilf(static_cast<float>(width) *
-                                                                  (imageAspectRatio + deviceAspectRatio) * 0.5f * iiar))),
-                             height };
-                    rect.width -= rect.left;
-                } else {
-                    transform = { 0.0f, -(iiar - idar) * 0.5f * deviceAspectRatio, 1.0f, deviceAspectRatio * iiar };
-                    rect = { 0,
-                             static_cast<uint32_t>(
-                                 floorf(std::max(0.0f, static_cast<float>(height) * (iiar - idar) * 0.5f * imageAspectRatio))),
-                             width,
-                             static_cast<uint32_t>(ceilf(static_cast<float>(height) * (iiar + idar) * 0.5f * imageAspectRatio)) };
-                    rect.height -= rect.top;
-                }
-            }
-            return { transform, rect };
-        }
-
     public:
         explicit Render(PiperContext& context) : Operator(context) {}
         // TODO:scene module desc
@@ -371,20 +338,18 @@ namespace Piper {
                     context().getErrorHandler().raiseException(
                         "Failed to find a node with sensor named \"" + action.activeSensor + "\".", PIPER_SOURCE_LOCATION());
 
-                auto deviceAspectRatio = -1.0f;
-                const auto launcher = pipeline->prepare(sensor->second, width, height, deviceAspectRatio);
-                const auto [transform, rect] = calcRenderRECT(width, height, deviceAspectRatio, action.fitMode);
+                const auto launcher = pipeline->prepare(sensor->second, width, height, action.fitMode);
 
-                // TODO:stream
+                // TODO: streaming rendering+image output/video encoding
                 DynamicArray<DynamicArray<Spectrum<Radiance>>> frames{ context().getAllocator() };
                 for(uint32_t i = 0; i < action.frameCount; ++i) {
-                    // TODO:better parameters
+                    // TODO: better parameters
                     const auto begin = action.timeBegin +
                         Dimensionless<float>{ static_cast<float>(i) } * (action.shutterOpenTime + action.shutterCloseTime);
                     const auto end = begin + action.shutterOpenTime;
                     launcher->updateTimeInterval(begin, end);
-                    DynamicArray<Spectrum<Radiance>> res(width * height, context().getAllocator());
-                    renderDriver->renderFrame(res, width, height, rect, transform, *tracer, *launcher);
+                    // TODO: better interface
+                    auto res = renderDriver->renderFrame(*tracer, *launcher);
                     frames.push_back(std::move(res));
                 }
 

@@ -55,9 +55,9 @@ namespace Piper {
             return res;
         }
     };
-    // TODO:MeasuredFilter
+    // TODO: MeasuredFilter
 
-    // TODO:unbiased estimator of sample variance
+    // TODO: unbiased estimator of sample variance
     class FixedSampler final : public RenderDriver {
     private:
         String mKernelPath;
@@ -67,14 +67,12 @@ namespace Piper {
         FixedSampler(PiperContext& context, String kernel, const SharedPtr<Config>& config)
             : RenderDriver(context), mKernelPath(std::move(kernel)),
               mFilter(context.getModuleLoader().newInstanceT<Filter>(config->at("Filter")).getSync()) {}
-        void renderFrame(DynamicArray<Spectrum<Radiance>>& res, const uint32_t width, const uint32_t height,
-                         const RenderRECT& rect, const SensorNDCAffineTransform& transform, Tracer& tracer,
-                         TraceLauncher& launcher) override {
-            // TODO:use buffer (pass dependencies to tracer)
+        [[nodiscard]] DynamicArray<Spectrum<Radiance>> renderFrame(Tracer& tracer, TraceLauncher& launcher) override {
+            const auto [width, height] = launcher.getFilmResolution();
             auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(RGBW), alignof(RGBW));
             buffer->reset();
 
-            const auto spp = launcher.getSamplesPerPixel();
+            const auto rect = launcher.getRenderRECT();
             constexpr uint32_t tileSize = 32;
             const auto blockX = (rect.width + tileSize - 1) / tileSize;
             const auto blockY = (rect.height + tileSize - 1) / tileSize;
@@ -98,7 +96,7 @@ namespace Piper {
                                                   std::min(tileSize, rect.height - by * tileSize) };
                     // TODO: use standard tiled computation interface
 
-                    tiles.emplace_back(launcher.launch(tile, launchData, resources, transform, spp));
+                    tiles.emplace_back(launcher.launch(tile, launchData, resources));
                 }
 
             // TODO: move progress computation to Concurrency.hpp
@@ -124,6 +122,7 @@ namespace Piper {
             // TODO: use accelerator
             auto bufferCPU = buffer->download().getSync();
             const auto bufferData = reinterpret_cast<const RGBW*>(bufferCPU.data());
+            DynamicArray<Spectrum<Radiance>> res{ width * height, context().getAllocator() };
             for(size_t idx = 0; idx < res.size(); ++idx) {
                 auto& rgbw = bufferData[idx];
                 if(rgbw.weight.val != 0.0f)
@@ -131,6 +130,7 @@ namespace Piper {
                 else
                     res[idx] = Spectrum<Radiance>{};
             }
+            return res;
         }
 
         [[nodiscard]] RenderDriverProgram materialize(const MaterializeContext& ctx) const override {

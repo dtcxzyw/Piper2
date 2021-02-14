@@ -28,6 +28,7 @@
 
 namespace Piper {
     enum class TextureWrap : uint32_t;
+    enum class FitMode : uint32_t;
 
     class AccelerationStructure : public Object {
     public:
@@ -92,21 +93,27 @@ namespace Piper {
     };
 
     // NOTICE: It is a guard.
+    // TODO: support progressive rendering/self-adaptive rendering
+    // TODO: support denoiser
     class TraceLauncher : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(TraceLauncher, Object) [[nodiscard]] virtual uint32_t getSamplesPerPixel() const noexcept = 0;
+        PIPER_INTERFACE_CONSTRUCT(TraceLauncher, Object);
+        [[nodiscard]] virtual Pair<uint32_t, uint32_t> getFilmResolution() const noexcept = 0;
+        [[nodiscard]] virtual RenderRECT getRenderRECT() const noexcept = 0;
+        // TODO: pure stateless interface
         virtual void updateTimeInterval(Time<float> begin, Time<float> end) noexcept = 0;
+        // TODO: support tiled-rendering
         [[nodiscard]] virtual Future<void> launch(const RenderRECT& rect, const Function<SBTPayload, uint32_t>& launchData,
-                                                  const Span<ResourceView>& resources, const SensorNDCAffineTransform& transform,
-                                                  uint32_t sampleCount) = 0;
+                                                  const Span<ResourceView>& resources) = 0;
     };
 
     class Pipeline : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Pipeline, Object) [[nodiscard]] virtual String generateStatisticsReport() const = 0;
+        PIPER_INTERFACE_CONSTRUCT(Pipeline, Object);
+        [[nodiscard]] virtual String generateStatisticsReport() const = 0;
         // TODO: better interface
         [[nodiscard]] virtual SharedPtr<TraceLauncher> prepare(const SharedPtr<Node>& sensor, uint32_t width, uint32_t height,
-                                                               float& deviceAspectRatio) = 0;
+                                                               FitMode fitMode) = 0;
     };
 
     using CallSiteRegister = Function<CallHandle, const SharedPtr<RTProgram>&, const SBTPayload&>;
@@ -120,9 +127,8 @@ namespace Piper {
         const TextureLoader loadTexture;
     };
 
-    // TODO: Texture extension for Accelerator
+    // TODO: Texture extension for Accelerator?
     // TODO: Concurrency
-    // TODO: Alignment Requirement Query
 
     enum class AlignmentRequirement { VertexBuffer, IndexBuffer, TextureCoordsBuffer, BoundsBuffer };
 

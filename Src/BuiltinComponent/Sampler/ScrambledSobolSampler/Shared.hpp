@@ -25,6 +25,5 @@ namespace Piper {
     struct SobolData final {
         uint32_t resolution;
         uint32_t log2Resolution;
-        uint32_t scramble;
     };
 }  // namespace Piper

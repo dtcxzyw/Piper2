@@ -33,17 +33,14 @@ namespace Piper {
     private:
         String mKernelPath;
         uint32_t mSamplesPerPixel;
-        uint32_t mScramble;
+        bool mScramble;
 
     public:
         SobolSampler(PiperContext& context, const String& path, const SharedPtr<Config>& config)
             : Sampler(context), mKernelPath(path + "/Kernel.bc"),
               mSamplesPerPixel(static_cast<uint32_t>(config->at("SamplesPerPixel")->get<uintmax_t>())),
-              mScramble(static_cast<uint32_t>(config->at("Scramble")->get<uintmax_t>())) {
-#pragma warning(push, 4)
-#pragma warning(disable : 4146)
-            if((mSamplesPerPixel & -mSamplesPerPixel) != mSamplesPerPixel) {
-#pragma warning(pop)
+              mScramble(static_cast<uint32_t>(config->at("Scramble")->get<bool>())) {
+            if((mSamplesPerPixel & (mSamplesPerPixel - 1U))) {
                 mSamplesPerPixel = 1U << static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(mSamplesPerPixel))));
                 if(context.getLogger().allow(LogLevel::Warning))
                     context.getLogger().record(LogLevel::Warning,
@@ -51,6 +48,9 @@ namespace Piper {
                                                    toString(context.getAllocator(), mSamplesPerPixel),
                                                PIPER_SOURCE_LOCATION());
             }
+            // TODO: scramble
+            if(mScramble)
+                context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
         }
 
         [[nodiscard]] SamplerProgram materialize(const MaterializeContext& ctx) const override {
@@ -63,10 +63,11 @@ namespace Piper {
             return res;
         }
 
-        [[nodiscard]] SamplerAttributes generatePayload(const uint32_t width, const uint32_t height) const override {
-            const auto log2Resolution = static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(std::max(width, height)))));
+        [[nodiscard]] SamplerAttributes generatePayload(const uint32_t sampleWidth, const uint32_t sampleHeight) const override {
+            const auto log2Resolution =
+                static_cast<uint32_t>(std::ceil(std::log2(static_cast<double>(std::max(sampleWidth, sampleHeight)))));
             return { packSBTPayload(context().getAllocator(),
-                                    SobolData{ static_cast<uint32_t>(1U << log2Resolution), log2Resolution, mScramble }),
+                                    SobolData{ static_cast<uint32_t>(1U << log2Resolution), log2Resolution }),
                      numSobolDimensions, mSamplesPerPixel };
         }
     };
@@ -77,7 +78,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mPath(path, context.getAllocator()) {}
+        explicit ModuleImpl(PiperContext& context, const CString path) : Module(context), mPath(path, context.getAllocator()) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "Sampler") {

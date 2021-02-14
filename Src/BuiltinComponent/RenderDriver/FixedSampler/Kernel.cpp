@@ -44,7 +44,7 @@ namespace Piper {
                                                          point.y - (static_cast<float>(py) + 0.5f), weight);
             // TODO: optimize access
 
-            atomicAdd(rgbw[px + py * data->w], sample, weight);
+            atomicAdd(rgbw[px + py * data->w], sample * weight, weight);
         };
         const auto bx = static_cast<int32_t>(point.x - 0.5f), by = static_cast<int32_t>(point.y - 0.5f);
         add(bx, by);

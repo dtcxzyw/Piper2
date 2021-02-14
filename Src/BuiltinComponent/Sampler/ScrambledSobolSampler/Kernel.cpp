@@ -49,18 +49,21 @@ namespace Piper {
         return index;
     }
 
-    extern "C" void sobolStart(const void* SBTData, const uint32_t x, const uint32_t y, const uint32_t sample, uint64_t& idx,
-                               Vector2<float>& pos) {
+    extern "C" void sobolStart(const void* SBTData, const uint32_t sampleX, const uint32_t sampleY, const uint32_t sample,
+                               uint64_t& idx, Vector2<float>& pixelOffset) {
         const auto* data = static_cast<const SobolData*>(SBTData);
-        idx = sobolIntervalToIndex(data->log2Resolution, sample, x, y);
-        pos.x = static_cast<float>(x) + sobolSampleImpl(idx, 0, data->scramble);
-        pos.y = static_cast<float>(y) + sobolSampleImpl(idx, 1, data->scramble);
+        idx = sobolIntervalToIndex(data->log2Resolution, sample, sampleX, sampleY);
+        pixelOffset.x = fmin(
+            fmax(sobolSampleImpl(idx, 0, 0) * static_cast<float>(data->resolution) - static_cast<float>(sampleX), 0.0f),
+                     1.0f);
+        pixelOffset.y = fmin(
+            fmax(sobolSampleImpl(idx, 1, 0) * static_cast<float>(data->resolution) - static_cast<float>(sampleY), 0.0f),
+                     1.0f);
     }
     static_assert(std::is_same_v<SampleStartFunc, decltype(&sobolStart)>);
 
-    extern "C" void sobolGenerate(const void* SBTData, const uint64_t idx, const uint32_t dim, float& val) {
-        const auto* data = static_cast<const SobolData*>(SBTData);
-        val = sobolSampleImpl(idx, dim, data->scramble);
+    extern "C" void sobolGenerate(const void*, const uint64_t idx, const uint32_t dim, float& val) {
+        val = sobolSampleImpl(idx, dim, 0);
     }
     static_assert(std::is_same_v<SampleGenerateFunc, decltype(&sobolGenerate)>);
 }  // namespace Piper

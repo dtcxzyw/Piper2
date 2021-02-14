@@ -32,9 +32,8 @@ namespace Piper {
 
     class Sampler : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Sampler, Object)
-        virtual ~Sampler() = default;
+        PIPER_INTERFACE_CONSTRUCT(Sampler, Object);
         [[nodiscard]] virtual SamplerProgram materialize(const MaterializeContext& ctx) const = 0;
-        [[nodiscard]] virtual SamplerAttributes generatePayload(uint32_t width, uint32_t height) const = 0;
+        [[nodiscard]] virtual SamplerAttributes generatePayload(uint32_t sampleWidth, uint32_t sampleHeight) const = 0;
     };
 }  // namespace Piper

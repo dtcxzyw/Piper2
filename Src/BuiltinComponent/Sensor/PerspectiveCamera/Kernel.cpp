@@ -28,10 +28,10 @@ namespace Piper {
         // TODO:consider rotate/scale?
         const auto base = transform.originRefB();
         const auto forward = Normal<float, FOR::World>{ data->lookAt - base };
-        const auto right = cross(data->upRef, forward);
-        const auto up = cross(forward, right);
+        const auto right = cross(forward, data->upRef);
+        const auto up = cross(right, forward);
         const auto filmHit =
-            base + right * Distance{ data->size.x * (NDC.x - 0.5f) } + up * Distance{ data->size.y * (NDC.y - 0.5f) };
+            base + right * Distance{ data->size.x * (0.5f - NDC.x) } + up * Distance{ data->size.y * (NDC.y - 0.5f) };
         // TODO:AF/MF mode support
         const auto focalDistance = dot(data->lookAt - base, forward);
         const auto filmDistance = inverse(inverse(data->focalLength) - inverse(focalDistance));

@@ -764,7 +764,7 @@ namespace Piper {
         }
     }
 
-    // TODO:use rtcJoinCommitScene?
+    // TODO: use rtcJoinCommitScene?
 
     class EmbreeBranchNode final : public EmbreeNode {
     private:
@@ -956,7 +956,7 @@ namespace Piper {
         // void postMaterialize(const TraversalHandle* follow, ResourceHolder& holder) const {}
     };
 
-    struct EmbreeRTProgram final : public RTProgram {
+    struct EmbreeRTProgram final : RTProgram {
         LinkableProgram program;
         String symbol;
         EmbreeRTProgram(PiperContext& context, LinkableProgram prog, String sym)
@@ -969,7 +969,6 @@ namespace Piper {
         KernelArgument mArg;
         RunnableProgram<KernelArgument> mKernel;
         DynamicArray<ResourceView> mResources;
-        uint32_t mSamplesPerPixel;
         std::unique_lock<std::mutex> mLock;
         SharedPtr<EmbreeNode> mRoot;
         MemoryArena mArena;
@@ -977,17 +976,15 @@ namespace Piper {
     public:
         explicit EmbreeTraceLauncher(PiperContext& context, Accelerator& accelerator, const KernelArgument& argTemplate,
                                      RunnableProgram<KernelArgument> kernel, DynamicArray<ResourceView> resources,
-                                     SharedPtr<EmbreeNode> root, std::mutex& mutex, const uint32_t samplesPerPixel)
+                                     SharedPtr<EmbreeNode> root, std::mutex& mutex)
             : TraceLauncher(context), mAccelerator(accelerator), mArg(argTemplate),
-              mKernel(std::move(kernel)), mResources{ std::move(resources) }, mSamplesPerPixel(samplesPerPixel),
-              mLock(mutex, std::try_to_lock), mRoot(std::move(root)), mArena(context.getAllocator(), 128) {
+              mKernel(std::move(kernel)), mResources{ std::move(resources) }, mLock(mutex, std::try_to_lock),
+              mRoot(std::move(root)), mArena(context.getAllocator(), 128) {
             if(!mLock.owns_lock())
                 context.getErrorHandler().raiseException("The pipeline is locked.", PIPER_SOURCE_LOCATION());
         }
         [[nodiscard]] Future<void> launch(const RenderRECT& rect, const Function<SBTPayload, uint32_t>& launchData,
-                                          const Span<ResourceView>& resources, const SensorNDCAffineTransform& transform,
-                                          const uint32_t sampleCount) override {
-
+                                          const Span<ResourceView>& resources) override {
             const auto launchSBT = launchData(static_cast<uint32_t>(mResources.size()));
             auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(launchSBT.size()));
             memcpy(ptr, launchSBT.data(), launchSBT.size());
@@ -995,22 +992,23 @@ namespace Piper {
 
             arg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
             arg.launchData = ptr;
-            arg.sampleCount = sampleCount;
-            arg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
 
             // TODO: reduce copy
             auto fullResources = mResources;
             for(auto&& res : resources)
                 fullResources.push_back(res);
 
-            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ sampleCount, 1, 1 }, mKernel,
+            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ arg.sampleCount, 1, 1 }, mKernel,
                                              fullResources, arg);
+        }
+        [[nodiscard]] RenderRECT getRenderRECT() const noexcept override {
+            return *reinterpret_cast<const RenderRECT*>(&mArg.fullRect);
         }
         void updateTimeInterval(const Time<float> begin, const Time<float> end) noexcept override {
             mRoot->updateTimeInterval(begin, end);
         }
-        [[nodiscard]] uint32_t getSamplesPerPixel() const noexcept override {
-            return mSamplesPerPixel;
+        [[nodiscard]] Pair<uint32_t, uint32_t> getFilmResolution() const noexcept override {
+            return { mArg.width, mArg.height };
         }
     };
 
@@ -1302,26 +1300,31 @@ namespace Piper {
             mArg.errorHandler = &context.getErrorHandler();
         }
         [[nodiscard]] SharedPtr<TraceLauncher> prepare(const SharedPtr<Node>& sensor, const uint32_t width, const uint32_t height,
-                                                       float& deviceAspectRatio) override {
+                                                       const FitMode fitMode) override {
             const auto sensorIter = mSensors.find(sensor.get());
             if(sensorIter == mSensors.cend())
-                context().getErrorHandler().raiseException("Unresolved reference node of the active sensor.",
+                context().getErrorHandler().raiseException("The reference node of the active sensor cannot be resolved.",
                                                            PIPER_SOURCE_LOCATION());
-            deviceAspectRatio = dynamic_cast<const EmbreeLeafNodeWithSensor*>(sensorIter->first)->getSensor().aspectRatio();
+            const auto deviceAspectRatio =
+                dynamic_cast<const EmbreeLeafNodeWithSensor*>(sensorIter->first)->getSensor().aspectRatio();
+
+            auto [transform, rect] = calcRenderRECT(width, height, deviceAspectRatio, fitMode);
 
             auto arg = mArg;
             arg.rayGen = sensorIter->second.rayGen;
             arg.RGPayload = sensorIter->second.RGPayload;
 
-            const auto attr = mSampler->generatePayload(width, height);
-            // TODO:pass image size or real rendering window size?
+            const auto attr = mSampler->generatePayload(rect.width, rect.height);
             arg.SAPayload = upload(attr.payload);
             arg.maxDimension = attr.maxDimension;
 
             arg.width = width;
             arg.height = height;
+            arg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
+            arg.sampleCount = attr.samplesPerPixel;
+            arg.fullRect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
             return makeSharedObject<EmbreeTraceLauncher>(context(), mAccelerator, arg, mKernel.value(), mResources, mScene,
-                                                         mMutex, attr.samplesPerPixel);
+                                                         mMutex);
         }
         String generateStatisticsReport() const override {
             return mProfiler.generateReport();

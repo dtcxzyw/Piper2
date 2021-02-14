@@ -27,8 +27,7 @@ namespace Piper {
 
     class Filter : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Filter, Object)
-        virtual ~Filter() = default;
+        PIPER_INTERFACE_CONSTRUCT(Filter, Object);
         [[nodiscard]] virtual FilterProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 
@@ -38,10 +37,8 @@ namespace Piper {
     };
     class RenderDriver : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(RenderDriver, Object)
-        virtual ~RenderDriver() = default;
-        virtual void renderFrame(DynamicArray<Spectrum<Radiance>>& res, uint32_t width, uint32_t height, const RenderRECT& rect,
-                                 const SensorNDCAffineTransform& transform, Tracer& tracer, TraceLauncher& launcher) = 0;
+        PIPER_INTERFACE_CONSTRUCT(RenderDriver, Object);
+        [[nodiscard]] virtual DynamicArray<Spectrum<Radiance>> renderFrame(Tracer& tracer, TraceLauncher& launcher) = 0;
         [[nodiscard]] virtual RenderDriverProgram materialize(const MaterializeContext& ctx) const = 0;
     };
 }  // namespace Piper

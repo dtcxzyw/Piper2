@@ -39,15 +39,21 @@ namespace Piper {
         piperGetBlockLinearIndex(ctx, sampleIdx);
         Dim3 pixelIdx;
         piperGetGridIndex(ctx, pixelIdx);
-
-        const auto x = SBT.rect.left + pixelIdx.x;
-        const auto y = SBT.rect.top + pixelIdx.y;
+        pixelIdx.x += SBT.rect.left - SBT.fullRect.left;
+        pixelIdx.y += SBT.rect.top - SBT.fullRect.top;
 
         PerSampleContext context{
-            SBT, ctx, { 0.0f }, 5, 0, RandomEngine{ static_cast<uint64_t>((y * SBT.width + x) * SBT.sampleCount + sampleIdx) }
+            SBT,
+            ctx,
+            { 0.0f },
+            5,
+            0,
+            RandomEngine{ static_cast<uint64_t>(pixelIdx.x * SBT.fullRect.height + pixelIdx.y) * SBT.sampleCount + sampleIdx }
         };
         Vector2<float> point;
-        SBT.start(SBT.SAPayload, x, y, sampleIdx, context.sampleIndex, point);
+        SBT.start(SBT.SAPayload, pixelIdx.x, pixelIdx.y, sampleIdx, context.sampleIndex, point);
+        point.x += static_cast<float>(SBT.fullRect.left + pixelIdx.x);
+        point.y += static_cast<float>(SBT.fullRect.top + pixelIdx.y);
         SBT.generate(SBT.SAPayload, context.sampleIndex, 2, context.time.val);
 
         // TODO:move to transform

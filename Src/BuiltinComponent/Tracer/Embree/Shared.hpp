@@ -69,6 +69,7 @@ namespace Piper {
         uint32_t width, height;
 
         RenderRECTAlias rect;
+        RenderRECTAlias fullRect;
         RTCSceneTy* scene;
         SensorFunc rayGen;
         const void* RGPayload;
