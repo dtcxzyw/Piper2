@@ -56,12 +56,12 @@ namespace Piper {
         TextureProgram materialize(const MaterializeContext& ctx) const override {
             TextureProgram res;
             // TODO: concurrency
-            const auto linkable = mKernel.getSync()->generateLinkable(ctx.tracer.getAccelerator().getSupportedLinkableFormat());
+            const auto linkable = mKernel.getSync()->generateLinkable(ctx.accelerator.getSupportedLinkableFormat());
             res.sample = ctx.tracer.buildProgram(linkable, "sampleTexture");
 
             // TODO: reduce copy
             // TODO: caching
-            auto texel = ctx.tracer.getAccelerator().createBuffer(mData.width * mData.height * mData.channel, 16);
+            auto texel = ctx.accelerator.createBuffer(mData.width * mData.height * mData.channel, 16);
             texel->upload([image = mImage, size = texel->size()](const Ptr ptr) {
                 memcpy(reinterpret_cast<void*>(ptr), image->data(), size);
             });

@@ -52,7 +52,7 @@ namespace Piper {
             SensorProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.rayGen = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(),
                 "rayGen");
             auto data = mData;
             data.traversal = id;

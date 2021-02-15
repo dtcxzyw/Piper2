@@ -49,7 +49,7 @@ namespace Piper {
             FilterProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.weight = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(),
                 mFilterType);
             res.payload = packSBTPayload(context().getAllocator(), mPayload);
             return res;
@@ -137,7 +137,7 @@ namespace Piper {
             RenderDriverProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.accumulate = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(),
                 "accumulate");
             auto [sbt, prog] = mFilter->materialize(ctx);
             res.payload = packSBTPayload(context().getAllocator(), RDData{ ctx.registerCall(prog, sbt) });

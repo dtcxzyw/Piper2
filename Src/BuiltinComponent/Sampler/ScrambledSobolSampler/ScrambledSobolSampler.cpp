@@ -57,7 +57,7 @@ namespace Piper {
             SamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.start = ctx.tracer.buildProgram(linkable, "sobolStart");
             res.generate = ctx.tracer.buildProgram(linkable, "sobolGenerate");
             return res;

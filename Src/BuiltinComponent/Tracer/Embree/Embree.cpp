@@ -39,7 +39,6 @@
 #include <cassert>
 #include <embree3/rtcore.h>
 #include <random>
-#include <spdlog/spdlog.h>
 #include <utility>
 
 // TODO:https://www.embree.org/api.html#performance-recommendations
@@ -833,10 +832,12 @@ namespace Piper {
         SharedPtr<Wrapper<GSMInstanceUserData>> mUserData;
 
     public:
-        EmbreeLeafNodeWithGSM(PiperContext& context, Tracer& tracer, RTCDevice device, SharedPtr<EmbreeGSMInstance> instance)
+        EmbreeLeafNodeWithGSM(PiperContext& context, Tracer& tracer, Accelerator& accelerator, ResourceCacheManager& cacheManager,
+                              const RTCDevice device, SharedPtr<EmbreeGSMInstance> instance)
             : EmbreeNode(context), mInstance(std::move(instance)),
               mUserData(makeSharedObject<Wrapper<GSMInstanceUserData>>(context)) {
-            auto& accel = dynamic_cast<EmbreeAcceleration&>(mInstance->geometry->getAcceleration(tracer));
+            auto& accel =
+                dynamic_cast<EmbreeAcceleration&>(mInstance->geometry->getAcceleration(tracer, accelerator, cacheManager));
 
             mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE));
             rtcSetGeometryInstancedScene(mGeometry.get(), accel.getScene(device));
@@ -873,13 +874,14 @@ namespace Piper {
         SharedPtr<Wrapper<AreaLightUserData>> mUserData;
 
     public:
-        EmbreeLeafNodeWithLight(PiperContext& context, Tracer& tracer, RTCDevice device, SharedPtr<Light> light)
+        EmbreeLeafNodeWithLight(PiperContext& context, Tracer& tracer, Accelerator& accelerator,
+                                ResourceCacheManager& cacheManager, const RTCDevice device, SharedPtr<Light> light)
             : EmbreeNode(context), mLight(std::move(light)) {
             const auto* geometry = mLight->getGeometry();
             mGeometry.reset(rtcNewGeometry(device, geometry ? RTC_GEOMETRY_TYPE_INSTANCE : RTC_GEOMETRY_TYPE_USER));
             if(geometry) {
                 mUserData = makeSharedObject<Wrapper<AreaLightUserData>>(context);
-                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer));
+                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer, accelerator, cacheManager));
                 rtcSetGeometryInstancedScene(mGeometry.get(), accel.getScene(device));
                 rtcSetGeometryUserData(mGeometry.get(), &mUserData->value);
                 rtcSetGeometryMask(mGeometry.get(), areaLightMask);
@@ -1041,20 +1043,24 @@ namespace Piper {
         }
 
     public:
-        EmbreePipeline(PiperContext& context, Tracer& tracer, const PITU& pitu, SharedPtr<EmbreeNode> scene,
-                       Integrator& integrator, RenderDriver& renderDriver, LightSampler& lightSampler, SharedPtr<Sampler> sampler,
-                       bool debug)
-            : Pipeline(context), mAccelerator(tracer.getAccelerator()), mArena(context.getAllocator(), 4096), mArg{},
-              mHolder(context), mScene(std::move(scene)), mSensors{ context.getAllocator() }, mSampler(std::move(sampler)),
+        EmbreePipeline(PiperContext& context, Tracer& tracer, Accelerator& accelerator, ResourceCacheManager& cacheManager,
+                       const PITU& pitu, SharedPtr<EmbreeNode> scene, Integrator& integrator, RenderDriver& renderDriver,
+                       LightSampler& lightSampler, SharedPtr<Sampler> sampler, bool debug)
+            : Pipeline(context), mAccelerator(accelerator), mArena(context.getAllocator(), 4096), mArg{}, mHolder(context),
+              mScene(std::move(scene)), mSensors{ context.getAllocator() }, mSampler(std::move(sampler)),
               mProfiler(context), mResources{ context.getAllocator() } {
             DynamicArray<LinkableProgram> modules(context.getAllocator());
             modules.push_back(prepareKernelNative(context, debug));
-            modules.push_back(pitu.generateLinkable(tracer.getAccelerator().getSupportedLinkableFormat()));
+            modules.push_back(pitu.generateLinkable(accelerator.getSupportedLinkableFormat()));
 
             DynamicArray<Pair<String, void*>> call(context.getAllocator());
 
             const MaterializeContext materialize{
-                tracer, ResourceRegister{ [this](SharedPtr<Resource> resource) {
+                tracer,
+                accelerator,
+                cacheManager,
+                mProfiler,
+                ResourceRegister{ [this](SharedPtr<Resource> resource) {
                     const auto idx = static_cast<uint32_t>(mResources.size());
                     mResources.push_back(ResourceView{ std::move(resource), ResourceAccessMode::ReadOnly });
                     return idx;
@@ -1066,7 +1072,7 @@ namespace Piper {
                     call.emplace_back(prog->symbol, upload(payload));
                     return reinterpret_cast<CallHandle>(static_cast<ptrdiff_t>(id));
                 } },
-                mProfiler, TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> CallHandle {
+                TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> CallHandle {
                     const auto texture = tracer.generateTexture(desc, channel);
                     auto [SBT, prog] = texture->materialize(materialize);
                     return materialize.registerCall(prog, SBT);
@@ -1113,7 +1119,7 @@ namespace Piper {
                     return;
                 const auto gp = geometry->materialize(materialize);
                 auto& info = geometryProg[geometry];
-                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer));
+                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer, accelerator, cacheManager));
                 mResources.push_back(ResourceView{ accel.getResource(), ResourceAccessMode::ReadOnly });
                 info.acceleration = &accel;
 
@@ -1213,8 +1219,7 @@ namespace Piper {
             modules.push_back(start.program);
             modules.push_back(generate.program);
 
-            auto& accelerator = tracer.getAccelerator();
-            mKernel = accelerator.compileKernel<KernelArgument>(
+            mKernel = mAccelerator.compileKernel<KernelArgument>(
                 Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
                 String{ "piperMain", context.getAllocator() });
 
@@ -1379,9 +1384,6 @@ namespace Piper {
         }
 
     public:
-        ResourceCacheManager& getCacheManager() override {
-            return mCache;
-        }
         void reportError(const RTCError ec, const CString str) const {
             context().getErrorHandler().raiseException(
                 "Embree Error:" + toString(context().getAllocator(), static_cast<uint32_t>(ec)) + str, PIPER_SOURCE_LOCATION());
@@ -1417,41 +1419,42 @@ namespace Piper {
             // rtcSetDeviceMemoryMonitorFunction();
             mSampler = context.getModuleLoader().newInstanceT<TextureSampler>(config->at("TextureSampler")).getSync();
         }
-        SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) override {
+        [[nodiscard]] SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) override {
             return makeSharedObject<EmbreeRTProgram>(context(), linkable, symbol);
         }
-        SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) override {
+        [[nodiscard]] SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) override {
             return makeSharedObject<EmbreeAcceleration>(context(), mDevice.get(), desc);
         }
-        SharedPtr<Node> buildNode(const SharedPtr<Object>& object) override {
+        [[nodiscard]] SharedPtr<Node> buildNode(const SharedPtr<Object>& object) override {
             // TODO: better implementation
             if(auto gsm = eastl::dynamic_shared_pointer_cast<EmbreeGSMInstance>(object))
-                return makeSharedObject<EmbreeLeafNodeWithGSM>(context(), *this, mDevice.get(), std::move(gsm));
+                return makeSharedObject<EmbreeLeafNodeWithGSM>(context(), *this, *mAccelerator, mCache, mDevice.get(),
+                                                               std::move(gsm));
             if(auto light = eastl::dynamic_shared_pointer_cast<Light>(object))
-                return makeSharedObject<EmbreeLeafNodeWithLight>(context(), *this, mDevice.get(), std::move(light));
+                return makeSharedObject<EmbreeLeafNodeWithLight>(context(), *this, *mAccelerator, mCache, mDevice.get(),
+                                                                 std::move(light));
             if(auto sensor = eastl::dynamic_shared_pointer_cast<Sensor>(object))
                 return makeSharedObject<EmbreeLeafNodeWithSensor>(context(), mDevice.get(), std::move(sensor));
 
             context().getErrorHandler().raiseException(
                 String{ "Unrecognized object ", context().getAllocator() } + typeid(*object).name(), PIPER_SOURCE_LOCATION());
         }
-        SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) override {
+        [[nodiscard]] SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) override {
             return makeSharedObject<EmbreeBranchNode>(context(), mDevice.get(), children);
         }
-        SharedPtr<GSMInstance> buildGSMInstance(SharedPtr<Geometry> geometry, SharedPtr<Surface> surface,
-                                                SharedPtr<Medium> medium) override {
+        [[nodiscard]] SharedPtr<GSMInstance> buildGSMInstance(SharedPtr<Geometry> geometry, SharedPtr<Surface> surface,
+                                                              SharedPtr<Medium> medium) override {
             return makeSharedObject<EmbreeGSMInstance>(context(), std::move(geometry), std::move(surface), std::move(medium));
         }
-        UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator, RenderDriver& renderDriver,
-                                             LightSampler& lightSampler, SharedPtr<Sampler> sampler) override {
-            return makeUniqueObject<Pipeline, EmbreePipeline>(context(), *this, *mKernel.getSync(),
+        [[nodiscard]] UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator,
+                                                           RenderDriver& renderDriver, LightSampler& lightSampler,
+                                                           SharedPtr<Sampler> sampler) override {
+            return makeUniqueObject<Pipeline, EmbreePipeline>(context(), *this, *mAccelerator, mCache, *mKernel.getSync(),
                                                               eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), integrator,
                                                               renderDriver, lightSampler, std::move(sampler), mDebugMode);
         }
-        Accelerator& getAccelerator() override {
-            return *mAccelerator;
-        }
-        SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc, const uint32_t channel) const override {
+        [[nodiscard]] SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
+                                                         const uint32_t channel) const override {
             auto res = generateTextureImpl(textureDesc);
             if(res->channel() != channel)
                 context().getErrorHandler().raiseException("Mismatched channel. Expect " +
@@ -1460,8 +1463,11 @@ namespace Piper {
                                                            PIPER_SOURCE_LOCATION());
             return res;
         }
+        Accelerator& getAccelerator() const noexcept override {
+            return *mAccelerator;
+        }
         // ReSharper disable once CppNotAllPathsReturnValue
-        size_t getAlignmentRequirement(const AlignmentRequirement requirement) const noexcept override {
+        [[nodiscard]] size_t getAlignmentRequirement(const AlignmentRequirement requirement) const noexcept override {
             switch(requirement) {  // NOLINT(bugprone-branch-clone)
                 case AlignmentRequirement::VertexBuffer:
                     [[fallthrough]];

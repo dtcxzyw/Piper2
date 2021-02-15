@@ -30,6 +30,7 @@ namespace Piper {
         uint32_t samplesPerPixel;
     };
 
+    // TODO: support Trajectory Splitting
     class Sampler : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Sampler, Object);

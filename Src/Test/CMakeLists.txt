@@ -15,5 +15,6 @@ add_piper_test(PiperCore)
 add_piper_test(Allocator)
 add_piper_test(Concurrency)
 add_piper_test(Accelerator)
+add_piper_test(Sampler)
 
 compile_kernel(Accelerator-Test conv.cpp conv.bc)

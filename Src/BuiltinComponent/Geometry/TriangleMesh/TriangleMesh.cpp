@@ -37,11 +37,12 @@ namespace Piper {
     public:
         TriangleMesh(PiperContext& context, const SharedPtr<Config>& config)
             : Geometry(context), mPath(config->at("Path")->get<String>()) {}
-        AccelerationStructure& getAcceleration(Tracer& tracer) const override {
-            const auto res = tracer.getCacheManager().materialize(
+        AccelerationStructure& getAcceleration(Tracer& tracer, Accelerator& accelerator,
+                                               ResourceCacheManager& cacheManager) const override {
+            return *cacheManager.materialize(
                 reinterpret_cast<ResourceID>(this),
                 Function<SharedPtr<AccelerationStructure>>{
-                    [path = mPath, &tracer, ctx = &context()]() -> SharedPtr<AccelerationStructure> {
+                    [path = mPath, &tracer, ctx = &context(), &accelerator]() -> SharedPtr<AccelerationStructure> {
                         // TODO: filesystem
                         auto importer = makeSharedPtr<Assimp::Importer>(ctx->getAllocator());
                         const auto* scene = importer->ReadFile(path.c_str(),
@@ -81,8 +82,8 @@ namespace Piper {
                         // TODO: normal and tangent
                         desc.normal = desc.tangent = invalidOffset;
 
-                        desc.buffer = tracer.getAccelerator().createBuffer(
-                            size, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
+                        desc.buffer =
+                            accelerator.createBuffer(size, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
 
                         desc.buffer->upload([ref = std::move(importer), mesh, &errorHandler, &tracer](Ptr ptr) {
                             for(Index i = 0; i < mesh->mNumFaces; ++i) {
@@ -120,7 +121,6 @@ namespace Piper {
 
                         return tracer.buildAcceleration({ eastl::nullopt, desc });
                     } });
-            return *res;
         }
 
         [[nodiscard]] GeometryProgram materialize(const MaterializeContext&) const override {

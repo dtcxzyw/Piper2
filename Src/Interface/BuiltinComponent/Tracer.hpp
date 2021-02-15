@@ -121,9 +121,12 @@ namespace Piper {
     using ResourceRegister = Function<uint32_t, SharedPtr<Resource>>;
     struct MaterializeContext final {
         Tracer& tracer;
-        const ResourceRegister& registerResource;
-        const CallSiteRegister registerCall;
+        Accelerator& accelerator;
+        ResourceCacheManager& cacheManager;
         Profiler& profiler;
+
+        const ResourceRegister registerResource;
+        const CallSiteRegister registerCall;
         const TextureLoader loadTexture;
     };
 
@@ -136,21 +139,21 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Tracer, Object)
         // TODO: update structure
-        virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
-        virtual SharedPtr<GSMInstance> buildGSMInstance(SharedPtr<Geometry> geometry, SharedPtr<Surface> surface,
-                                                        SharedPtr<Medium> medium) = 0;
-        virtual SharedPtr<Node> buildNode(const SharedPtr<Object>& object) = 0;
-        virtual SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) = 0;
+        [[nodiscard]] virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
+        [[nodiscard]] virtual SharedPtr<GSMInstance> buildGSMInstance(SharedPtr<Geometry> geometry, SharedPtr<Surface> surface,
+                                                                      SharedPtr<Medium> medium) = 0;
+        [[nodiscard]] virtual SharedPtr<Node> buildNode(const SharedPtr<Object>& object) = 0;
+        [[nodiscard]] virtual SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) = 0;
         // TODO: call graph?
-        virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
+        // TODO: move to MaterializeContext
+        [[nodiscard]] virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
         // TODO: better interface
-        virtual UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator,
-                                                     RenderDriver& renderDriver, LightSampler& lightSampler,
-                                                     SharedPtr<Sampler> sampler) = 0;
-        virtual Accelerator& getAccelerator() = 0;
-        virtual ResourceCacheManager& getCacheManager() = 0;
+        [[nodiscard]] virtual UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator,
+                                                                   RenderDriver& renderDriver, LightSampler& lightSampler,
+                                                                   SharedPtr<Sampler> sampler) = 0;
         [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
                                                                  uint32_t channel) const = 0;
         [[nodiscard]] virtual size_t getAlignmentRequirement(AlignmentRequirement requirement) const noexcept = 0;
+        [[nodiscard]] virtual Accelerator& getAccelerator() const noexcept = 0;
     };
 }  // namespace Piper

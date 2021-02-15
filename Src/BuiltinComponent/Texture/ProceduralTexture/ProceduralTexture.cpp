@@ -49,7 +49,7 @@ namespace Piper {
             // TODO:concurrency
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.sample = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(),
                 "constantTexture");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;
@@ -89,7 +89,7 @@ namespace Piper {
             // TODO:concurrency
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.sample = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync(),
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(),
                 "checkBoard");
             res.payload = packSBTPayload(context().getAllocator(), mData);
             return res;

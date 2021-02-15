@@ -37,7 +37,7 @@ namespace Piper {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(linkable, "blackBodyInit");
             res.sample = ctx.tracer.buildProgram(linkable, "blackBodySample");
             res.evaluate = ctx.tracer.buildProgram(linkable, "blackBodyEvaluate");
@@ -80,7 +80,7 @@ namespace Piper {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(linkable, "matteInit");
             res.sample = ctx.tracer.buildProgram(linkable, "matteSample");
             res.evaluate = ctx.tracer.buildProgram(linkable, "matteEvaluate");
@@ -107,7 +107,7 @@ namespace Piper {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(linkable, "glassInit");
             res.sample = ctx.tracer.buildProgram(linkable, "glassSample");
             res.evaluate = ctx.tracer.buildProgram(linkable, "glassEvaluate");
@@ -134,7 +134,7 @@ namespace Piper {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(linkable, "plasticInit");
             res.sample = ctx.tracer.buildProgram(linkable, "plasticSample");
             res.evaluate = ctx.tracer.buildProgram(linkable, "plasticEvaluate");
@@ -159,7 +159,7 @@ namespace Piper {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(linkable, "mirrorInit");
             res.sample = ctx.tracer.buildProgram(linkable, "mirrorSample");
             res.evaluate = ctx.tracer.buildProgram(linkable, "blackBodyEvaluate");
@@ -185,7 +185,7 @@ namespace Piper {
             SurfaceProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(linkable, "substrateInit");
             res.sample = ctx.tracer.buildProgram(linkable, "substrateSample");
             res.evaluate = ctx.tracer.buildProgram(linkable, "substrateEvaluate");

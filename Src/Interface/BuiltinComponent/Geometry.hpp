@@ -36,7 +36,8 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Geometry, Object);
         virtual ~Geometry() = default;
         [[nodiscard]] virtual Area<float> area() const = 0;
-        [[nodiscard]] virtual AccelerationStructure& getAcceleration(Tracer& tracer) const = 0;
+        [[nodiscard]] virtual AccelerationStructure& getAcceleration(Tracer& tracer, Accelerator& accelerator,
+                                                                     ResourceCacheManager& cacheManager) const = 0;
         [[nodiscard]] virtual GeometryProgram materialize(const MaterializeContext& ctx) const = 0;
         [[nodiscard]] virtual SampledGeometryProgram materialize(TraversalHandle traversal,
                                                                  const MaterializeContext& ctx) const = 0;

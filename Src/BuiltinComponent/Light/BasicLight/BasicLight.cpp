@@ -38,7 +38,7 @@ namespace Piper {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(program, "SEInit");
             res.sample = ctx.tracer.buildProgram(program, "SESample");
             res.evaluate = ctx.tracer.buildProgram(program, "SEEvaluate");
@@ -65,7 +65,7 @@ namespace Piper {
             LightProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.init = ctx.tracer.buildProgram(program, "pointInit");
             res.sample = ctx.tracer.buildProgram(program, "pointSample");
             res.evaluate = ctx.tracer.buildProgram(program, "deltaEvaluate");
@@ -98,7 +98,7 @@ namespace Piper {
             LightSamplerProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto program =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             res.select = ctx.tracer.buildProgram(program, "uniformSelect");
             Binary data(context().getAllocator());
             const auto size = static_cast<uint32_t>(mFlags.size());

@@ -45,7 +45,7 @@ namespace Piper {
         [[nodiscard]] LightProgram materialize(TraversalHandle traversal, const MaterializeContext& ctx) const override {
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.tracer.getAccelerator().getSupportedLinkableFormat()).getSync();
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             LightProgram res;
             res.init = ctx.tracer.buildProgram(linkable, "diffuseInit");
             res.sample = ctx.tracer.buildProgram(linkable, "diffuseSample");
