@@ -40,5 +40,12 @@ namespace Piper {
     void piperGetTaskIndex(const TaskContext context, uint32_t& index) {
         index = reinterpret_cast<const TaskContextImpl*>(context)->index;
     }
+    void piperGetRootResourceLUT(const TaskContext context, ResourceHandle& handle) {
+        handle = reinterpret_cast<const TaskContextImpl*>(context)->LUT;
+    }
+    void piperLookUpResourceHandle(TaskContext, const ResourceHandle LUT, const uint32_t index, ResourceHandle& handle) {
+        handle = reinterpret_cast<const ResourceHandle*>(LUT)[index];
+    }
+
     }
 }  // namespace Piper

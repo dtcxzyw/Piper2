@@ -35,7 +35,7 @@ namespace Piper {
         }
     }  // namespace Detail
 
-    // TODO:use fmt
+    // TODO: use fmt
     inline String toString(const STLAllocator& allocator, const int32_t value) {
         return Detail::toStringImpl(allocator, "%" PRId32, value);
     }
@@ -58,5 +58,5 @@ namespace Piper {
         return Detail::toStringImpl(allocator, "%Lf", value);
     }
 
-    // TODO:parse
+    // TODO: parse
 }  // namespace Piper

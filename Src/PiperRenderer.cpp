@@ -39,10 +39,11 @@
 
 namespace Piper {
     // TODO: instancing of lights and geometries
-    // TODO: JPG/PNG/DNG/WebP/HEIF/EXIF output
+    // TODO: JPG/PNG/DNG/WebP/HEIF/EXIF/Apple ProRes RAW/CinemaDNG/Cineform RAW output
     // EXR: HDR
-    // JPG/PNG/WebP/HEIF: exchange on the Internet (lossy/lossless)
-    // DNG/EXIF: HDR RAW lossless
+    // JPG/PNG/WebP/HEIF/PPM: exchange on the Internet (lossy/lossless)
+    // DNG/EXIF/Apple ProRes RAW/CinemaDNG/Cineform RAW: HDR RAW lossless
+    // Spectrum Array
 
     class Render final : public Operator {
     private:

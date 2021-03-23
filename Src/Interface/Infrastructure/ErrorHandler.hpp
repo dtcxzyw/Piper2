@@ -54,10 +54,12 @@ namespace Piper {
             RightSideEffect = 2,    // callee
             InternalInvariant = 4   // self
         };
-        virtual bool allowAssert(const CheckLevel level) = 0;
-        virtual void assertFailed(const CheckLevel level, const CString expression, const SourceLocation& loc) = 0;
+        virtual bool allowAssert(CheckLevel level) = 0;
+        virtual void assertFailed(CheckLevel level, CString expression, const SourceLocation& loc) = 0;
         virtual void processSignal(int signal) = 0;
         [[noreturn]] virtual void notImplemented(const SourceLocation& loc) = 0;
+        [[noreturn]] virtual void notSupported(const SourceLocation& loc) = 0;
+        [[noreturn]] virtual void unreachable(const SourceLocation& loc) = 0;
         virtual String backTrace() = 0;
 
         // before abort

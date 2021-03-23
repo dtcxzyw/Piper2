@@ -26,6 +26,7 @@
 #include "../../../Interface/Infrastructure/Program.hpp"
 #include "Shared.hpp"
 #include <utility>
+// TODO: use OpenImageIO instead
 #pragma warning(push, 0)
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -48,7 +49,11 @@ namespace Piper {
                                                       image->attributes().channel,
                                                       0,
                                                       nullptr },
-              mKernel(std::move(kernel)) {}
+              mKernel(std::move(kernel)) {
+            // TODO: support video
+            if(image->attributes().frameCount != 1)
+                context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+        }
 
         [[nodiscard]] uint32_t channel() const noexcept override {
             return mData.channel;
@@ -76,7 +81,7 @@ namespace Piper {
 
     class SoftwareTextureSampler final : public TextureSampler {
     private:
-        // TODO:better architecture
+        // TODO: better architecture
         Future<SharedPtr<PITU>> mKernel;
 
     public:
@@ -87,7 +92,7 @@ namespace Piper {
         }
     };
 
-    // TODO:allocator
+    // TODO: allocator
     struct ImageDeleter {
         void operator()(void* ptr) const {
             stbi_image_free(ptr);
@@ -103,7 +108,7 @@ namespace Piper {
     public:
         ImageStorage(PiperContext& context, ImageHolder holder, const uint32_t width, const uint32_t height,
                      const uint32_t channel) noexcept
-            : Image(context), mData(std::move(holder)), mAttributes{ width, height, channel } {}
+            : Image(context), mData(std::move(holder)), mAttributes{ width, height, channel, 1, 0.0f } {}
         [[nodiscard]] const ImageAttributes& attributes() const noexcept override {
             return mAttributes;
         }
@@ -124,7 +129,7 @@ namespace Piper {
                 const auto image = file->map(0, file->size());
                 const auto span = image->get();
 
-                // TODO:color-space
+                // TODO: color-space
                 int x, y, srcChannel;
                 if(!stbi_info_from_memory(reinterpret_cast<stbi_uc*>(span.data()), static_cast<int>(span.size_bytes()), &x, &y,
                                           &srcChannel))
@@ -145,7 +150,7 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, CString path) : Module(context), mPath(path, context.getAllocator()) {}
+        explicit ModuleImpl(PiperContext& context, const CString path) : Module(context), mPath(path, context.getAllocator()) {}
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "TextureSampler") {

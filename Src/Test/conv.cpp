@@ -28,10 +28,11 @@ extern "C" void convEntry(const Piper::TaskContext context) {
     piperGetArgument(context, 1, &height);
     piperGetArgument(context, 2, &kernelSize);
 
-    ResourceHandle X, Y, Z;
-    piperGetResourceHandle(context, 0, X);
-    piperGetResourceHandle(context, 1, Y);
-    piperGetResourceHandle(context, 2, Z);
+    ResourceHandle LUT, X, Y, Z;
+    piperGetRootResourceLUT(context, LUT);
+    piperLookUpResourceHandle(context, LUT, 0, X);
+    piperLookUpResourceHandle(context, LUT, 1, Y);
+    piperLookUpResourceHandle(context, LUT, 2, Z);
     conv(idx, reinterpret_cast<const Float*>(X), reinterpret_cast<const Float*>(Y), reinterpret_cast<Float*>(Z), width, height,
          kernelSize);
 }

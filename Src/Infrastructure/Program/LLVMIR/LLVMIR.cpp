@@ -41,18 +41,19 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #pragma warning(pop)
+#include <llvm/Linker/Linker.h>
 #include <new>
 #include <utility>
 
 namespace Piper {
+
     class LLVMStream final : public llvm::raw_pwrite_stream {
     private:
         PiperContext& mContext;
         Binary& mData;
 
     public:
-        explicit LLVMStream(PiperContext& context, Binary& data)
-            : raw_pwrite_stream(true), mContext(context), mData(data) {}
+        explicit LLVMStream(PiperContext& context, Binary& data) : raw_pwrite_stream(true), mContext(context), mData(data) {}
         void pwrite_impl(const char* ptr, const size_t size, const uint64_t offset) override {
             if(offset != mData.size())
                 mContext.getErrorHandler().assertFailed(ErrorHandler::CheckLevel::InternalInvariant,
@@ -74,51 +75,72 @@ namespace Piper {
         std::string output;
         llvm::raw_string_ostream out(output);
         // ReSharper disable once CppRedundantQualifier
+        // NOTICE: return true if the module is broken
         if(llvm::verifyModule(module, &out)) {
             out.flush();
             context.getErrorHandler().raiseException(("Bad module:" + output).c_str(), PIPER_SOURCE_LOCATION());
         }
     }
 
+    template <typename T>
+    auto getLLVMResult(PiperContext& context, const SourceLocation& loc, llvm::Expected<T> value) {
+        if(value)
+            return std::move(std::move(value).get());
+        context.getErrorHandler().raiseException(("LLVM error: " + llvm::toString(value.takeError())).c_str(), loc);
+    }
+
+    static std::unique_ptr<llvm::Module> binary2Module(PiperContext& context, const Binary& binary, llvm::LLVMContext& ctx) {
+        const auto beg = reinterpret_cast<const uint8_t*>(binary.data());
+        const auto end = beg + binary.size();
+
+        return getLLVMResult(context, PIPER_SOURCE_LOCATION(),
+                             llvm::parseBitcodeFile(
+                                 llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{ beg, end }), "llvm module" }, ctx));
+    }
+    static Binary module2Binary(PiperContext& context, llvm::Module& module) {
+        Binary data{ context.getAllocator() };
+        LLVMStream stream(context, data);
+        llvm::WriteBitcodeToFile(module, stream);
+        stream.flush();
+        return data;
+    }
+
     class LLVMIR final : public PITU, public eastl::enable_shared_from_this<LLVMIR> {
     private:
-        mutable llvm::orc::ThreadSafeModule mModule;
+        // TODO: lazy cast
+        Binary mModule;
         uint64_t mUID;
 
     public:
-        LLVMIR(PiperContext& context, llvm::orc::ThreadSafeModule module, const uint64_t UID)
-            : PITU(context), mModule(std::move(module)), mUID(UID) {}
-        // TODO:reduce clone
-        llvm::orc::ThreadSafeModule cloneModule() const {
-            return cloneToNewContext(mModule);
-        }
+        LLVMIR(PiperContext& context, Binary module, const uint64_t UID) : PITU(context), mModule(std::move(module)), mUID(UID) {}
         String humanReadable() const override {
-            return mModule.withModuleDo([this](llvm::Module& module) {
-                std::string res;
-                llvm::raw_string_ostream out(res);
-                llvm::legacy::PassManager manager;
-                manager.add(llvm::createPrintModulePass(out));
-                manager.run(module);
-                out.flush();
-                return String{ res.data(), res.size(), context().getAllocator() };
-            });
+            llvm::LLVMContext ctx;
+            const auto inst = binary2Module(context(), mModule, ctx);
+            std::string res;
+            llvm::raw_string_ostream out(res);
+            llvm::legacy::PassManager manager;
+            manager.add(llvm::createPrintModulePass(out));
+            manager.run(*inst);
+            out.flush();
+            return String{ res.data(), res.size(), context().getAllocator() };
+        }
+        uint64_t getID() const noexcept {
+            return mUID;
+        }
+        const Binary& data() const noexcept {
+            return mModule;
         }
         LinkableProgram generateLinkable(const Span<const CString>& acceptableFormat) const override {
             auto& scheduler = context().getScheduler();
             for(auto&& format : acceptableFormat) {
-                // TODO:LLVM IR Version
+                // TODO: LLVM IR Version
                 if(StringView{ format } == "LLVM IR") {
-                    // TODO:lazy parse linkable and directly return data
-                    return LinkableProgram{ scheduler.spawn([self = shared_from_this()] {
-                                               return self->mModule.withModuleDo([&](llvm::Module& module) {
-                                                   Binary data{ self->context().getAllocator() };
-                                                   LLVMStream stream(self->context(), data);
-                                                   llvm::WriteBitcodeToFile(module, stream);
-                                                   stream.flush();
-                                                   return std::move(data);
-                                               });
-                                           }),
+                    return LinkableProgram{ scheduler.value(eastl::dynamic_shared_pointer_cast<PITU>(shared_from_this())),
                                             String{ "LLVM IR", context().getAllocator() }, mUID };
+                }
+                if(StringView{ format } == "LLVM IR Bitcode") {
+                    return LinkableProgram{ scheduler.value(mModule), String{ "LLVM IR Bitcode", context().getAllocator() },
+                                            mUID };
                 }
                 std::string error;
                 const auto* target = llvm::TargetRegistry::lookupTarget(format, error);
@@ -134,21 +156,23 @@ namespace Piper {
                                                auto RM = llvm::Optional<llvm::Reloc::Model>();
                                                auto* targetMachine = target->createTargetMachine(format, cpu, features, opt, RM);
 
-                                               return self->mModule.withModuleDo([&](llvm::Module& mod) {
-                                                   mod.setDataLayout(targetMachine->createDataLayout());
-                                                   mod.setTargetTriple(format);
+                                               llvm::LLVMContext ctx;
+                                               const auto inst = binary2Module(self->context(), self->mModule, ctx);
 
-                                                   llvm::legacy::PassManager pass;
-                                                   Binary data{ self->context().getAllocator() };
-                                                   LLVMStream stream(self->context(), data);
-                                                   if(!(targetMachine->addPassesToEmitFile(
-                                                          pass, stream, nullptr, llvm::CodeGenFileType::CGFT_ObjectFile)))
-                                                       self->context().getErrorHandler().raiseException(
-                                                           "Failed to create object emit pass", PIPER_SOURCE_LOCATION());
-                                                   pass.run(mod);
-                                                   stream.flush();
-                                                   return std::move(data);
-                                               });
+                                               inst->setDataLayout(targetMachine->createDataLayout());
+                                               inst->setTargetTriple(format);
+
+                                               llvm::legacy::PassManager pass;
+                                               Binary data{ self->context().getAllocator() };
+                                               LLVMStream stream(self->context(), data);
+                                               if(!(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
+                                                                                       llvm::CodeGenFileType::CGFT_ObjectFile)))
+                                                   self->context().getErrorHandler().raiseException(
+                                                       "Failed to create object emit pass", PIPER_SOURCE_LOCATION());
+                                               pass.run(*inst);
+                                               // TODO: optimize
+                                               stream.flush();
+                                               return std::move(data);
                                            }),
                                             String{ format, context().getAllocator() }, mUID };
                 }
@@ -158,7 +182,8 @@ namespace Piper {
             llvm::TargetRegistry::printRegisteredTargetsForVersion(output);
             output.flush();
             context().getErrorHandler().raiseException(
-                ("No supported linkable program format. Only target " + out + " are supported.").c_str(), PIPER_SOURCE_LOCATION());
+                ("No supported linkable program format. Only target " + out + " are supported.").c_str(),
+                PIPER_SOURCE_LOCATION());
         }
     };
 
@@ -171,51 +196,84 @@ namespace Piper {
                 const auto file = ctx->getFileSystem().mapFile(path, FileAccessMode::Read, FileCacheHint::Sequential);
                 const auto map = file->map(0, file->size());
                 const auto span = map->get();
-                const auto beg = reinterpret_cast<uint8_t*>(span.data());
-                const auto end = beg + span.size();
-                stage.next("parse LLVM bitcode", PIPER_SOURCE_LOCATION());
-
-                // TODO:use custom allocator
-                auto llvmCtx = std::make_unique<llvm::LLVMContext>();
-                auto res = llvm::parseBitcodeFile(
-                    llvm::MemoryBufferRef{ toStringRef(llvm::ArrayRef<uint8_t>{ beg, end }), "llvm bitcode data" }, *llvmCtx);
-
-                if(res)
-                    return eastl::static_shared_pointer_cast<PITU>(
-                        makeSharedObject<LLVMIR>(*ctx, llvm::orc::ThreadSafeModule{ std::move(res.get()), std::move(llvmCtx) },
-                                                 eastl::hash<String>{}(path)));
-
-                const auto error = toString(res.takeError());
-                ctx->getErrorHandler().raiseException(StringView{ error.c_str(), error.size() }, PIPER_SOURCE_LOCATION());
+                return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(
+                    *ctx, Binary{ span.begin(), span.end(), ctx->getAllocator() }, eastl::hash<String>{}(path)));
             });
         }
-        /*
-        [[nodiscard]] Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const override {
-            return context().getScheduler().spawn(
-                [ctx = &context(), llvmCtx = mContext](const DynamicArray<SharedPtr<PITU>>& modules) {
-                    auto stage = ctx->getErrorHandler().enterStage("link LLVM modules", PIPER_SOURCE_LOCATION());
 
-                    // TODO:module ID param
-                    std::unique_lock<std::mutex> guard{ llvmCtx->mutex };
-                    auto module = std::make_unique<llvm::Module>("merged_module", llvmCtx->context);
-                    llvm::Linker linker(*module);
+        [[nodiscard]] Future<SharedPtr<PITU>> linkPITU(const DynamicArray<Future<SharedPtr<PITU>>>& pitus,
+                                                       UMap<String, String> staticRedirectedSymbols,
+                                                       DynamicArray<String> dynamicSymbols) const override {
+            auto&& scheduler = context().getScheduler();
+
+            return scheduler.spawn(
+                [ctx = &context(), SRS = std::move(staticRedirectedSymbols),
+                 DST = std::move(dynamicSymbols)](DynamicArray<SharedPtr<PITU>> modules) {
+                    auto&& errorHandler = ctx->getErrorHandler();
+                    auto stage = errorHandler.enterStage("link LLVM modules", PIPER_SOURCE_LOCATION());
+
+                    // TODO: use custom allocator
+                    auto llvmCtx = std::make_unique<llvm::LLVMContext>();
+                    uint64_t UID = 0;
+
+                    auto module = std::make_unique<llvm::Module>("linkedPITU", *llvmCtx);
+                    llvm::Linker linker{ *module };
 
                     for(auto& mod : modules) {
                         const auto* ir = dynamic_cast<const LLVMIR*>(mod.get());
                         if(!ir)
                             ctx->getErrorHandler().raiseException("Unsupported PITU", PIPER_SOURCE_LOCATION());
-                        linker.linkInModule(ir->cloneModule());
+                        linker.linkInModule(binary2Module(*ctx, ir->data(), *llvmCtx));
+                        UID ^= ir->getID();
                     }
-                    guard.unlock();
 
+                    stage.next("construct builtin symbol redirect", PIPER_SOURCE_LOCATION());
+
+                    auto findSymbol = [&](const String& symbol) -> llvm::Constant* {
+                        const llvm::StringRef name{ symbol.data(), symbol.size() };
+                        if(const auto func = module->getFunction(name))
+                            return func;
+                        if(const auto var = module->getNamedGlobal(name))
+                            return var;
+                        if(const auto alias = module->getNamedAlias(name))
+                            return alias;
+
+                        errorHandler.raiseException("Undefined symbol \"" + symbol + '\"', PIPER_SOURCE_LOCATION());
+                    };
+
+                    for(auto&& [dst, src] : SRS) {
+                        const auto symbol = findSymbol(src);
+
+                        if(symbol->getType()->isFunctionTy())
+                            llvm::GlobalIFunc::create(symbol->getType(), 0, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
+                                                      llvm::StringRef{ dst.data(), dst.size() }, symbol, module.get());
+                        else
+                            llvm::GlobalAlias::create(symbol->getType(), 0, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
+                                                      llvm::StringRef{ dst.data(), dst.size() }, symbol, module.get());
+                    }
+
+                    const auto pointer = llvm::Type::getVoidTy(*llvmCtx)->getPointerTo();
+                    const auto arrayType = llvm::ArrayType::get(pointer, DST.size());
+                    DynamicArray<llvm::Constant*> symbols{ DST.size(), ctx->getAllocator() };
+                    std::transform(DST.cbegin(), DST.cend(), symbols.begin(),
+                                   [&](const String& name) { return findSymbol(name); });
+                    llvm::Constant* values = llvm::ConstantArray::get(
+                        arrayType, llvm::ArrayRef<llvm::Constant*>{ symbols.data(), symbols.data() + symbols.size() });
+
+                    // TODO: Is it memory safe?
+                    module->getOrInsertGlobal("piperBuiltinSymbolLUT", arrayType, [&] {
+                        return new llvm::GlobalVariable{ arrayType, true, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
+                                                         values, "piperBuiltinSymbolLUT" };
+                    });
+
+                    // TODO: verification switch
                     verifyLLVMModule(*ctx, *module);
 
-                    return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(*ctx, llvmCtx,
-        std::move(module)));
+                    return eastl::static_shared_pointer_cast<PITU>(
+                        makeSharedObject<LLVMIR>(*ctx, module2Binary(*ctx, *module), UID));
                 },
-                pitus);
+                scheduler.wrap(pitus));
         }
-        */
     };
     class ModuleImpl final : public Module {
     public:

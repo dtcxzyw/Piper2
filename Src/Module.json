@@ -82,5 +82,9 @@
   {
     "Name": "Piper.BuiltinComponent.AreaLight",
     "Path": "BuiltinComponent/Light/AreaLight/AreaLight"
+  },
+  {
+    "Name": "Piper.Infrastructure.CUDAWrapper",
+    "Path": "Infrastructure/Accelerator/CUDAWrapper/CUDAWrapper"
   }
 ]

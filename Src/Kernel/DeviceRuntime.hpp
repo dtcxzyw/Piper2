@@ -26,7 +26,6 @@ namespace Piper {
     using ResourceHandle = ptrdiff_t;
     struct TaskContextReserved;
     using TaskContext = const TaskContextReserved*;
-    struct ArgumentHandleReserved;
 
     using KernelProtocol = void (*)(TaskContext ctx);
 
@@ -40,11 +39,19 @@ namespace Piper {
     void piperGetTaskIndex(TaskContext context, uint32_t& index);
 
     void piperGetArgument(TaskContext context, uint32_t index, void* ptr);
-    void piperGetResourceHandle(TaskContext context, uint32_t index, ResourceHandle& handle);
+    void piperGetRootResourceLUT(TaskContext context, ResourceHandle& handle);
+    void piperLookUpResourceHandle(TaskContext context, ResourceHandle LUT, uint32_t index, ResourceHandle& handle);
+
+    extern void* piperBuiltinSymbolLUT[];
 
     // TODO: Atomic Intrinsic
     // TODO: Synchronize Primitive?
     // TODO: Exception Handling
     // TODO: Profiling API from Protocol.hpp
+    }
+
+    template <typename T>
+    T piperLookUpSymbol(const uint32_t index) {
+        return reinterpret_cast<T>(piperBuiltinSymbolLUT[index]);
     }
 }  // namespace Piper

@@ -548,6 +548,12 @@ namespace Piper {
         void processSignal(int signal) override {
             notImplemented(PIPER_SOURCE_LOCATION());
         }
+        [[noreturn]] void unreachable(const SourceLocation& loc) override {
+            notImplemented(PIPER_SOURCE_LOCATION());
+        }
+        [[noreturn]] void notSupported(const SourceLocation& loc) override {
+            notImplemented(PIPER_SOURCE_LOCATION());
+        }
         [[noreturn]] void notImplemented(const SourceLocation& loc) override {
             std::abort();
         }

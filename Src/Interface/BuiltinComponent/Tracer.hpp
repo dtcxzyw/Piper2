@@ -47,9 +47,10 @@ namespace Piper {
 
     constexpr auto invalidOffset = std::numeric_limits<size_t>::max();
 
+    // TODO: stride and more format
     struct TriangleIndexedGeometryDesc final {
         uint32_t vertCount, triCount;
-        SharedPtr<Buffer> buffer;
+        SharedPtr<Resource> buffer;
         // offset
         size_t vertices;
         size_t index;
@@ -62,7 +63,7 @@ namespace Piper {
 
     struct CustomGeometryDesc final {
         uint32_t count;
-        SharedPtr<Buffer> bounds;
+        SharedPtr<Resource> bounds;
     };
 
     struct GeometryDesc final {
@@ -104,7 +105,7 @@ namespace Piper {
         virtual void updateTimeInterval(Time<float> begin, Time<float> end) noexcept = 0;
         // TODO: support tiled-rendering
         [[nodiscard]] virtual Future<void> launch(const RenderRECT& rect, const Function<SBTPayload, uint32_t>& launchData,
-                                                  const Span<ResourceView>& resources) = 0;
+                                                  const Span<SharedPtr<Resource>>& resources) = 0;
     };
 
     class Pipeline : public Object {
@@ -130,7 +131,7 @@ namespace Piper {
         const TextureLoader loadTexture;
     };
 
-    // TODO: Texture extension for Accelerator?
+    // TODO: Texture extension for Accelerator
     // TODO: Concurrency
 
     enum class AlignmentRequirement { VertexBuffer, IndexBuffer, TextureCoordsBuffer, BoundsBuffer };

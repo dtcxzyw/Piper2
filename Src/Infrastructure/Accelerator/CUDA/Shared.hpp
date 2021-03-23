@@ -17,18 +17,13 @@
 
 #pragma once
 #include "../../../Kernel/DeviceRuntime.hpp"
+#include <cstddef>
 
 namespace Piper {
     struct TaskContextImpl final {
-        Dim3 gridSize;
-        Dim3 gridIndex;
-        Dim3 blockSize;
-        uint32_t gridLinearIndex;
-
-        uint32_t index;
-        uint32_t blockLinearIndex;
-        Dim3 blockIndex;
-
-        ResourceHandle LUT;
+        const std::byte* argumentBuffer;
+        const size_t* arguments;
+        const ResourceHandle* resourceHandleBase;
     };
+
 }  // namespace Piper

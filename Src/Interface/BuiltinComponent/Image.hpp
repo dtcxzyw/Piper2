@@ -23,13 +23,14 @@ namespace Piper {
         uint32_t width;
         uint32_t height;
         uint32_t channel;  // 1,2 or 4
+        uint32_t frameCount;
+        float step;
     };
-    // TODO:load on demand
-    // TODO:multi-frame
+
+    // TODO: load on demand
     class Image : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Image, Object)
-        virtual ~Image() = default;
+        PIPER_INTERFACE_CONSTRUCT(Image, Object);
         [[nodiscard]] virtual const ImageAttributes& attributes() const noexcept = 0;
         [[nodiscard]] virtual const std::byte* data() const noexcept = 0;  // unsigned char
     };

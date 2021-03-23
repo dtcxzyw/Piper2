@@ -25,150 +25,84 @@
 #include "../Object.hpp"
 #include "Allocator.hpp"
 #include "Concurrency.hpp"
-
 #include <shared_mutex>
 
 namespace Piper {
-    class RunnableProgramUntyped : public Object {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(RunnableProgramUntyped, Object)
-        // TODO:better interface
-        // TODO:interface check
-        virtual void* lookup(const String& symbol) = 0;
-    };
-
-    template <typename... Args>
-    class RunnableProgram final {
-    private:
-        Future<SharedPtr<RunnableProgramUntyped>> mProgram;
-        static_assert((std::is_trivial_v<Args> && ...));
-
-    public:
-        explicit RunnableProgram(Future<SharedPtr<RunnableProgramUntyped>> program) : mProgram(std::move(program)) {}
-        [[nodiscard]] auto get() const {
-            return mProgram;
-        }
-    };
 
     struct ContextHandleReserved;
-    using ContextHandle = const ContextHandleReserved*;  // Manager of resources and command queues
+    using ContextHandle = ContextHandleReserved*;  // Manager of resources and command queues
     struct CommandQueueHandleReserved;
-    using CommandQueueHandle = const CommandQueueHandleReserved*;  // Async engine
+    using CommandQueueHandle = CommandQueueHandleReserved*;  // Async engine
+    class ResourceInstance;
+
+    class Context : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Context, Object);
+        [[nodiscard]] virtual std::lock_guard<std::recursive_mutex> makeCurrent() = 0;
+        [[nodiscard]] virtual ContextHandle getHandle() const noexcept = 0;
+        [[nodiscard]] virtual CommandQueueHandle select() = 0;
+        //[[nodiscard]] virtual SharedPtr<ResourceInstance> createContextSpecificBuffer(size_t size, size_t alignment) = 0;
+    };
 
     class ResourceInstance : public Object {
-    private:
-        SharedPtr<FutureImpl> mFuture;
-
     public:
         PIPER_INTERFACE_CONSTRUCT(ResourceInstance, Object);
         [[nodiscard]] virtual ResourceHandle getHandle() const noexcept = 0;
-        void setFuture(SharedPtr<FutureImpl> future) {
-            if(mFuture && mFuture.unique() && !mFuture->ready())
-                context().getErrorHandler().raiseException("Not handled future", PIPER_SOURCE_LOCATION());
-            mFuture = std::move(future);
-        }
-        [[nodiscard]] const SharedPtr<FutureImpl>& getFuture() const {
-            return mFuture;
-        }
+        [[nodiscard]] virtual SharedPtr<FutureImpl> getFuture() const noexcept = 0;
     };
 
-    enum class ResourceShareMode { Unique, Sharable };
+    class Resource : public Object {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Resource, Object);
+        // TODO: reduce copy?
+        virtual SharedPtr<ResourceInstance> requireInstance(Context* ctx) = 0;
+    };
+
+    // helper function
+    template <typename Callable>
+    SharedPtr<ResourceInstance> safeRequireInstance(std::shared_mutex& mutex,
+                                                    UMap<Context*, SharedPtr<ResourceInstance>>& instances, Context* ctx,
+                                                    Callable&& init) {
+        std::shared_lock<std::shared_mutex> guard{ mutex };
+        const auto iter = instances.find(ctx);
+        if(iter == instances.cend()) {
+            // upgrade
+            guard.unlock();
+            std::lock_guard<std::shared_mutex> uniqueGuard{ mutex };
+            // double check
+            const auto trueIter = instances.find(ctx);
+            if(trueIter != instances.cend())
+                return trueIter->second;
+
+            return instances.insert(makePair(ctx, init())).first->second;
+        }
+        return iter->second;
+    }
 
     // TODO: type check?
-    // TODO: move implementation to PiperCore
-    // TODO: support demand-loaded resource
-    // Just copy
-    class Resource : public Object {
-    private:
-        UMap<ContextHandle, SharedPtr<ResourceInstance>> mReferences;
-        mutable Pair<ContextHandle, SharedPtr<ResourceInstance>> mMainInstance;
-        // lazy allocation
-        // TODO: lock-free
-        mutable std::mutex mMainMutex;
-        std::shared_mutex mReferenceMutex;
-
-    protected:
-        using Instance = decltype(mMainInstance);
-        // TODO: use map-reduce
-        // write to main -> read from copies
-        virtual void flushBeforeRead(const Instance& dest) const = 0;
-        [[nodiscard]] virtual Instance instantiateMain() const = 0;
-        [[nodiscard]] virtual Instance instantiateReference(ContextHandle ctx) const = 0;
-
-        Future<void> syncToReferences() {
-            auto& scheduler = context().getScheduler();
-            if(getShareMode() == ResourceShareMode::Unique) {
-                std::shared_lock<std::shared_mutex> guard{ mReferenceMutex };
-                DynamicArray<Future<void>> futures{ context().getAllocator() };
-                futures.push_back(available());
-                for(auto&& inst : mReferences) {
-                    flushBeforeRead(inst);
-                    futures.push_back(Future<void>{ inst.second->getFuture() });
-                }
-                return scheduler.wrap(futures);
-            }
-            return scheduler.ready();
-        }
-
-        [[nodiscard]] auto& requireMain() const {
-            if(!mMainInstance.second) {
-                std::lock_guard<std::mutex> guard{ mMainMutex };
-                // double check
-                if(!mMainInstance.second)
-                    mMainInstance = instantiateMain();
-            }
-            return mMainInstance;
-        }
-
-        [[nodiscard]] auto& requireReference(const ContextHandle ctx) {
-            {
-                std::shared_lock<std::shared_mutex> guard{ mReferenceMutex };
-                const auto iter = mReferences.find(ctx);
-                if(iter != mReferences.cend())
-                    return *iter;
-            }
-            std::lock_guard<std::shared_mutex> guard{ mReferenceMutex };
-            auto&& inst = *mReferences.insert(instantiateReference(ctx)).first;
-            flushBeforeRead(inst);
-            return inst;
-        }
-
-        // reserved for map-reduce
-        // write to instances -> read from main
-        // virtual void flushAfterWrite()=0;
-
+    class TiledOutput : public Resource {
     public:
-        explicit Resource(PiperContext& context) : Object{ context }, mReferences{ context.getAllocator() } {}
-        [[nodiscard]] Future<void> available() const {
-            return Future<void>{ requireMain().second->getFuture() };
-        }
-        [[nodiscard]] virtual ResourceShareMode getShareMode() const noexcept = 0;
-        [[nodiscard]] const SharedPtr<ResourceInstance>& require(const ContextHandle ctx) {
-            auto&& main = requireMain();
-            if(getShareMode() == ResourceShareMode::Sharable || main.first == ctx)
-                return main.second;
-            return requireReference(ctx).second;
-        }
-        [[nodiscard]] SharedPtr<FutureImpl> access() {
-            if(getShareMode() == ResourceShareMode::Sharable)
-                return syncToReferences().raw();
-            return requireMain().second->getFuture();
-        }
-        void makeDirty(const SharedPtr<FutureImpl>& future) const {
-            requireMain().second->setFuture(future);
-        }
+        PIPER_INTERFACE_CONSTRUCT(TiledOutput, Resource);
+        // TODO: reduce copy
+        [[nodiscard]] virtual Future<Binary> download() const = 0;
+        // Future<SharedPtr<Resource>> asBuffer() const;
     };
 
-    enum class ResourceAccessMode { ReadOnly, ReadWrite };
-    // reserved for map-reduce
-    // enum class ResourceAccessLocality { Random, Local };
+    class KernelSymbol : public Resource {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(KernelSymbol, Resource);
+    };
 
-    struct ResourceView final {
-        SharedPtr<Resource> resource;
-        ResourceAccessMode accessMode;
+    class Kernel : public Resource {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(Kernel, Resource);
+        // TODO: protocol check
+        [[nodiscard]] virtual SharedPtr<KernelSymbol> lookUp(String symbol) const = 0;
+    };
 
-        // TODO: divide resource for Multi-GPU
-        // ResourceAccessLocality accessLocality;
+    class ResourceLookUpTable : public Resource {
+    public:
+        PIPER_INTERFACE_CONSTRUCT(ResourceLookUpTable, Resource);
     };
 
     class ArgumentPackage final {
@@ -196,44 +130,33 @@ namespace Piper {
         }
     };
 
-    // TODO: type-check?
-    class Buffer : public Resource {
+    class SymbolBinding final : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Buffer, Resource);
-        [[nodiscard]] virtual size_t size() const noexcept = 0;
-
-        // For CPU: reduce copy
-        // For CUDA: use pinned memory
-        virtual void upload(Function<void, Ptr> prepare) = 0;
-
-        virtual void reset() = 0;
-        // TODO: move ownership on CPU to reduce copy
-        [[nodiscard]] virtual Future<Binary> download() const = 0;
+        PIPER_INTERFACE_CONSTRUCT(SymbolBinding, Object);
     };
 
-    // TODO: Allocator per command queue
+    // TODO: tiled input?
+    // TODO: resource allocation scheduler
     class Accelerator : public Object {
     private:
         [[nodiscard]] virtual Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block,
-                                                            const Future<SharedPtr<RunnableProgramUntyped>>& kernel,
-                                                            const DynamicArray<ResourceView>& resources,
-                                                            const ArgumentPackage& args) = 0;
-        [[nodiscard]] virtual Future<SharedPtr<RunnableProgramUntyped>> compileKernelImpl(const Span<LinkableProgram>& linkable,
-                                                                                          const String& entry) = 0;
+                                                            const SharedPtr<KernelSymbol>& kernel,
+                                                            const SharedPtr<ResourceLookUpTable>& root, ArgumentPackage args) = 0;
 
     public:
         PIPER_INTERFACE_CONSTRUCT(Accelerator, Object);
         [[nodiscard]] virtual CString getNativePlatform() const noexcept = 0;
         [[nodiscard]] virtual Span<const CString> getSupportedLinkableFormat() const noexcept = 0;
 
+        [[nodiscard]] virtual SharedPtr<Kernel> compileKernel(const Span<LinkableProgram>& linkable,
+                                                              UMap<String, String> staticRedirectedSymbols,
+                                                              DynamicArray<String> dynamicSymbols) = 0;
+
         template <typename... Args>
-        [[nodiscard]] RunnableProgram<Args...> compileKernel(const Span<LinkableProgram>& linkable, const String& entry) {
-            return RunnableProgram<Args...>{ compileKernelImpl(linkable, entry) };
-        }
-        template <typename... Args>
-        [[nodiscard]] Future<void> launchKernel(const Dim3& grid, const Dim3& block, const RunnableProgram<Args...>& kernel,
-                                                const DynamicArray<ResourceView>& resources, const Args&... args) {
-            return launchKernelImpl(grid, block, kernel.get(), resources, ArgumentPackage{ context(), args... });
+        [[nodiscard]] Future<void> launchKernel(const Dim3& grid, const Dim3& block, const SharedPtr<KernelSymbol>& kernel,
+                                                const SharedPtr<ResourceLookUpTable>& root, const Args&... args) {
+            static_assert((std::is_trivial_v<std::decay_t<Args>> && ...));
+            return launchKernelImpl(grid, block, kernel, root, ArgumentPackage{ context(), args... });
         }
 
         // TODO: better interface
@@ -241,6 +164,12 @@ namespace Piper {
         //                         DynamicArray<SharedPtr<ResourceView>> resources) = 0;
 
         // TODO:support DMA? (DMA may cause bad performance)
-        [[nodiscard]] virtual SharedPtr<Buffer> createBuffer(size_t size, size_t alignment) = 0;
+        [[nodiscard]] virtual SharedPtr<Resource> createBuffer(size_t size, size_t alignment, Function<void, Ptr> data) = 0;
+
+        // TODO: init/tiled/map/reduce
+        [[nodiscard]] virtual SharedPtr<TiledOutput> createTiledOutput(size_t size, size_t alignment) = 0;
+
+        [[nodiscard]] virtual SharedPtr<ResourceLookUpTable> createResourceLUT(DynamicArray<SharedPtr<Resource>> resources) = 0;
+        [[nodiscard]] virtual const DynamicArray<Context*>& enumerateContexts() const = 0;
     };
 }  // namespace Piper

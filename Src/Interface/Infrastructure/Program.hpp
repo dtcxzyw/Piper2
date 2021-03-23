@@ -22,8 +22,9 @@
 #include "Concurrency.hpp"
 
 namespace Piper {
+    class PITU;
     struct LinkableProgram final {
-        Future<Binary> exchange;
+        Variant<Future<SharedPtr<PITU>>, Future<Binary>> exchange;
         String format;
         uint64_t UID;
     };
@@ -32,18 +33,19 @@ namespace Piper {
     class PITU : public Object {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         PIPER_INTERFACE_CONSTRUCT(PITU, Object)
-        virtual ~PITU() = default;
+        // TODO: better interface
         [[nodiscard]] virtual LinkableProgram generateLinkable(const Span<const CString>& acceptableFormat) const = 0;
         [[nodiscard]] virtual String humanReadable() const = 0;
     };
 
-    // TODO:Optimize
-    // TODO:PPL
+    // TODO: Optimize
     class PITUManager : public Object {  // NOLINT(cppcoreguidelines-special-member-functions)
     public:
         PIPER_INTERFACE_CONSTRUCT(PITUManager, Object)
-        virtual ~PITUManager() = default;
         [[nodiscard]] virtual Future<SharedPtr<PITU>> loadPITU(const String& path) const = 0;
-        //[[nodiscard]] virtual Future<SharedPtr<PITU>> mergePITU(const Future<DynamicArray<SharedPtr<PITU>>>& pitus) const = 0;
+        //[[nodiscard]] virtual Future<SharedPtr<PITU>> mergePITU(const DynamicArray<Future<SharedPtr<PITU>>>& pitus) const = 0;
+        [[nodiscard]] virtual Future<SharedPtr<PITU>> linkPITU(const DynamicArray<Future<SharedPtr<PITU>>>& pitus,
+                                                               UMap<String, String> staticRedirectedSymbols,
+                                                               DynamicArray<String> dynamicSymbols) const = 0;
     };
 }  // namespace Piper

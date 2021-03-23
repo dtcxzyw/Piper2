@@ -43,17 +43,15 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
 
     auto beg = Clock::now();
 
-    auto devX = accelerator->createBuffer(count * sizeof(Float), 64);
-    devX->upload([&X](const Piper::Ptr ptr) {
+    auto devX = accelerator->createBuffer(count * sizeof(Float), 64, [&X](const Piper::Ptr ptr) {
         // copy for computation without accelerator
         memcpy(reinterpret_cast<void*>(ptr), X.data(), X.size() * sizeof(Float));
     });
-    auto devY = accelerator->createBuffer(Y.size() * sizeof(Float), 64);
-    devY->upload([&Y](const Piper::Ptr ptr) {
+    auto devY = accelerator->createBuffer(Y.size() * sizeof(Float), 64, [&Y](const Piper::Ptr ptr) {
         // copy for computation without accelerator
         memcpy(reinterpret_cast<void*>(ptr), Y.data(), Y.size() * sizeof(Float));
     });
-    const auto devZ = accelerator->createBuffer(count * sizeof(Float), 64);
+    const auto devZ = accelerator->createTiledOutput(count * sizeof(Float), 64);
 
     auto conv = context.getPITUManager().loadPITU("conv.bc");
     auto linkable = PIPER_FUTURE_CALL(conv, generateLinkable)(accelerator->getSupportedLinkableFormat());
@@ -61,16 +59,13 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     // TODO:concurrency
     linkable.wait();
 
-    auto kernel = accelerator->compileKernel<uint32_t, uint32_t, uint32_t>(
-        Piper::Span<Piper::LinkableProgram>{ &linkable.getUnsafe(), 1 }, "convEntry");
+    auto kernel = accelerator->compileKernel(Piper::Span<Piper::LinkableProgram>{ &linkable.getUnsafe(), 1 }, {}, {});
+    auto entry = kernel->lookUp("convEntry");
     // TODO:better interface
-    Piper::DynamicArray<Piper::ResourceView> resources{ context.getAllocator() };
-    resources.push_back({ devX, Piper::ResourceAccessMode::ReadOnly });
-    resources.push_back({ devY, Piper::ResourceAccessMode::ReadOnly });
-    resources.push_back({ devZ, Piper::ResourceAccessMode::ReadWrite });
+    auto lut = accelerator->createResourceLUT({ { devX, devY, devZ }, context.getAllocator() });
 
-    auto _ = accelerator->launchKernel(Piper::Dim3{ width, 1, 1 }, Piper::Dim3{ height, 1, 1 }, kernel, resources, width, height,
-                                       kernelSize);
+    auto _ =
+        accelerator->launchKernel(Piper::Dim3{ width, 1, 1 }, Piper::Dim3{ height, 1, 1 }, entry, lut, width, height, kernelSize);
 
     auto dataZ = devZ->download().getSync();
 
@@ -105,13 +100,6 @@ void generalAcceleratorTest(Piper::PiperContext& context, const Piper::SharedPtr
 }
 
 TEST_F(PiperCoreEnvironment, LLVM_CPU) {
-    /*
-    auto allocator =
-        context->getModuleLoader()
-            .newInstance("Piper.Infrastructure.JemallocAllocator.Allocator", Piper::makeSharedObject<Piper::Config>(*context))
-            .get();
-    contextOwner->setAllocator(eastl::dynamic_shared_pointer_cast<Piper::Allocator>(allocator));
-    */
     auto& loader = context->getModuleLoader();
     contextOwner->setScheduler(loader.newInstanceT<Piper::Scheduler>("Piper.Infrastructure.Squirrel.Scheduler").getSync());
     auto manager = loader.newInstanceT<Piper::PITUManager>("Piper.Infrastructure.LLVMIR.LLVMIRManager");
@@ -119,6 +107,17 @@ TEST_F(PiperCoreEnvironment, LLVM_CPU) {
     auto accelerator = loader.newInstanceT<Piper::Accelerator>("Piper.Infrastructure.Parallel.Accelerator");
     generalAcceleratorTest(*context, accelerator.getSync());
 }
+
+/*
+TEST_F(PiperCoreEnvironment, CUDA) {
+    auto& loader = context->getModuleLoader();
+    contextOwner->setScheduler(loader.newInstanceT<Piper::Scheduler>("Piper.Infrastructure.Squirrel.Scheduler").getSync());
+    auto manager = loader.newInstanceT<Piper::PITUManager>("Piper.Infrastructure.LLVMIR.LLVMIRManager");
+    contextOwner->setPITUManager(manager.getSync());
+    auto accelerator = loader.newInstanceT<Piper::Accelerator>("Piper.Infrastructure.CUDAWrapper.Accelerator");
+    generalAcceleratorTest(*context, accelerator.getSync());
+}
+*/
 
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);

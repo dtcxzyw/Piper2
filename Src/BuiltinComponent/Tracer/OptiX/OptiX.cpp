@@ -35,446 +35,101 @@
 #include "../../../Kernel/Protocol.hpp"
 #include "../../../STL/Map.hpp"
 #include "Shared.hpp"
-
-#include <cassert>
-#include <embree3/rtcore.h>
-#include <random>
+#pragma warning(push, 0)
+#include <cuda.h>
+#include <optix.h>
+#include <optix_function_table_definition.h>
+#include <optix_stack_size.h>
+#include <optix_stubs.h>
+#pragma warning(pop)
 #include <utility>
 
-// TODO:https://www.embree.org/api.html#performance-recommendations
-
 namespace Piper {
-    // TODO:controlled by RenderDriver for per tile analysis
-    class EmbreeProfiler final : public Profiler {
-    private:
-        using BoolCounter = std::pair<std::atomic_uint64_t, std::atomic_uint64_t>;
-        using FloatCounter = std::pair<std::atomic<double>, std::atomic_uint64_t>;
-        using UIntCounter = DynamicArray<std::atomic_uint64_t>;
-        using TimeCounter = std::pair<std::atomic_uint64_t, std::atomic_uint64_t>;
-        struct Record final {
-            StatisticsType type;
-            union {
-                BoolCounter bc;
-                FloatCounter fc;
-                UIntCounter uc;
-                TimeCounter tc;
-            };
-            Record(Record&& rhs) noexcept : type(rhs.type) {
-                switch(type) {
-                    case StatisticsType::Bool: {
-                        bc.first = 0;
-                        bc.second = 0;
-                    } break;
-                    case StatisticsType::Float: {
-                        fc.first = 0.0;
-                        fc.second = 0;
-                    } break;
-                    case StatisticsType::UInt: {
-                        new(&uc) UIntCounter{ std::move(rhs.uc) };
-                    } break;
-                    case StatisticsType::Time: {
-                        tc.first = 0;
-                        tc.second = 0;
-                    } break;
-                }
-            }
+    // TODO: NVLink
+    // TODO: need makeCurrent?
 
-            ~Record() {
-                if(type == StatisticsType::UInt)
-                    std::destroy_at(&uc);
-            }
-        };
-
-        DynamicArray<Record> mStatistics;
-        struct ItemInfo final {
-            String group;
-            String name;
-            StatisticsHandle id;
-        };
-        UMap<const void*, ItemInfo> mID;
-        mutable std::mutex mMutex;
-        using Clock = std::chrono::high_resolution_clock;
-
-    public:
-        explicit EmbreeProfiler(PiperContext& context)
-            : Profiler(context), mStatistics(context.getAllocator()), mID(context.getAllocator()) {}
-        StatisticsHandle registerDesc(const StringView group, const StringView name, const void* uid, const StatisticsType type,
-                                      const uint32_t maxValue = 0) override {
-            std::lock_guard<std::mutex> guard{ mMutex };
-            const auto iter = mID.find(uid);
-            if(iter != mID.cend())
-                return iter->second.id;
-            String sGroup{ group, context().getAllocator() }, sName{ name, context().getAllocator() };
-            const auto* const res = reinterpret_cast<StatisticsHandle>(static_cast<ptrdiff_t>(mStatistics.size()));
-            mID.insert(makePair(uid, ItemInfo{ std::move(sGroup), std::move(sName), res }));
-            auto& record = *static_cast<Record*>(mStatistics.push_back_uninitialized());
-            record.type = type;
-            switch(type) {
-                case StatisticsType::Bool: {
-                    record.bc.first = 0;
-                    record.bc.second = 0;
-                } break;
-                case StatisticsType::UInt: {
-                    new(&record.uc) UIntCounter{ maxValue + 1, context().getAllocator() };
-                } break;
-                case StatisticsType::Float: {
-                    record.fc.first = 0.0;
-                    record.fc.second = 0;
-                } break;
-                case StatisticsType::Time: {
-                    record.tc.first = 0;
-                    record.tc.second = 0;
-                } break;
-            }
-            return res;
-        }
-        void addBool(const StatisticsHandle id, const bool val) {
-            auto& [first, second] = mStatistics[reinterpret_cast<ptrdiff_t>(id)].bc;
-            ++(val ? first : second);
-        }
-        void addFloat(const StatisticsHandle id, const float val) {
-            auto& [first, second] = mStatistics[reinterpret_cast<ptrdiff_t>(id)].fc;
-            double src = first;
-            while(!first.compare_exchange_strong(src, src + static_cast<double>(val)))
-                ;
-            ++second;
-        }
-        void addTime(const StatisticsHandle id, const uint64_t val) {
-            auto& [first, second] = mStatistics[reinterpret_cast<ptrdiff_t>(id)].tc;
-            first += val;
-            ++second;
-        }
-        [[nodiscard]] static uint64_t getTime() {
-            return Clock::now().time_since_epoch().count();
-        }
-        void addUInt(const StatisticsHandle id, const uint32_t val) {
-            ++mStatistics[reinterpret_cast<ptrdiff_t>(id)].uc[val];
-        }
-        [[nodiscard]] String generateReport() const override {
-            std::lock_guard<std::mutex> guard{ mMutex };
-            DynamicArray<String> report{ context().getAllocator() };
-            report.reserve(mStatistics.size());
-            for(auto&& item : mStatistics) {
-                switch(item.type) {
-                    case StatisticsType::Bool: {
-                        const auto& [hit, miss] = item.bc;
-                        const auto tot = hit + miss;
-                        report.emplace_back(
-                            toString(context().getAllocator(),
-                                     static_cast<double>(hit) / static_cast<double>(std::max(1ULL, tot)) * 100.0) +
-                            "% (" + toString(context().getAllocator(), hit) + "/" + toString(context().getAllocator(), tot) +
-                            ")\n");
-                    } break;
-                    case StatisticsType::Float: {
-                        const auto& [sum, cnt] = item.fc;
-                        report.emplace_back(
-                            toString(context().getAllocator(),
-                                     static_cast<double>(sum) / static_cast<double>(std::max(1ULL, static_cast<uint64_t>(cnt)))) +
-                            " (" + toString(context().getAllocator(), cnt) + " samples)\n");
-                    } break;
-                    case StatisticsType::UInt: {
-                        const auto& record = item.uc;
-                        auto sum = 0.0;
-                        uint64_t tot = 0;
-                        String res{ context().getAllocator() };
-                        for(uint32_t idx = 0; idx < record.size(); ++idx) {
-                            const uint64_t cnt = record[idx];
-                            sum += static_cast<double>(idx) * static_cast<double>(cnt);
-                            tot += cnt;
-                        }
-                        for(uint32_t idx = 0; idx < record.size(); ++idx) {
-                            const uint64_t cnt = record[idx];
-                            res += toString(context().getAllocator(), idx) + ": " +
-                                toString(context().getAllocator(),
-                                         static_cast<double>(cnt) / static_cast<double>(std::max(1ULL, tot)) * 100.0) +
-                                "% (" + toString(context().getAllocator(), cnt) + " samples)\n";
-                        }
-                        report.emplace_back("mean " +
-                                            toString(context().getAllocator(), sum / static_cast<double>(std::max(1ULL, tot))) +
-                                            " (" + toString(context().getAllocator(), tot) + " samples)\n" + res);
-                    } break;
-                    case StatisticsType::Time: {
-                        using Ratio = std::ratio_divide<std::nano, Clock::period>;
-                        const auto& [sum, cnt] = item.tc;
-                        report.emplace_back(
-                            toString(context().getAllocator(), sum * Ratio::num / std::max(1ULL, Ratio::den * cnt)) + " ns (" +
-                            toString(context().getAllocator(), cnt) + " samples)\n");
-                    } break;
-                }
-            }
-
-            Map<String, Map<String, String>> remap(context().getAllocator());
-            auto locate = [&, this](const String& group) -> Map<String, String>& {
-                const auto iter = remap.find(group);
-                if(iter != remap.cend())
-                    return iter->second;
-                return remap.emplace(group, Map<String, String>{ context().getAllocator() }).first->second;
-            };
-            for(auto&& [_, info] : mID)
-                locate(info.group).emplace(info.name, info.name + ": " + report[reinterpret_cast<ptrdiff_t>(info.id)]);
-            const auto* const line = "\n========================================\n";
-            String res{ "\n=============== Pipeline Statistics ===============\n", context().getAllocator() };
-            for(auto&& [group, map] : remap) {
-                res += "\n=============== " + group + " ===============\n";
-                for(auto&& [_, val] : map)
-                    res += val;
-            }
-            res += line;
-            return res;
-        }
-    };
-
-    static void piperEmbreeStatisticsUInt(const RestrictedContext context, const StatisticsHandle statistics,
-                                          const uint32_t val) {
-        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        ctx->profiler->addUInt(statistics, val);
+    static void checkCUDAResult(PiperContext& context, const SourceLocation& loc, const CUresult res) {
+        if(res == CUDA_SUCCESS)
+            return;
+        auto name = "UNKNOWN", str = "Unknown error";
+        cuGetErrorName(res, &name);
+        cuGetErrorString(res, &str);
+        context.getErrorHandler().raiseException(String{ "CUDA Error[", context.getAllocator() } + name + "] " + str + ".", loc);
     }
-    static void piperEmbreeStatisticsBool(const RestrictedContext context, const StatisticsHandle statistics, const bool val) {
-        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        ctx->profiler->addBool(statistics, val);
-    }
-    static void piperEmbreeStatisticsFloat(const RestrictedContext context, const StatisticsHandle statistics, const float val) {
-        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        ctx->profiler->addFloat(statistics, val);
-    }
-    static void piperEmbreeStatisticsTime(const RestrictedContext context, const StatisticsHandle statistics,
-                                          const uint64_t val) {
-        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        ctx->profiler->addTime(statistics, val);
-    }
-    static void piperEmbreeGetTime(RestrictedContext, uint64_t& val) {
-        val = EmbreeProfiler::getTime();
+
+    static void checkOptixResult(PiperContext& context, const SourceLocation& loc, const OptixResult res) {
+        if(res == OPTIX_SUCCESS)
+            return;
+        const auto name = optixGetErrorName(res);
+        const auto str = optixGetErrorString(res);
+        context.getErrorHandler().raiseException(String{ "OptiX Error[", context.getAllocator() } + name + "] " + str + ".", loc);
     }
 
     constexpr auto gsmMask = 1, areaLightMask = 2;
 
-    struct IntersectContext final {
-        RTCIntersectContext ctx;
-        // extend information
-        RestrictedContext context;
-        GeometryStorage* storage;
+    struct OptixTraversalNode final {
+        const OptixTraversalNode* parent;
+        OptixTraversableHandle geometry;
     };
-
-    static void piperEmbreeTrace(const FullContext context, const RayInfo<FOR::World>& ray, const float minT, const float maxT,
-                                 TraceResult& result) {
-        const auto* ctx = reinterpret_cast<const PerSampleContext*>(context);
-        const auto begin = EmbreeProfiler::getTime();
-
-        GeometryStorage storage;
-        IntersectContext intersectCtx;
-        // TODO:store time of multi rays by ray id
-        rtcInitIntersectContext(&intersectCtx.ctx);
-        intersectCtx.context = decay(context);
-        intersectCtx.storage = &storage;
-        // TODO:context flags
-        intersectCtx.ctx.flags = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
-
-        RTCRayHit hit{};
-        hit.ray = {
-            ray.origin.x.val,
-            ray.origin.y.val,
-            ray.origin.z.val,
-            minT,
-            ray.direction.x.val,
-            ray.direction.y.val,
-            ray.direction.z.val,
-            ctx->time.val,
-            maxT,
-            gsmMask | areaLightMask,
-            0,
-            0  // must set the ray flags to 0
-        };
-
-        hit.hit.geomID = hit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
-
-        // TODO: SIMD (Enoki)
-        rtcIntersect1(ctx->argument.scene, reinterpret_cast<RTCIntersectContext*>(&intersectCtx), &hit);
-
-        if(hit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
-            // TODO:surface intersect filter?
-            result.surface.t = Distance{ hit.ray.tfar };
-            auto* scene = ctx->argument.scene;
-            RTCGeometry geo = nullptr;
-            auto initialized = false;
-
-            for(uint32_t i = 0; i < RTC_MAX_INSTANCE_LEVEL_COUNT && hit.hit.instID[i] != RTC_INVALID_GEOMETRY_ID; ++i) {
-                geo = rtcGetGeometry(scene, hit.hit.instID[i]);
-
-                rtcGetGeometryTransform(geo, 0.0f, RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
-                                        initialized ? result.surface.transform.A2B :
-                                                      result.surface.transform.B2A);  // local to world
-                if(initialized)
-                    mergeL(result.surface.transform.B2A, result.surface.transform.A2B);
-                else
-                    initialized = true;
-
-                scene = static_cast<RTCScene>(rtcGetGeometryUserData(geo));
-            }
-
-            assert(initialized);
-
-            calcInverse(result.surface.transform.B2A, result.surface.transform.A2B);
-
-            const auto* data = static_cast<const GeometryUserData*>(rtcGetGeometryUserData(geo));
-
-            if(data->kind == HitKind::Builtin) {
-                auto& builtin = *reinterpret_cast<BuiltinHitInfo*>(&storage);
-                builtin.Ng = result.surface.transform(Normal<float, FOR::World>{ Vector<Dimensionless<float>, FOR::World>{
-                    Dimensionless<float>{ hit.hit.Ng_x }, Dimensionless<float>{ hit.hit.Ng_y },
-                    Dimensionless<float>{ hit.hit.Ng_z } } });
-                builtin.index = hit.hit.primID;
-                builtin.barycentric = { hit.hit.u, hit.hit.v };
-                builtin.face = (dot(result.surface.transform(ray.direction), builtin.Ng).val < 0.0f ? Face::Front : Face::Back);
-            }
-
-            data->calcSurface(reinterpret_cast<RestrictedContext>(context), data->GEPayload, &storage, result.surface.intersect);
-
-            if(data->usage == GeometryUsage::GSM) {
-                result.kind = TraceKind::Surface;
-                result.surface.surface = reinterpret_cast<SurfaceHandle>(data);
-            } else {
-                result.kind = TraceKind::AreaLight;
-                result.surface.light = reinterpret_cast<const AreaLightUserData*>(data)->light;
-            }
-            ctx->argument.profiler->addBool(ctx->argument.profileIntersectHit, true);
-        } else {
-            result.kind = TraceKind::Missing;
-            ctx->argument.profiler->addBool(ctx->argument.profileIntersectHit, false);
-        }
-        const auto end = EmbreeProfiler::getTime();
-        ctx->argument.profiler->addTime(ctx->argument.profileIntersectTime, end - begin);
-    }
-
-    static bool piperEmbreeOcclude(const FullContext context, const RayInfo<FOR::World>& ray, const float minT,
-                                   const float maxT) {
-        const auto* ctx = reinterpret_cast<const PerSampleContext*>(context);
-        const auto begin = EmbreeProfiler::getTime();
-        IntersectContext intersectCtx;
-        // TODO:store time of multi rays by ray id
-        rtcInitIntersectContext(&intersectCtx.ctx);
-        intersectCtx.context = decay(context);
-        // TODO:context flags
-        intersectCtx.ctx.flags = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
-
-        RTCRay rayInfo{
-            ray.origin.x.val,
-            ray.origin.y.val,
-            ray.origin.z.val,
-            minT,
-            ray.direction.x.val,
-            ray.direction.y.val,
-            ray.direction.z.val,
-            ctx->time.val,
-            maxT,
-            gsmMask,
-            0,
-            0  // must set the ray flags to 0
-        };
-
-        // TODO: Coroutine+SIMD?
-        rtcOccluded1(ctx->argument.scene, reinterpret_cast<RTCIntersectContext*>(&intersectCtx), &rayInfo);
-
-        const auto result = (rayInfo.tfar < 0.0f);
-        ctx->argument.profiler->addBool(ctx->argument.profileOccludeHit, result);
-        const auto end = EmbreeProfiler::getTime();
-        ctx->argument.profiler->addTime(ctx->argument.profileOccludeTime, end - begin);
-        return result;
-    }
-
-    struct EmbreeTraversalNode final {
-        const EmbreeTraversalNode* parent;
-        RTCGeometry geometry;
-    };
-
-    static void piperEmbreeQueryTransform(const RestrictedContext context, const TraversalHandle traversal,
-                                          Transform<Distance, FOR::Local, FOR::World>& transform) {
-        auto initialized = false;
-        const auto t = reinterpret_cast<PerSampleContext*>(context)->time.val;
-        const auto* node = reinterpret_cast<const EmbreeTraversalNode*>(traversal);
-        do {
-            rtcGetGeometryTransform(node->geometry, t, RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
-                                    initialized ? transform.B2A : transform.A2B);  // local to world
-            if(initialized)
-                mergeR(transform.B2A, transform.A2B);
-            else
-                initialized = true;
-            node = node->parent;
-        } while(node);
-        calcInverse(transform.A2B, transform.B2A);
-    }
-
-    // TODO:more option
-    static void piperEmbreePrintFloat(RestrictedContext, const char* msg, const float ref) {
-        printf("%s:%lf\n", msg, static_cast<double>(ref));
-    }
-
-    static void piperEmbreeFloatAtomicAdd(float& x, const float y) {
-        // TODO:improve performance
-        auto& atomicX = *reinterpret_cast<std::atomic<float>*>(&x);
-        auto src = x;
-        while(!atomicX.compare_exchange_strong(src, src + y))
-            ;
-    }
-
-    static LinkableProgram prepareKernelNative(PiperContext& context, const bool debug) {
-        Binary res{ context.getAllocator() };
-        constexpr auto header = "Native";
-        res.insert(res.cend(), reinterpret_cast<const std::byte*>(header), reinterpret_cast<const std::byte*>(header + 6));
-        auto append = [&res](const StringView symbol, auto address) {
-            res.insert(res.cend(), reinterpret_cast<const std::byte*>(symbol.data()),
-                       reinterpret_cast<const std::byte*>(symbol.data() + symbol.size() + 1));
-            auto func = reinterpret_cast<ptrdiff_t>(address);
-            const auto* beg = reinterpret_cast<const std::byte*>(&func);
-            const auto* end = beg + sizeof(func);
-            res.insert(res.cend(), beg, end);
-        };
-#define PIPER_APPEND(FUNC)                                                               \
-    static_assert(std::is_same_v<decltype(&piper##FUNC), decltype(&piperEmbree##FUNC)>); \
-    append("piper" #FUNC, piperEmbree##FUNC)
-        PIPER_APPEND(Trace);
-        PIPER_APPEND(Occlude);
-        PIPER_APPEND(StatisticsUInt);
-        PIPER_APPEND(StatisticsBool);
-        PIPER_APPEND(StatisticsFloat);
-        PIPER_APPEND(StatisticsTime);
-        PIPER_APPEND(GetTime);
-        PIPER_APPEND(QueryTransform);
-        PIPER_APPEND(FloatAtomicAdd);
-        if(debug) {
-            PIPER_APPEND(PrintFloat);
-        }
-#undef PIPER_APPEND
-        return LinkableProgram{ context.getScheduler().value(res), String{ "Native", context.getAllocator() },
-                                reinterpret_cast<uint64_t>(piperEmbreeTrace) };
-    }
 
     struct DeviceDeleter {
-        void operator()(const RTCDevice device) const {
-            rtcReleaseDevice(device);
+        Context* ctx;
+        void operator()(const OptixDeviceContext context) const {
+            checkOptixResult(ctx->context(), PIPER_SOURCE_LOCATION(), optixDeviceContextDestroy(context));
         }
     };
-    using DeviceHandle = UniquePtr<RTCDeviceTy, DeviceDeleter>;
+    using DeviceHandle = UniquePtr<OptixDeviceContext_t, DeviceDeleter>;
+    // NOTICE: optixBuiltinISModuleGet
 
-    struct GeometryDeleter {
-        void operator()(const RTCGeometry geometry) const {
-            rtcReleaseGeometry(geometry);
-        }
-    };
-    using GeometryHandle = UniquePtr<RTCGeometryTy, GeometryDeleter>;
+    class OptixModuleHolder final : public ResourceInstance {
+    private:
+        Context& mContext;
+        OptixModule mModule;
 
-    struct SceneDeleter {
-        void operator()(const RTCScene scene) const {
-            rtcReleaseScene(scene);
-        }
-    };
-    using SceneHandle = UniquePtr<RTCSceneTy, SceneDeleter>;
+    public:
+        OptixModuleHolder(Context& context, const OptixDeviceContext device, const OptixModuleCompileOptions& MCO,
+                          const OptixPipelineCompileOptions& PCO, const String& ptx)
+            : ResourceInstance{ context.context() }, mContext{ context } {
+            auto guard = context.makeCurrent();
 
-    struct BufferDeleter {
-        void operator()(const RTCBuffer buffer) const {
-            rtcReleaseBuffer(buffer);
+            char logBuffer[1024];
+            size_t logSize = sizeof(logBuffer);
+
+            checkOptixResult(
+                context.context(), PIPER_SOURCE_LOCATION(),
+                optixModuleCreateFromPTX(device, &MCO, &PCO, ptx.c_str(), ptx.size(), logBuffer, &logSize, &mModule));
+            // TODO: print log
+            // TODO: OptixModuleCompileOptions::boundValues;
+        }
+        ~OptixModuleHolder() override {
+            auto guard = mContext.makeCurrent();
+            checkOptixResult(context(), PIPER_SOURCE_LOCATION(), optixModuleDestroy(mModule));
+        }
+        [[nodiscard]] OptixModule getModuleHandle() const noexcept {
+            return mModule;
+        }
+        [[nodiscard]] ResourceHandle getHandle() const noexcept override {
+            return reinterpret_cast<ResourceHandle>(mModule);
         }
     };
-    using BufferHandle = UniquePtr<RTCBufferTy, BufferDeleter>;
+
+    class OptixRTProgram : public Resource {
+    private:
+        Accelerator& mAccelerator;
+
+    public:
+        OptixRTProgram(PiperContext& context, Accelerator& accelerator) : Resource{ context }, mAccelerator{ accelerator } {}
+        ResourceShareMode getShareMode() const noexcept override {
+            return ResourceShareMode::Unique;
+        }
+        void flushBeforeRead(const Instance& dest) const override {}
+        Instance instantiateMain() const override {
+            return {};
+        }
+        Instance instantiateReference(Context* ctx) const override {
+            return {};
+        }
+    };
 
     struct CustomBuffer final {
         const void* payload;
@@ -483,168 +138,128 @@ namespace Piper {
     };
 
     // TODO: sub class
-    class EmbreeAcceleration final : public AccelerationStructure {
+    // TODO: treat as Resource
+    class OptixAcceleration final : public AccelerationStructure {
     private:
-        GeometryHandle mGeometry;
-        SceneHandle mScene;
-        BuiltinTriangleBuffer mBuffer;
-        CustomBuffer mCustomBuffer;
+        DynamicArray<OptixTraversableHandle> mGeometry;
+
+        // CustomBuffer mCustomBuffer;
         SharedPtr<Buffer> mResource;
 
     public:
-        EmbreeAcceleration(PiperContext& context, const RTCDevice device, const GeometryDesc& desc)
-            : AccelerationStructure{ context } {
+        OptixAcceleration(PiperContext& context, const DynamicArray<Pair<Context*, DeviceHandle>>& devices,
+                          const GeometryDesc& desc)
+            : AccelerationStructure{ context }, mGeometry{ context.getAllocator() } {
+
+            // TODO: compact
+            OptixAccelBuildOptions opt{ OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS
+                                        //    |OPTIX_BUILD_FLAG_ALLOW_UPDATE
+                                        ,
+                                        OPTIX_BUILD_OPERATION_BUILD,
+                                        // TODO: motion blur
+                                        OptixMotionOptions{ 1, OPTIX_MOTION_FLAG_NONE, 0.0f, 0.0f } };
+
+            auto build = [&context, &opt](Context* ctx, OptixDeviceContext device, const OptixBuildInput& input) {
+                OptixAccelBufferSizes sizes;
+                checkOptixResult(context, PIPER_SOURCE_LOCATION(), optixAccelComputeMemoryUsage(device, &opt, &input, 1, &sizes));
+                const auto stream = reinterpret_cast<CUstream>(ctx->select());
+                // TODO: RAII
+                // TODO: alignment
+                CUdeviceptr tempBuffer, outputBuffer, AABBBuffer;
+                checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuMemAllocAsync(&tempBuffer, sizes.tempSizeInBytes, stream));
+                checkCUDAResult(context, PIPER_SOURCE_LOCATION(),
+                                cuMemAllocAsync(&outputBuffer, sizes.outputSizeInBytes, stream));
+                checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuMemAllocAsync(&AABBBuffer, sizeof(OptixAabb), stream));
+                OptixTraversableHandle handle;
+                OptixAccelEmitDesc descs[1] = { { AABBBuffer, OPTIX_PROPERTY_TYPE_AABBS } };
+                checkOptixResult(context, PIPER_SOURCE_LOCATION(),
+                                 optixAccelBuild(device, reinterpret_cast<CUstream>(ctx->select()), &opt, &input, 1, tempBuffer,
+                                                 sizes.tempSizeInBytes, outputBuffer, sizes.outputSizeInBytes, &handle, descs,
+                                                 static_cast<uint32_t>(std::size(descs))));
+                checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuMemFreeAsync(tempBuffer, stream));
+
+                OptixAabb aabb;
+                checkCUDAResult(context, PIPER_SOURCE_LOCATION(),
+                                cuMemcpyDtoHAsync(&aabb, AABBBuffer, sizeof(OptixAabb), stream));
+                checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuMemFreeAsync(AABBBuffer, stream));
+                // TODO: concurrency
+                checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuStreamSynchronize(stream));
+                return std::make_tuple(handle, outputBuffer, aabb);
+            };
+
             switch(desc.desc.index()) {
                 case 0: {
-                    // TODO: motion blur
-                    mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE));
                     auto&& triDesc = eastl::get<TriangleIndexedGeometryDesc>(desc.desc);
 
                     // TODO: concurrency
                     triDesc.buffer->access()->wait();
                     mResource = triDesc.buffer;
 
-                    const auto ptr = reinterpret_cast<std::byte*>(triDesc.buffer->require(nullptr)->getHandle());
-                    const BufferHandle buffer{ rtcNewSharedBuffer(device, ptr, triDesc.buffer->size()) };
-                    rtcSetGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, buffer.get(),
-                                         triDesc.vertices, sizeof(float) * 3, triDesc.vertCount);
-                    rtcSetGeometryBuffer(mGeometry.get(), RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, buffer.get(), triDesc.index,
-                                         sizeof(uint32_t) * 3, triDesc.triCount);
-                    mBuffer.index = reinterpret_cast<const uint32_t*>(ptr + triDesc.index);
+                    // TODO: relocate
+                    for(auto& [ctx, device] : devices) {
+                        auto guard = ctx->makeCurrent();
+                        // TODO: batch building
+                        const auto bufferPtr = static_cast<CUdeviceptr>(triDesc.buffer->require(ctx)->getHandle());
 
-                    if(triDesc.texCoords != invalidOffset)
-                        mBuffer.texCoord = reinterpret_cast<const Vector2<float>*>(ptr + triDesc.texCoords);
-                    else
-                        mBuffer.texCoord = nullptr;
+                        const auto vertices = bufferPtr + triDesc.vertices;
+                        // TODO: SBT
+                        const OptixBuildInput input{ OPTIX_BUILD_INPUT_TYPE_TRIANGLES,
+                                                     { OptixBuildInputTriangleArray{
+                                                         &vertices, 1, OPTIX_VERTEX_FORMAT_FLOAT3, 3 * sizeof(float),
+                                                         bufferPtr + triDesc.index, triDesc.triCount,
+                                                         OPTIX_INDICES_FORMAT_UNSIGNED_INT3, 3 * sizeof(uint32_t), 0, nullptr, 0,
+                                                         0, 0, 0, 0, OPTIX_TRANSFORM_FORMAT_NONE } } };
 
-                    if(triDesc.normal != invalidOffset)
-                        mBuffer.Ns = reinterpret_cast<const Vector<float, FOR::Local>*>(ptr + triDesc.normal);
-                    else
-                        mBuffer.Ns = nullptr;
+                        auto [handle, accel, aabb] = build(ctx, device.get(), input);
 
-                    if(triDesc.tangent != invalidOffset)
-                        mBuffer.Ts = reinterpret_cast<const Vector<float, FOR::Local>*>(ptr + triDesc.tangent);
-                    else
-                        mBuffer.Ts = nullptr;
+                        BuiltinTriangleBuffer buffer;
+                        buffer.index = reinterpret_cast<const uint32_t*>(bufferPtr + triDesc.index);
 
+                        if(triDesc.texCoords != invalidOffset)
+                            buffer.texCoord = reinterpret_cast<const Vector2<float>*>(bufferPtr + triDesc.texCoords);
+                        else
+                            buffer.texCoord = nullptr;
+
+                        if(triDesc.normal != invalidOffset)
+                            buffer.Ns = reinterpret_cast<const Vector<float, FOR::Local>*>(bufferPtr + triDesc.normal);
+                        else
+                            buffer.Ns = nullptr;
+
+                        if(triDesc.tangent != invalidOffset)
+                            buffer.Ts = reinterpret_cast<const Vector<float, FOR::Local>*>(bufferPtr + triDesc.tangent);
+                        else
+                            buffer.Ts = nullptr;
+
+                        // TODO: store buffer
+                        context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+                    }
                 } break;
                 case 1: {
-                    mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER));
                     const auto& custom = eastl::get<CustomGeometryDesc>(desc.desc);
-                    rtcSetGeometryUserPrimitiveCount(mGeometry.get(), custom.count);
-
                     // TODO: concurrency
                     custom.bounds->access()->wait();
                     mResource = custom.bounds;
 
-                    rtcSetGeometryUserData(
-                        mGeometry.get(),
-                        reinterpret_cast<void*>(custom.bounds->require(nullptr)->getHandle()));  // for acceleration build
-                    rtcSetGeometryBoundsFunction(
-                        mGeometry.get(),
-                        [](const RTCBoundsFunctionArguments* args) {
-                            const auto* const bounds = static_cast<const float*>(args->geometryUserPtr) + args->primID * 6;
-                            memcpy(&args->bounds_o->lower_x, bounds, 3 * sizeof(float));
-                            memcpy(&args->bounds_o->upper_x, bounds + 3, 3 * sizeof(float));
-                        },
-                        nullptr);  // NOTICE: This userPtr is not used.
-                    rtcSetGeometryIntersectFunction(mGeometry.get(), [](const RTCIntersectFunctionNArguments* args) {
-                        const auto* const sbt = static_cast<const CustomBuffer*>(args->geometryUserPtr);
-                        // TODO: allow SIMD?
-                        auto* rayInfo = RTCRayHitN_RayN(args->rayhit, args->N);
-                        auto* hitInfo = RTCRayHitN_HitN(args->rayhit, args->N);
-                        for(uint32_t i = 0; i < args->N; ++i) {
-                            if(args->valid[i] != -1)
-                                continue;
-                            RayInfo<FOR::Local> ray{
-                                Point<Distance, FOR::Local>{ { RTCRayN_org_x(rayInfo, args->N, i) },
-                                                             { RTCRayN_org_y(rayInfo, args->N, i) },
-                                                             { RTCRayN_org_z(rayInfo, args->N, i) } },
-                                Normal<float, FOR::Local>{ Vector<Dimensionless<float>, FOR::Local>{
-                                    { RTCRayN_dir_x(rayInfo, args->N, i) },
-                                    { RTCRayN_dir_y(rayInfo, args->N, i) },
-                                    { RTCRayN_dir_z(rayInfo, args->N, i) } } },  // TODO:Unsafe?
-                            };
+                    for(auto& [ctx, device] : devices) {
+                        auto guard = ctx->makeCurrent();
+                        const auto bounds = static_cast<CUdeviceptr>(custom.bounds->require(ctx)->getHandle());
 
-                            auto& tFar = RTCRayN_tfar(rayInfo, args->N, i);
-                            const auto oldTime = tFar;
-                            sbt->intersect(reinterpret_cast<IntersectContext*>(args->context)->context, sbt->payload,
-                                           args->primID, ray, RTCRayN_tnear(rayInfo, args->N, i), tFar,
-                                           reinterpret_cast<IntersectContext*>(args->context)->storage);
-                            if(tFar < oldTime) {
-                                RTCHitN_geomID(hitInfo, args->N, i) = args->geomID;
-                                for(uint32_t l = 0; l < RTC_MAX_INSTANCE_LEVEL_COUNT; ++l)
-                                    RTCHitN_instID(hitInfo, args->N, i, l) = args->context->instID[l];
-                            }
-                        }
-                    });
-                    rtcSetGeometryOccludedFunction(mGeometry.get(), [](const RTCOccludedFunctionNArguments* args) {
-                        const auto* const sbt = static_cast<const CustomBuffer*>(args->geometryUserPtr);
-                        // TODO: allow SIMD?
-                        for(uint32_t i = 0; i < args->N; ++i) {
-                            if(args->valid[i] != -1)
-                                continue;
-                            RayInfo<FOR::Local> ray{
-                                Point<Distance, FOR::Local>{ { RTCRayN_org_x(args->ray, args->N, i) },
-                                                             { RTCRayN_org_y(args->ray, args->N, i) },
-                                                             { RTCRayN_org_z(args->ray, args->N, i) } },
-                                Normal<float, FOR::Local>{ Vector<Dimensionless<float>, FOR::Local>{
-                                    { RTCRayN_dir_x(args->ray, args->N, i) },
-                                    { RTCRayN_dir_y(args->ray, args->N, i) },
-                                    { RTCRayN_dir_z(args->ray, args->N, i) } } },  // TODO: Unsafe?
-                            };
+                        // TODO: SBT
+                        OptixBuildInput input;
+                        input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+                        input.customPrimitiveArray = { &bounds, custom.count, sizeof(OptixAabb), nullptr, 0, 0, 0, 0, 0 };
 
-                            auto& tFar = RTCRayN_tfar(args->ray, args->N, i);
-                            bool hit;
-                            sbt->occlude(reinterpret_cast<IntersectContext*>(args->context)->context, sbt->payload, args->primID,
-                                         ray, RTCRayN_tnear(args->ray, args->N, i), tFar, hit);
-                            if(hit)
-                                tFar = -std::numeric_limits<float>::infinity();
-                        }
-                    });
-                    // TODO:intersect filter
+                        auto [handle, accel, aabb] = build(ctx, device.get(), input);
+                    }
                 } break;
                 default:
                     context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             }
-            rtcSetGeometryMask(mGeometry.get(), gsmMask | areaLightMask);
-            if(desc.transform.has_value()) {
-                // TODO:use SRT
-                // rtcSetGeometryTransformQuaternion
-                rtcSetGeometryTransform(mGeometry.get(), 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
-                                        desc.transform.value().A2B);  // local to world
-            }
-            rtcCommitGeometry(mGeometry.get());
         }
-        void setCustomFunc(const void* payload, MemoryArena& arena, const GeometryIntersectFunc intersect,
-                           const GeometryOccludeFunc occlude) {
-            mCustomBuffer.payload = payload;
-            mCustomBuffer.intersect = intersect;
-            mCustomBuffer.occlude = occlude;
-            auto* const data = arena.alloc<CustomBuffer>();
-            *data = mCustomBuffer;
-            rtcSetGeometryUserData(mGeometry.get(), data);
+        [[nodiscard]] auto&& getGeometry() const noexcept {
+            return mGeometry;
         }
-        [[nodiscard]] Pair<CString, BuiltinTriangleBuffer> getBuiltin() const noexcept {
-            return { "calcTriangleMeshSurface", mBuffer };
-        }
-        [[nodiscard]] RTCGeometry getGeometry() const noexcept {
-            return mGeometry.get();
-        }
-        [[nodiscard]] RTCScene getScene(const RTCDevice device) {
-            if(!mScene) {
-                // TODO:lock+double check/call_once
-                mScene.reset(rtcNewScene(device));
-                // rtcSetSceneFlags(mScene.get(), RTC_SCENE_FLAG_CONTEXT_FILTER_FUNCTION);
-                rtcAttachGeometry(mScene.get(), mGeometry.get());
-                rtcCommitScene(mScene.get());
-            }
-            return mScene.get();
-        }
-        [[nodiscard]] SharedPtr<Resource> getResource() const {
-            return mResource;
-        }
-    };
+    };  // namespace Piper
 
     struct EmbreeGSMInstance final : public GSMInstance {
         SharedPtr<Geometry> geometry;
@@ -681,91 +296,14 @@ namespace Piper {
     class EmbreeNode : public Node {
     public:
         PIPER_INTERFACE_CONSTRUCT(EmbreeNode, Node);
-        [[nodiscard]] virtual RTCScene getScene() const noexcept = 0;
+        [[nodiscard]] virtual OptixTraversableHandle getTraversal() const noexcept = 0;
         virtual void collect(DynamicArray<GSMInstanceProgram>& gsm, DynamicArray<LightInstanceProgram>& light,
-                             DynamicArray<SensorInstanceProgram>& sensor, const EmbreeTraversalNode* traversal,
+                             DynamicArray<SensorInstanceProgram>& sensor, const OptixTraversalNode* traversal,
                              MemoryArena& arena) = 0;
         virtual void updateTimeInterval(Time<float> begin, Time<float> end) {}
     };
 
-    static void setTransformSRT(const RTCGeometry geometry, const uint32_t step, const TransformSRT& trans) {
-        static_assert(sizeof(RTCQuaternionDecomposition) == sizeof(trans));
-        static_assert(alignof(RTCQuaternionDecomposition) == alignof(TransformSRT));
-        rtcSetGeometryTransformQuaternion(geometry, step, reinterpret_cast<const RTCQuaternionDecomposition*>(&trans));
-    }
-
-    static uint32_t gcd(const uint32_t a, const uint32_t b) {
-        return b ? gcd(b, a % b) : a;
-    }
-
-    static void updateTransformSRT(const RTCGeometry geometry, const Time<float> begin, const Time<float> end,
-                                   const TransformInfo& transform) {
-        // default or static transform
-        if(transform.step.val <= 0.0f)
-            return;
-        const auto evalTime = [&](const Pair<uint32_t, TransformSRT>& key) {
-            return transform.offset + transform.step * Dimensionless<float>{ static_cast<float>(key.first) };
-        };
-
-        {
-            const auto start = evalTime(transform.transforms.front());
-            const auto stop = evalTime(transform.transforms.back());
-
-            if(stop.val < begin.val || start.val > end.val) {
-                rtcDisableGeometry(geometry);
-                return;
-            }
-            rtcEnableGeometry(geometry);
-        }
-
-        auto iterBeg = eastl::upper_bound(  // NOLINT(readability-qualified-auto)
-            transform.transforms.cbegin(), transform.transforms.cend(), begin,
-            [&](const Time<float> ref, const Pair<uint32_t, TransformSRT>& key) { return ref.val < evalTime(key).val; });
-
-        auto iterEnd = eastl::upper_bound(  // NOLINT(readability-qualified-auto)
-            transform.transforms.cbegin(), transform.transforms.cend(), begin,
-            [&](const Time<float> ref, const Pair<uint32_t, TransformSRT>& key) { return ref.val < evalTime(key).val; });
-
-        if(iterBeg != transform.transforms.cbegin())
-            --iterBeg;
-
-        if(iterEnd == transform.transforms.cend())
-            --iterEnd;
-
-        uint32_t step = 0;
-        {
-            auto iter = iterBeg, nxt = eastl::next(iterBeg);
-            while(iter != iterEnd) {
-                step = gcd(step, nxt->first - iter->first);
-                iter = nxt;
-                nxt = eastl::next(nxt);
-            }
-        }
-
-        const auto remap = [&](const Time<float> t) { return (t - begin) / (end - begin); };
-
-        rtcSetGeometryTimeRange(geometry, remap(evalTime(*iterBeg)).val, remap(evalTime(*iterEnd)).val);
-        const auto count = (iterEnd->first - iterBeg->first) / step + 1;
-        rtcSetGeometryTimeStepCount(geometry, count);
-
-        setTransformSRT(geometry, 0, iterBeg->second);
-        auto cur = iterBeg;               // NOLINT(readability-qualified-auto)
-        auto nxt = eastl::next(iterBeg);  // NOLINT(readability-qualified-auto)
-        for(uint32_t idx = 1; idx < count; ++idx) {
-            const auto key = iterBeg->first + idx * step;
-            if(key == nxt->first) {
-                setTransformSRT(geometry, idx, nxt->second);
-                cur = nxt;
-                nxt = eastl::next(nxt);
-            } else {
-                const auto u = static_cast<float>(key - cur->first) / static_cast<float>(nxt->first - cur->first);
-                setTransformSRT(geometry, idx, lerp(cur->second, nxt->second, u));
-            }
-        }
-    }
-
-    // TODO: use rtcJoinCommitScene?
-
+    /*
     class EmbreeBranchNode final : public EmbreeNode {
     private:
         SceneHandle mScene;
@@ -801,7 +339,6 @@ namespace Piper {
         }
 
         void updateTimeInterval(const Time<float> begin, const Time<float> end) override {
-            // TODO: concurrency?
             for(auto&& [transform, geometry, child] : mChildren) {
                 child->updateTimeInterval(begin, end);
                 updateTransformSRT(geometry.get(), begin, end, transform);
@@ -1337,34 +874,13 @@ namespace Piper {
             return mProfiler.generateReport();
         }
     };
+    */
 
-    // ReSharper disable once CppNotAllPathsReturnValue
-    static CString getErrorString(const RTCError ec) {
-        switch(ec) {
-            case RTC_ERROR_NONE:
-                return "Success";
-            case RTC_ERROR_INVALID_ARGUMENT:
-                return "Invalid argument";
-            case RTC_ERROR_INVALID_OPERATION:
-                return "Invalid operation";
-            case RTC_ERROR_OUT_OF_MEMORY:
-                return "Out of memory";
-            case RTC_ERROR_UNSUPPORTED_CPU:
-                return "Unsupported CPU";
-            case RTC_ERROR_CANCELLED:
-                return "Cancelled";
-            case RTC_ERROR_UNKNOWN:
-                return "Unknown";
-        }
-    }
-
-    class Embree final : public Tracer {
+    class OptiX final : public Tracer {
     private:
         SharedPtr<Accelerator> mAccelerator;
         ResourceCacheManager mCache;
-        DeviceHandle mDevice;
-        SharedPtr<TextureSampler> mSampler;
-        Future<SharedPtr<PITU>> mKernel;
+        DynamicArray<Pair<Context*, DeviceHandle>> mDevices;
         bool mDebugMode;
 
         SharedPtr<Texture> generateTextureImpl(const SharedPtr<Config>& textureDesc) const {
@@ -1382,81 +898,113 @@ namespace Piper {
             };
             const auto mode = str2Mode(wrap->get<String>());
             const auto image = context().getModuleLoader().newInstanceT<Image>(textureDesc->at("Image")).getSync();
-            return mSampler->generateTexture(image, mode);
+            // TODO: move sampler to accelerator
+            // TODO: use builtin sampler
+            // return mSampler->generateTexture(image, mode);
+            return nullptr;
         }
 
     public:
-        void reportError(const RTCError ec, const CString str) const {
-            context().getErrorHandler().raiseException(
-                "Embree Error:" + toString(context().getAllocator(), static_cast<uint32_t>(ec)) + str, PIPER_SOURCE_LOCATION());
+        static void logCallback(uint32_t level, const CString tag, const CString message, void* data) {
+            auto&& ctx = *static_cast<PiperContext*>(data);
+
+            const auto logLevel = [level] {
+                switch(level) {
+                    case 1:
+                        return LogLevel::Fatal;
+                    case 2:
+                        return LogLevel::Error;
+                    case 3:
+                        return LogLevel::Warning;
+                    default:
+                        return LogLevel::Info;
+                }
+            }();
+
+            auto& logger = ctx.getLogger();
+            if(logger.allow(logLevel))
+                logger.record(logLevel, String{ "[OptiX]", ctx.getAllocator() } + tag + " : " + message, PIPER_SOURCE_LOCATION());
         }
-        Embree(PiperContext& context, const String& kernel, const SharedPtr<Config>& config)
-            : Tracer(context), mCache(context), mKernel(context.getPITUManager().loadPITU(kernel)),
+        OptiX(PiperContext& context, const SharedPtr<Config>& config)
+            : Tracer(context), mCache(context), mDevices{ context.getAllocator() },
               mDebugMode(config->at("DebugMode")->get<bool>()) {
             // TODO: concurrency
             mAccelerator = context.getModuleLoader().newInstanceT<Accelerator>(config->at("Accelerator")).getSync();
             // FIXME: use StringView
-            if(std::string_view{ mAccelerator->getNativePlatform() } != std::string_view{ "CPU" })
+            if(std::string_view{ mAccelerator->getNativePlatform() } != std::string_view{ "NVIDIA CUDA" })
                 context.getErrorHandler().raiseException("Unsupported accelerator", PIPER_SOURCE_LOCATION());
-            mDevice.reset(rtcNewDevice(config->at("EmbreeDeviceConfig")->get<String>().c_str()));
-            if(!mDevice) {
-                const auto error = rtcGetDeviceError(nullptr);
-                context.getErrorHandler().raiseException("Failed to initialize Embree RTCDevice (Error Code:" +
-                                                             toString(context.getAllocator(), static_cast<uint32_t>(error)) +
-                                                             ") :" + getErrorString(error),
-                                                         PIPER_SOURCE_LOCATION());
-            }
-            rtcSetDeviceErrorFunction(
-                mDevice.get(),
-                [](void* userPtr, const RTCError ec, const CString str) { static_cast<Embree*>(userPtr)->reportError(ec, str); },
-                this);
-            if(!(rtcGetDeviceProperty(mDevice.get(), RTC_DEVICE_PROPERTY_RAY_MASK_SUPPORTED) &&
-                 rtcGetDeviceProperty(mDevice.get(), RTC_DEVICE_PROPERTY_TRIANGLE_GEOMETRY_SUPPORTED) &&
-                 rtcGetDeviceProperty(mDevice.get(), RTC_DEVICE_PROPERTY_USER_GEOMETRY_SUPPORTED))) {
-                context.getErrorHandler().raiseException(
-                    "Please compile Embree with EMBREE_RAY_MASK, EMBREE_GEOMETRY_TRIANGLE, EMBREE_GEOMETRY_USER.",
-                    PIPER_SOURCE_LOCATION());
+
+            for(auto ctx : mAccelerator->enumerateContexts()) {
+                auto guard = ctx->makeCurrent();
+                // TODO: log level
+                OptixDeviceContextOptions opt{ logCallback, &context, 4,
+                                               mDebugMode ? OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL :
+                                                            OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_OFF };
+                OptixDeviceContext device;
+                checkOptixResult(context, PIPER_SOURCE_LOCATION(),
+                                 optixDeviceContextCreate(reinterpret_cast<CUcontext>(ctx->getHandle()), &opt, &device));
+                mDevices.push_back({ ctx, DeviceHandle{ device, DeviceDeleter{ ctx } } });
+                unsigned int version;
+                checkOptixResult(
+                    context, PIPER_SOURCE_LOCATION(),
+                    optixDeviceContextGetProperty(device, OPTIX_DEVICE_PROPERTY_RTCORE_VERSION, &version, sizeof(version)));
+                auto&& logger = context.getLogger();
+                if(logger.allow(LogLevel::Info))
+                    logger.record(LogLevel::Info,
+                                  "RT Core version: " + toString(context.getAllocator(), version / 10) + "." +
+                                      toString(context.getAllocator(), version % 10),
+                                  PIPER_SOURCE_LOCATION());
+                // TODO: cache manage
             }
 
             // rtcSetDeviceMemoryMonitorFunction();
-            mSampler = context.getModuleLoader().newInstanceT<TextureSampler>(config->at("TextureSampler")).getSync();
+            // mSampler = context.getModuleLoader().newInstanceT<TextureSampler>(config->at("TextureSampler")).getSync();
         }
         [[nodiscard]] SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) override {
-            return makeSharedObject<EmbreeRTProgram>(context(), linkable, symbol);
+            // return makeSharedObject<OptixRTProgram>(context(), mDevices, linkable, symbol);
+            return nullptr;
         }
         [[nodiscard]] SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) override {
-            return makeSharedObject<EmbreeAcceleration>(context(), mDevice.get(), desc);
+            return makeSharedObject<OptixAcceleration>(context(), mDevices, desc);
         }
         [[nodiscard]] SharedPtr<Node> buildNode(const SharedPtr<Object>& object) override {
+            return nullptr;
+            /*
             // TODO: better implementation
-            if(auto gsm = eastl::dynamic_shared_pointer_cast<EmbreeGSMInstance>(object))
-                return makeSharedObject<EmbreeLeafNodeWithGSM>(context(), *this, *mAccelerator, mCache, mDevice.get(),
-                                                               std::move(gsm));
+            if(auto gsm = eastl::dynamic_shared_pointer_cast<OptixGSMInstance>(object))
+                return makeSharedObject<OptixLeafNodeWithGSM>(context(), *this, *mAccelerator, mCache, mDevices, std::move(gsm));
             if(auto light = eastl::dynamic_shared_pointer_cast<Light>(object))
-                return makeSharedObject<EmbreeLeafNodeWithLight>(context(), *this, *mAccelerator, mCache, mDevice.get(),
-                                                                 std::move(light));
+                return makeSharedObject<OptixLeafNodeWithLight>(context(), *this, *mAccelerator, mCache, mDevices,
+                                                                std::move(light));
             if(auto sensor = eastl::dynamic_shared_pointer_cast<Sensor>(object))
-                return makeSharedObject<EmbreeLeafNodeWithSensor>(context(), mDevice.get(), std::move(sensor));
+                return makeSharedObject<OptixLeafNodeWithSensor>(context(), mDevices, std::move(sensor));
 
             context().getErrorHandler().raiseException(
                 String{ "Unrecognized object ", context().getAllocator() } + typeid(*object).name(), PIPER_SOURCE_LOCATION());
+                */
         }
         [[nodiscard]] SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) override {
-            return makeSharedObject<EmbreeBranchNode>(context(), mDevice.get(), children);
+            // return makeSharedObject<OptixBranchNode>(context(), mDevices, children);
+            return nullptr;
         }
         [[nodiscard]] SharedPtr<GSMInstance> buildGSMInstance(SharedPtr<Geometry> geometry, SharedPtr<Surface> surface,
                                                               SharedPtr<Medium> medium) override {
-            return makeSharedObject<EmbreeGSMInstance>(context(), std::move(geometry), std::move(surface), std::move(medium));
+            // return makeSharedObject<OptixGSMInstance>(context(), std::move(geometry), std::move(surface), std::move(medium));
+            return nullptr;
         }
         [[nodiscard]] UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator,
                                                            RenderDriver& renderDriver, LightSampler& lightSampler,
                                                            SharedPtr<Sampler> sampler) override {
-            return makeUniqueObject<Pipeline, EmbreePipeline>(context(), *this, *mAccelerator, mCache, *mKernel.getSync(),
-                                                              eastl::dynamic_shared_pointer_cast<EmbreeNode>(scene), integrator,
-                                                              renderDriver, lightSampler, std::move(sampler), mDebugMode);
+            /*
+            return makeUniqueObject<Pipeline, OptixPipelineHolder>(
+                context(), *this, *mAccelerator, mCache, *mKernel.getSync(), eastl::dynamic_shared_pointer_cast<OptixNode>(scene),
+                integrator, renderDriver, lightSampler, std::move(sampler), mDebugMode);
+                */
+            return nullptr;
         }
         [[nodiscard]] SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
                                                          const uint32_t channel) const override {
+            /*
             auto res = generateTextureImpl(textureDesc);
             if(res->channel() != channel)
                 context().getErrorHandler().raiseException("Mismatched channel. Expect " +
@@ -1464,6 +1012,8 @@ namespace Piper {
                                                                toString(context().getAllocator(), res->channel()),
                                                            PIPER_SOURCE_LOCATION());
             return res;
+            */
+            return nullptr;
         }
         Accelerator& getAccelerator() const noexcept override {
             return *mAccelerator;
@@ -1476,24 +1026,28 @@ namespace Piper {
                 case AlignmentRequirement::IndexBuffer:
                     [[fallthrough]];
                 case AlignmentRequirement::TextureCoordsBuffer:
-                    return 16;
+                    return OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT;  // TODO: check alignment requirement again
                 case AlignmentRequirement::BoundsBuffer:
-                    return alignof(RTCBounds);
+                    return OPTIX_AABB_BUFFER_BYTE_ALIGNMENT;
             }
         }
     };
     class ModuleImpl final : public Module {
     private:
-        String mKernel;
+        void* mHandle;
 
     public:
-        explicit ModuleImpl(PiperContext& context, const char* path)
-            : Module(context), mKernel{ String{ path, context.getAllocator() } + "/Kernel.bc" } {}
+        explicit ModuleImpl(PiperContext& context, const char* path) : Module{ context }, mHandle{ nullptr } {
+            checkOptixResult(context, PIPER_SOURCE_LOCATION(), optixInitWithHandle(&mHandle));
+        }
+        ~ModuleImpl() override {
+            checkOptixResult(context(), PIPER_SOURCE_LOCATION(), optixUninitWithHandle(&mHandle));
+        }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,
                                               const Future<void>& module) override {
             if(classID == "Tracer") {
                 return context().getScheduler().value(
-                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<Embree>(context(), mKernel, config)));
+                    eastl::static_shared_pointer_cast<Object>(makeSharedObject<OptiX>(context(), config)));
             }
             context().getErrorHandler().unresolvedClassID(classID, PIPER_SOURCE_LOCATION());
         }
