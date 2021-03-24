@@ -49,31 +49,31 @@ namespace Piper {
     };
     // TODO:BumpedMaterial
     struct MatteData final {
-        CallHandle diffuseTexture;
-        CallHandle roughnessTexture;
+        Call<TextureSampleFunc> diffuseTexture;
+        Call<TextureSampleFunc> roughnessTexture;
     };
 
     struct PlasticData final {
-        CallHandle diffuseTexture;
-        CallHandle specularTexture;
-        CallHandle roughnessTexture;
+        Call<TextureSampleFunc> diffuseTexture;
+        Call<TextureSampleFunc> specularTexture;
+        Call<TextureSampleFunc> roughnessTexture;
     };
 
     struct MirrorData final {
-        CallHandle reflectionTexture;
+        Call<TextureSampleFunc> reflectionTexture;
     };
 
     struct GlassData final {
-        CallHandle reflection;
-        CallHandle transmission;
-        CallHandle roughnessX;
-        CallHandle roughnessY;
+        Call<TextureSampleFunc> reflection;
+        Call<TextureSampleFunc> transmission;
+        Call<TextureSampleFunc> roughnessX;
+        Call<TextureSampleFunc> roughnessY;
     };
 
     struct SubstrateData final {
-        CallHandle diffuse;
-        CallHandle specular;
-        CallHandle roughnessX;
-        CallHandle roughnessY;
+        Call<TextureSampleFunc> diffuse;
+        Call<TextureSampleFunc> specular;
+        Call<TextureSampleFunc> roughnessX;
+        Call<TextureSampleFunc> roughnessY;
     };
 }  // namespace Piper

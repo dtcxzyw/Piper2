@@ -22,7 +22,6 @@
 #include "../../../Interface/Infrastructure/Accelerator.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
-#include "../../../Interface/Infrastructure/ResourceUtil.hpp"
 #include "Shared.hpp"
 
 namespace Piper {
@@ -44,16 +43,16 @@ namespace Piper {
         }
         [[nodiscard]] LightProgram materialize(TraversalHandle traversal, const MaterializeContext& ctx) const override {
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
-            auto linkable =
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
+            auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
             LightProgram res;
             res.init = ctx.tracer.buildProgram(linkable, "diffuseInit");
             res.sample = ctx.tracer.buildProgram(linkable, "diffuseSample");
             res.evaluate = ctx.tracer.buildProgram(linkable, "diffuseEvaluate");
             res.pdf = ctx.tracer.buildProgram(linkable, "diffusePdf");
             const auto shape = mGeometry->materialize(traversal, ctx);
-            res.payload = packSBTPayload(context().getAllocator(),
-                                         DiffuseAreaLightData{ mRadiance, ctx.registerCall(shape.sample, shape.payload), mArea });
+            res.payload =
+                packSBTPayload(context().getAllocator(),
+                               DiffuseAreaLightData{ mRadiance, { ctx.registerCall(shape.sample, shape.payload) }, mArea });
             return res;
         }
 
@@ -67,7 +66,8 @@ namespace Piper {
 
     public:
         PIPER_INTERFACE_CONSTRUCT(ModuleImpl, Module)
-        explicit ModuleImpl(PiperContext& context, const CString path) : Module(context), mKernelPath(path, context.getAllocator()) {
+        explicit ModuleImpl(PiperContext& context, const CString path)
+            : Module(context), mKernelPath(path, context.getAllocator()) {
             mKernelPath += "/Kernel.bc";
         }
         Future<SharedPtr<Object>> newInstance(const StringView& classID, const SharedPtr<Config>& config,

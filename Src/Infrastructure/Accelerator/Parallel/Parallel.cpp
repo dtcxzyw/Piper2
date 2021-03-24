@@ -394,9 +394,8 @@ namespace Piper {
                     auto stage = ctx->getErrorHandler().enterStage("link PITU", PIPER_SOURCE_LOCATION());
 
                     // TODO: concurrency?
-                    auto kernel =
-                        eastl::get<Future<Binary>>(linkedPITU->generateLinkable({ { "LLVM IR Bitcode" } }).exchange).getSync();
-                    auto mod = binary2Module(context(), kernel, *llCtx);
+                    auto linkable = linkedPITU->generateLinkable({ { "LLVM IR Bitcode" } });
+                    auto mod = binary2Module(context(), eastl::get<Future<Binary>>(linkable.exchange).getSync(), *llCtx);
 
                     stage.next("build JIT", PIPER_SOURCE_LOCATION());
                     // TODO: LLVM use fake host triple, use true host triple to initialize JITTargetMachineBuilder
@@ -466,8 +465,8 @@ namespace Piper {
                 linked);
             return makeSharedObject<LLVMKernel>(context(), std::move(engine));
         }
-        Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, const SharedPtr<KernelSymbol>& kernel,
-                                      const SharedPtr<ResourceLookUpTable>& root, ArgumentPackage args) override {
+        Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+                                      SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) override {
             // TODO: for small n,run in this thread
             const auto blockCount = grid.x * grid.y * grid.z;
             const auto taskPerBlock = block.x * block.y * block.z;
@@ -490,30 +489,30 @@ namespace Piper {
 
             scheduler.parallelForImpl(
                 blockCount,
-                Closure<uint32_t>{ context(),
-                                   [taskPerBlock, handles = std::move(handles), input = std::move(args), grid, block,
-                                    call = std::move(func), root](const uint32_t idx) {
-                                       const auto address = call->getHandle();
+                Closure<uint32_t>{
+                    context(),
+                    [taskPerBlock, handles = std::move(handles), input = std::move(args), grid, block, call = std::move(func),
+                     ref = std::move(root), kernelRef = std::move(kernel)](const uint32_t idx) {
+                        const auto address = call->getHandle();
 
-                                       TaskContextImplEx ctxEx{ { grid,
-                                                                  { idx / grid.z / grid.y, idx / grid.z % grid.y, idx % grid.z },
-                                                                  block,
-                                                                  idx,
-                                                                  idx * taskPerBlock,
-                                                                  0,
-                                                                  { 0, 0, 0 },
-                                                                  reinterpret_cast<ResourceHandle>(handles.data()) },
-                                                                input };
-                                       auto&& ctx = ctxEx.ctx;
+                        TaskContextImplEx ctxEx{ { grid,
+                                                   { idx / grid.z / grid.y, idx / grid.z % grid.y, idx % grid.z },
+                                                   block,
+                                                   idx,
+                                                   idx * taskPerBlock,
+                                                   0,
+                                                   { 0, 0, 0 },
+                                                   reinterpret_cast<ResourceHandle>(handles.data()) },
+                                                 input };
+                        auto&& ctx = ctxEx.ctx;
 
-                                       // TODO: support unroll
-                                       for(auto& i = ctx.blockIndex.x = 0; i < block.x; ++i)
-                                           for(auto& j = ctx.blockIndex.y = 0; j < block.y; ++j)
-                                               for(auto& k = ctx.blockIndex.z = 0; k < block.z;
-                                                   ++k, ++ctx.blockLinearIndex, ++ctx.index) {
-                                                   reinterpret_cast<KernelProtocol>(address)(reinterpret_cast<TaskContext>(&ctx));
-                                               }
-                                   } },
+                        // TODO: support unroll
+                        for(auto& i = ctx.blockIndex.x = 0; i < block.x; ++i)
+                            for(auto& j = ctx.blockIndex.y = 0; j < block.y; ++j)
+                                for(auto& k = ctx.blockIndex.z = 0; k < block.z; ++k, ++ctx.blockLinearIndex, ++ctx.index) {
+                                    reinterpret_cast<KernelProtocol>(address)(reinterpret_cast<TaskContext>(&ctx));
+                                }
+                    } },
                 { futures.data(), futures.size() }, future);
 
             for(auto output : outputs)

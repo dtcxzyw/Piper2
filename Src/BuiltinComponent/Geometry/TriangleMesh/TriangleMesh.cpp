@@ -81,43 +81,42 @@ namespace Piper {
 
                         // TODO: normal and tangent
                         desc.normal = desc.tangent = invalidOffset;
+                        desc.bufferSize = size;
+                        desc.buffer = accelerator.createBuffer(
+                            size, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer),
+                            [ref = std::move(importer), mesh, &errorHandler, &tracer](Ptr ptr) {
+                                for(Index i = 0; i < mesh->mNumFaces; ++i) {
+                                    if(mesh->mFaces[i].mNumIndices != 3)
+                                        errorHandler.raiseException("Only triangle is supported.", PIPER_SOURCE_LOCATION());
+                                    memcpy(reinterpret_cast<void*>(ptr + i * 3 * sizeof(uint32_t)), mesh->mFaces[i].mIndices,
+                                           sizeof(uint32_t) * 3);
+                                }
+                                ptr += 3 * sizeof(uint32_t) * mesh->mNumFaces;
+                                alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
 
-                        desc.buffer =
-                            accelerator.createBuffer(size, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
+                                alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
+                                memcpy(reinterpret_cast<void*>(ptr), mesh->mVertices, 3 * sizeof(float) * mesh->mNumVertices);
+                                ptr += 3 * sizeof(float) * mesh->mNumVertices;
+                                alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
 
-                        desc.buffer->upload([ref = std::move(importer), mesh, &errorHandler, &tracer](Ptr ptr) {
-                            for(Index i = 0; i < mesh->mNumFaces; ++i) {
-                                if(mesh->mFaces[i].mNumIndices != 3)
-                                    errorHandler.raiseException("Only triangle is supported.", PIPER_SOURCE_LOCATION());
-                                memcpy(reinterpret_cast<void*>(ptr + i * 3 * sizeof(uint32_t)), mesh->mFaces[i].mIndices,
-                                       sizeof(uint32_t) * 3);
-                            }
-                            ptr += 3 * sizeof(uint32_t) * mesh->mNumFaces;
-                            alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::IndexBuffer));
+                                if(mesh->mTextureCoords[0]) {
+                                    alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
 
-                            alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
-                            memcpy(reinterpret_cast<void*>(ptr), mesh->mVertices, 3 * sizeof(float) * mesh->mNumVertices);
-                            ptr += 3 * sizeof(float) * mesh->mNumVertices;
-                            alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::VertexBuffer));
+                                    if(mesh->mNumUVComponents[0] != 2)
+                                        errorHandler.raiseException("Only UV channel is supported.", PIPER_SOURCE_LOCATION());
+                                    const auto* uv = mesh->mTextureCoords[0];
+                                    auto* texCoords = reinterpret_cast<Vector2<float>*>(ptr);
+                                    for(Index i = 0; i < mesh->mNumVertices; ++i) {
+                                        texCoords[i].x = uv[i].x;
+                                        texCoords[i].y = uv[i].y;
+                                    }
 
-                            if(mesh->mTextureCoords[0]) {
-                                alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
-
-                                if(mesh->mNumUVComponents[0] != 2)
-                                    errorHandler.raiseException("Only UV channel is supported.", PIPER_SOURCE_LOCATION());
-                                const auto* uv = mesh->mTextureCoords[0];
-                                auto* texCoords = reinterpret_cast<Vector2<float>*>(ptr);
-                                for(Index i = 0; i < mesh->mNumVertices; ++i) {
-                                    texCoords[i].x = uv[i].x;
-                                    texCoords[i].y = uv[i].y;
+                                    ptr += 2 * sizeof(float) * mesh->mNumVertices;
+                                    alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
                                 }
 
-                                ptr += 2 * sizeof(float) * mesh->mNumVertices;
-                                alignTo(ptr, tracer.getAlignmentRequirement(AlignmentRequirement::TextureCoordsBuffer));
-                            }
-
-                            // TODO: normal and tangent
-                        });
+                                // TODO: normal and tangent
+                            });
 
                         return tracer.buildAcceleration({ eastl::nullopt, desc });
                     } });

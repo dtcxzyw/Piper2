@@ -21,7 +21,7 @@
 namespace Piper {
     struct DiffuseAreaLightData final {
         Spectrum<Radiance> radiance;
-        CallHandle sample;
+        Call<GeometrySampleFunc> sample;
         Area<float> area;
     };
 }  // namespace Piper

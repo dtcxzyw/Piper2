@@ -340,7 +340,7 @@ namespace Piper {
         }
     };
 
-    static UniquePtr<CUmod_st, ModuleDeleter> compileKernel(CUDAContext* ctx, const DynamicArray<Binary>& binaries) {
+    static UniquePtr<CUmod_st, ModuleDeleter> compileKernel(CUDAContext* ctx, const Binary& binary) {
         auto guard = ctx->makeCurrent();
         auto&& context = ctx->context();
 
@@ -357,10 +357,9 @@ namespace Piper {
                         cuLinkCreate(static_cast<unsigned>(std::size(options)), options, values, &linkJIT));
         auto JITDeleter = gsl::finally([&] { checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuLinkDestroy(linkJIT)); });
 
-        for(auto&& bin : binaries)
-            checkCUDAResult(context, PIPER_SOURCE_LOCATION(),
-                            cuLinkAddData(linkJIT, CU_JIT_INPUT_PTX, const_cast<std::byte*>(bin.data()), bin.size(),
-                                          "Unnamed" /* TODO: name of linkable*/, 0, nullptr, nullptr));
+        checkCUDAResult(context, PIPER_SOURCE_LOCATION(),
+                        cuLinkAddData(linkJIT, CU_JIT_INPUT_PTX, const_cast<std::byte*>(binary.data()), binary.size(),
+                                      "Unnamed" /* TODO: name of linkable*/, 0, nullptr, nullptr));
 
         void* cubin = nullptr;
         size_t size = 0;
@@ -380,8 +379,8 @@ namespace Piper {
         mutable CUfunction mLazy;
 
     public:
-        CUDASymbolInstance(PiperContext& context, SharedPtr<CUDAKernelInstance> kernel, const String& symbol)
-            : ResourceInstance{ context }, mKernel{ std::move(kernel) }, mSymbol{ symbol }, mLazy{ nullptr } {}
+        CUDASymbolInstance(PiperContext& context, SharedPtr<CUDAKernelInstance> kernel, String symbol)
+            : ResourceInstance{ context }, mKernel{ std::move(kernel) }, mSymbol{ std::move(symbol) }, mLazy{ nullptr } {}
         [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
             return mKernel->getFuture();
         }
@@ -407,19 +406,18 @@ namespace Piper {
     // TODO: cache kernel using PTX Compiler APIs
     class CUDAKernel final : public Kernel, public eastl::enable_shared_from_this<CUDAKernel> {
     private:
-        DynamicArray<Future<Binary>> mBinaries;
+        Future<Binary> mBinary;
         UMap<Context*, SharedPtr<ResourceInstance>> mInstances;
         std::shared_mutex mMutex;
 
     public:
-        CUDAKernel(PiperContext& context, DynamicArray<Future<Binary>> binaries)
-            : Kernel{ context }, mBinaries{ std::move(binaries) } {}
+        CUDAKernel(PiperContext& context, Future<Binary> binary) : Kernel{ context }, mBinary{ std::move(binary) } {}
         SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
             return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
                 auto&& scheduler = context().getScheduler();
                 auto cudaCtx = dynamic_cast<CUDAContext*>(ctx);
-                return makeSharedObject<CUDAKernelInstance>(context(), cudaCtx,
-                                                            scheduler.spawn(compileKernel, cudaCtx, scheduler.wrap(mBinaries)));
+                return makeSharedObject<CUDAKernelInstance>(context(), *cudaCtx,
+                                                            scheduler.spawn(compileKernel, cudaCtx, mBinary));
             });
         }
         SharedPtr<KernelSymbol> lookUp(String symbol) const override {
@@ -428,7 +426,8 @@ namespace Piper {
     };
 
     SharedPtr<ResourceInstance> CUDASymbol::requireInstance(Context* ctx) {
-        return makeSharedObject<CUDASymbolInstance>(context(), mKernel->requireInstance(ctx), mSymbol);
+        return makeSharedObject<CUDASymbolInstance>(
+            context(), eastl::dynamic_shared_pointer_cast<CUDAKernelInstance>(mKernel->requireInstance(ctx)), mSymbol);
     }
 
     void EventDeleter::operator()(const CUevent event) const {
@@ -666,8 +665,9 @@ namespace Piper {
         ResourceLookUpTableImpl(PiperContext& context, DynamicArray<SharedPtr<Resource>> resources)
             : ResourceLookUpTable{ context }, mResources{ std::move(resources) } {}
         SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
-            return safeRequireInstance(mMutex, mInstances, ctx,
-                                       [this, ctx] { return makeSharedObject<CUDAKernelInstance>(context(), ctx, mResources); });
+            return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
+                return makeSharedObject<ResourceLookUpTableInstance>(context(), ctx, mResources);
+            });
         }
     };
 
@@ -689,7 +689,7 @@ namespace Piper {
             if(count == 0)
                 context.getErrorHandler().raiseException("No CUDA-capable device.", PIPER_SOURCE_LOCATION());
 
-            DynamicArray<CUdevice> devices{ count, context.getAllocator() };
+            DynamicArray<CUdevice> devices{ static_cast<size_t>(count), context.getAllocator() };
             for(auto idx = 0; idx < count; ++idx) {
                 checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuDeviceGet(&devices[idx], idx));
             }
@@ -771,13 +771,13 @@ namespace Piper {
             // TODO: optimize
 
             // TODO: concurrency
-            auto ptx = eastl::get<Future<Binary>>(linked.getSync()->generateLinkable({ { "NVIDIA PTX" } }).exchange);
+            auto ptx = linked.getSync()->generateLinkable({ { "NVIDIA PTX" } });
 
-            return makeSharedObject<CUDAKernel>(context(), ptx);
+            return makeSharedObject<CUDAKernel>(context(), eastl::get<Future<Binary>>(ptx.exchange));
         }
 
-        [[nodiscard]] Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, const SharedPtr<KernelSymbol>& kernel,
-                                                    const SharedPtr<ResourceLookUpTable>& root, ArgumentPackage args) override {
+        [[nodiscard]] Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+                                                    SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) override {
 
             // TODO: launch on multi-GPU
             // TODO: tiled launching
@@ -817,7 +817,8 @@ namespace Piper {
 
             auto future =
                 ctx->spawn(
-                       [this, grid, block, func = std::move(entry), root, launchBuffer,
+                       [this, grid, block, func = std::move(entry), ref = std::move(root),
+                        launchBufferRef = std::move(launchBuffer), kernelRef = std::move(kernel),
                         launchContextHandle = launchBufferInstance->getHandle()](CUcontext, const CUstream stream) {
                            auto launchParamBufferData = launchContextHandle;
                            auto bufferSize = sizeof(launchContextHandle);
@@ -843,14 +844,14 @@ namespace Piper {
 
         [[nodiscard]] SharedPtr<Resource> createBuffer(const size_t size, const size_t alignment,
                                                        Function<void, Ptr> prepare) override {
-            return makeSharedObject<CUDABuffer>(context(), *this, size, alignment, std::move(prepare));
+            return makeSharedObject<CUDABuffer>(context(), *mContexts.front(), size, alignment, std::move(prepare));
         }
         SharedPtr<ResourceLookUpTable> createResourceLUT(DynamicArray<SharedPtr<Resource>> resources) override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return nullptr;
         }
         SharedPtr<TiledOutput> createTiledOutput(const size_t size, const size_t alignment) override {
-            return makeSharedObject<CUDATiledBuffer>(context(), size, alignment);
+            return makeSharedObject<CUDATiledBuffer>(context(), *mContexts.front(), size, alignment);
         }
 
         // TODO: schedule strategy

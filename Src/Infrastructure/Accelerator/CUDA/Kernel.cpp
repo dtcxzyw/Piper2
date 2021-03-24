@@ -15,7 +15,9 @@
    limitations under the License.
 */
 
-#include "Shared.hpp"
+#include "../../../Kernel/DeviceRuntime.hpp"
+#include <cstddef>
+#include <cstring>
 
 namespace Piper {
     extern "C" {
@@ -58,13 +60,26 @@ namespace Piper {
         const auto idx1 = (threadIdx.x * blockDim.y + threadIdx.y) * blockDim.z + threadIdx.z;
         index = idx0 * (blockIdx.x * blockIdx.y * blockIdx.z) + idx1;
     }
-    void piperGetArgument(TaskContext context, uint32_t index, void* ptr) {}
-    void piperGetRootResourceLUT(const TaskContext, ResourceHandle& handle) {
+    struct UInt32Pair final {
+        uint32_t first;
+        uint32_t second;
+    };
+
+    void piperGetArgument(const TaskContext context, const uint32_t index, void* ptr) {
+        const auto offset = *(reinterpret_cast<const uint32_t*>(context) + 1);
+        const auto base = reinterpret_cast<const std::byte*>(context) + 2 * sizeof(uint32_t);
+        const auto desc = reinterpret_cast<const UInt32Pair*>(reinterpret_cast<const std::byte*>(context) + offset);
+        const auto beg = base + desc[index].first;
+        memcpy(ptr, beg, desc[index].second);
+    }
+    void piperGetRootResourceLUT(const TaskContext context, ResourceHandle& handle) {
         handle = 0;
     }
     void piperLookUpResourceHandle(const TaskContext context, const ResourceHandle LUT, const uint32_t index,
                                    ResourceHandle& handle) {
-        handle = reinterpret_cast<const TaskContextImpl*>(context)->resourceHandleBase[LUT + index];
+        const auto offset = *reinterpret_cast<const uint32_t*>(context);
+        const auto base = reinterpret_cast<const ResourceHandle*>(reinterpret_cast<const std::byte*>(context) + offset);
+        handle = base[LUT + index];
     }
     }
 

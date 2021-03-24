@@ -29,8 +29,7 @@ namespace Piper {
     extern "C" {
     void accumulate(RestrictedContext context, const void* SBTData, const void* launchData, const Vector2<float>& point,
                     const Spectrum<Radiance>& sample) {
-        CallInfo filter;
-        piperQueryCall(context, static_cast<const RDData*>(SBTData)->filter, filter);
+        CallInstance<FilterFunc> filter{ context, static_cast<const RDData*>(SBTData)->filter };
 
         const auto* data = static_cast<const LaunchData*>(launchData);
         ResourceHandle rgbwHandle;
@@ -40,8 +39,7 @@ namespace Piper {
             if(!(px < data->w && py < data->h))
                 return;
             Dimensionless<float> weight;
-            reinterpret_cast<FilterFunc>(filter.address)(context, filter.SBTData, point.x - (static_cast<float>(px) + 0.5f),
-                                                         point.y - (static_cast<float>(py) + 0.5f), weight);
+            filter(context, point.x - (static_cast<float>(px) + 0.5f), point.y - (static_cast<float>(py) + 0.5f), weight);
             // TODO: optimize access
 
             atomicAdd(rgbw[px + py * data->w], sample * weight, weight);

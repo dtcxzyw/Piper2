@@ -51,6 +51,7 @@ namespace Piper {
     struct TriangleIndexedGeometryDesc final {
         uint32_t vertCount, triCount;
         SharedPtr<Resource> buffer;
+        size_t bufferSize;
         // offset
         size_t vertices;
         size_t index;
@@ -84,9 +85,9 @@ namespace Piper {
 
     using SBTPayload = Binary;
     template <typename T, typename = std::enable_if_t<std::is_trivial_v<T>>>
-    SBTPayload packSBTPayload(const STLAllocator allocator, const T& data) {
-        return SBTPayload{ reinterpret_cast<const std::byte*>(&data), reinterpret_cast<const std::byte*>(&data) + sizeof(data),
-                           allocator };
+    SBTPayload packSBTPayload(const STLAllocator allocator, const T &data) {
+        return SBTPayload{ reinterpret_cast<const std::byte *>(&data), reinterpret_cast<const std::byte *>(&data) + sizeof(data),
+            allocator };
     }
 
     struct RenderRECT final {
@@ -104,8 +105,8 @@ namespace Piper {
         // TODO: pure stateless interface
         virtual void updateTimeInterval(Time<float> begin, Time<float> end) noexcept = 0;
         // TODO: support tiled-rendering
-        [[nodiscard]] virtual Future<void> launch(const RenderRECT& rect, const Function<SBTPayload, uint32_t>& launchData,
-                                                  const Span<SharedPtr<Resource>>& resources) = 0;
+        [[nodiscard]] virtual Future<void> launch(const RenderRECT &rect, const Function<SBTPayload, uint32_t> &launchData,
+            const Span<SharedPtr<Resource>> &resources) = 0;
     };
 
     class Pipeline : public Object {
@@ -113,18 +114,18 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(Pipeline, Object);
         [[nodiscard]] virtual String generateStatisticsReport() const = 0;
         // TODO: better interface
-        [[nodiscard]] virtual SharedPtr<TraceLauncher> prepare(const SharedPtr<Node>& sensor, uint32_t width, uint32_t height,
-                                                               FitMode fitMode) = 0;
+        [[nodiscard]] virtual SharedPtr<TraceLauncher> prepare(const SharedPtr<Node> &sensor, uint32_t width, uint32_t height,
+            FitMode fitMode) = 0;
     };
 
-    using CallSiteRegister = Function<CallHandle, const SharedPtr<RTProgram>&, const SBTPayload&>;
-    using TextureLoader = Function<CallHandle, const SharedPtr<Config>&, uint32_t>;
+    using CallSiteRegister = Function<CallHandle, const SharedPtr<RTProgram> &, const SBTPayload &>;
+    using TextureLoader = Function<CallHandle, const SharedPtr<Config> &, uint32_t>;
     using ResourceRegister = Function<uint32_t, SharedPtr<Resource>>;
     struct MaterializeContext final {
-        Tracer& tracer;
-        Accelerator& accelerator;
-        ResourceCacheManager& cacheManager;
-        Profiler& profiler;
+        Tracer &tracer;
+        Accelerator &accelerator;
+        ResourceCacheManager &cacheManager;
+        Profiler &profiler;
 
         const ResourceRegister registerResource;
         const CallSiteRegister registerCall;
@@ -140,21 +141,20 @@ namespace Piper {
     public:
         PIPER_INTERFACE_CONSTRUCT(Tracer, Object)
         // TODO: update structure
-        [[nodiscard]] virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc& desc) = 0;
+            [[nodiscard]] virtual SharedPtr<AccelerationStructure> buildAcceleration(const GeometryDesc &desc) = 0;
         [[nodiscard]] virtual SharedPtr<GSMInstance> buildGSMInstance(SharedPtr<Geometry> geometry, SharedPtr<Surface> surface,
-                                                                      SharedPtr<Medium> medium) = 0;
-        [[nodiscard]] virtual SharedPtr<Node> buildNode(const SharedPtr<Object>& object) = 0;
-        [[nodiscard]] virtual SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children) = 0;
-        // TODO: call graph?
+            SharedPtr<Medium> medium) = 0;
+        [[nodiscard]] virtual SharedPtr<Node> buildNode(const SharedPtr<Object> &object) = 0;
+        [[nodiscard]] virtual SharedPtr<Node> buildNode(const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>> &children) = 0;
         // TODO: move to MaterializeContext
         [[nodiscard]] virtual SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) = 0;
         // TODO: better interface
-        [[nodiscard]] virtual UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node>& scene, Integrator& integrator,
-                                                                   RenderDriver& renderDriver, LightSampler& lightSampler,
-                                                                   SharedPtr<Sampler> sampler) = 0;
-        [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
-                                                                 uint32_t channel) const = 0;
+        [[nodiscard]] virtual UniqueObject<Pipeline> buildPipeline(const SharedPtr<Node> &scene, Integrator &integrator,
+            RenderDriver &renderDriver, LightSampler &lightSampler,
+            SharedPtr<Sampler> sampler) = 0;
+        [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Config> &textureDesc,
+            uint32_t channel) const = 0;
         [[nodiscard]] virtual size_t getAlignmentRequirement(AlignmentRequirement requirement) const noexcept = 0;
-        [[nodiscard]] virtual Accelerator& getAccelerator() const noexcept = 0;
+        [[nodiscard]] virtual Accelerator &getAccelerator() const noexcept = 0;
     };
 }  // namespace Piper

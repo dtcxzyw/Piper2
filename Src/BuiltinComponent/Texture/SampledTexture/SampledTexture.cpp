@@ -66,10 +66,9 @@ namespace Piper {
 
             // TODO: reduce copy
             // TODO: caching
-            auto texel = ctx.accelerator.createBuffer(mData.width * mData.height * mData.channel, 16);
-            texel->upload([image = mImage, size = texel->size()](const Ptr ptr) {
-                memcpy(reinterpret_cast<void*>(ptr), image->data(), size);
-            });
+            const auto size = mData.width * mData.height * mData.channel;
+            auto texel = ctx.accelerator.createBuffer(
+                size, 16, [image = mImage, size](const Ptr ptr) { memcpy(reinterpret_cast<void*>(ptr), image->data(), size); });
             auto data = mData;
             data.texel = ctx.registerResource(texel);
             static char uid;

@@ -34,11 +34,10 @@ namespace Piper {
     class ErrorHandler;
 
     struct LightFuncGroup final {
-        LightInitFunc init;
-        LightSampleFunc sample;
-        LightEvaluateFunc evaluate;
-        LightPdfFunc pdf;
-        const void* LIPayload;
+        Call<LightInitFunc> init;
+        Call<LightSampleFunc> sample;
+        Call<LightEvaluateFunc> evaluate;
+        Call<LightPdfFunc> pdf;
     };
 
     enum class HitKind { Builtin, Custom };
@@ -46,18 +45,16 @@ namespace Piper {
 
     struct GeometryUserData {
         HitKind kind;
-        GeometryPostProcessFunc calcSurface;
-        const void* GEPayload;
+        Call<GeometryPostProcessFunc> calcSurface;
         GeometryUsage usage;
     };
 
     struct GSMInstanceUserData final : GeometryUserData {
-        SurfaceInitFunc init;
-        SurfaceSampleFunc sample;
-        SurfaceEvaluateFunc evaluate;
-        SurfacePdfFunc pdf;
+        Call<SurfaceInitFunc> init;
+        Call<SurfaceSampleFunc> sample;
+        Call<SurfaceEvaluateFunc> evaluate;
+        Call<SurfacePdfFunc> pdf;
 
-        const void* SFPayload;
         // TODO:medium
     };
 
@@ -71,23 +68,18 @@ namespace Piper {
         RenderRECTAlias rect;
         RenderRECTAlias fullRect;
         RTCSceneTy* scene;
-        SensorFunc rayGen;
-        const void* RGPayload;
-        RenderDriverFunc accumulate;
+        Call<SensorFunc> rayGen;
         const void* ACPayload;
         const void* launchData;
-        IntegratorFunc trace;
         const void* TRPayload;
         LightFuncGroup* lights;
         LightSelectFunc lightSample;
         const void* LSPayload;
-        SampleStartFunc start;
-        SampleGenerateFunc generate;
         const void* SAPayload;
         uint32_t sampleCount;
         uint32_t maxDimension;
         SensorNDCAffineTransformAlias transform;
-        CallInfo* callInfo;
+        const void* const* callInfo;
         EmbreeProfiler* profiler;
 
         StatisticsHandle profileIntersectHit;
@@ -102,6 +94,8 @@ namespace Piper {
     struct PerSampleContext final {
         KernelArgument argument;
         TaskContext ctx;
+        ResourceHandle root;
+        void** symbolLUT;
         Time<float> time;
         uint32_t currentDimension;
         uint64_t sampleIndex;

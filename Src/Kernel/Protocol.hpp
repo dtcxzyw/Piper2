@@ -302,13 +302,34 @@ namespace Piper {
     void piperFloatAtomicAdd(float& x, float y);
     void piperGetResourceHandleIndirect(RestrictedContext context, uint32_t index, ResourceHandle& handle);
     }
-    // TODO:better interface? consider optix
-    template <typename Func, typename... Args>
-    void piperCall(RestrictedContext context, const CallHandle call, Args&&... args) {
-        CallInfo info;
-        piperQueryCall(context, call, info);
-        reinterpret_cast<Func>(info.address)(context, info.SBTData, std::forward<Args>(args)...);
-    }
+
+    // TODO: consider optix
+
+    template <typename CallProtocol>
+    struct Call final {
+        CallHandle handle;
+        template <typename... Args>
+        void operator()(RestrictedContext context, Args&&... args) const {
+            CallInfo info;
+            piperQueryCall(context, handle, info);
+            reinterpret_cast<CallProtocol>(info.address)(context, info.SBTData, std::forward<Args>(args)...);
+        }
+    };
+
+    template <typename CallProtocol>
+    struct CallInstance final {
+    private:
+        CallInfo mInfo;
+
+    public:
+        explicit CallInstance(const RestrictedContext context, Call<CallProtocol> call) {
+            piperQueryCall(context, call.handle, mInfo);
+        }
+        template <typename... Args>
+        void operator()(RestrictedContext context, Args&&... args) const {
+            reinterpret_cast<CallProtocol>(mInfo.address)(context, mInfo.SBTData, std::forward<Args>(args)...);
+        }
+    };
 
     class TimeProfiler final {
     private:

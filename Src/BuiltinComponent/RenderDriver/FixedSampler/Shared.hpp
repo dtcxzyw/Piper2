@@ -20,7 +20,7 @@
 
 namespace Piper {
     struct RDData final {
-        CallHandle filter;
+        Call<FilterFunc> filter;
     };
     struct LaunchData final {
         uint32_t rgbw;

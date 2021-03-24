@@ -252,10 +252,10 @@ namespace Piper {
         auto* bsdf = static_cast<MatteBSDF*>(storage);
         static_assert(sizeof(MatteBSDF) <= sizeof(SurfaceStorage));
         Dimensionless<float> diffuse[4];
-        piperCall<TextureSampleFunc>(context, data->diffuseTexture, texCoord, diffuse);
+        data->diffuseTexture(context, texCoord, diffuse);
         const auto reflection = Spectrum<Dimensionless<float>>{ diffuse };
         Dimensionless<float> roughness;
-        piperCall<TextureSampleFunc>(context, data->roughnessTexture, texCoord, &roughness);
+        data->roughnessTexture(context, texCoord, &roughness);
 
         if(roughness.val > 0.0f) {
             bsdf->mask = 0b01;
@@ -446,19 +446,19 @@ namespace Piper {
         static_assert(sizeof(PlasticBSDF) <= sizeof(SurfaceStorage));
         bsdf->mask = 0;
         Dimensionless<float> diffuse[4];
-        piperCall<TextureSampleFunc>(context, data->diffuseTexture, texCoord, diffuse);
+        data->diffuseTexture(context, texCoord, diffuse);
         const auto diffuseReflection = BxDFValue{ diffuse };
         if(diffuseReflection.valid()) {
             bsdf->mask |= 0b01;
             bsdf->diffuse = LambertianReflection{ diffuseReflection };
         }
         Dimensionless<float> specular[4];
-        piperCall<TextureSampleFunc>(context, data->specularTexture, texCoord, specular);
+        data->specularTexture(context, texCoord, specular);
         const auto specularReflection = BxDFValue{ specular };
         if(specularReflection.valid()) {
             bsdf->mask |= 0b10;
             Dimensionless<float> roughness;
-            piperCall<TextureSampleFunc>(context, data->roughnessTexture, texCoord, &roughness);
+            data->roughnessTexture(context, texCoord, &roughness);
             roughness = MicrofacetDistribution::remapRoughness(roughness);
             // TODO:acquire eta from medium
             const Dimensionless<float> etaI = { face == Face::Front ? 1.0f : 1.46f };
@@ -618,8 +618,8 @@ namespace Piper {
         static_assert(sizeof(GlassBSDF) <= sizeof(SurfaceStorage));
 
         Dimensionless<float> reflectionPart[4], transmissionPart[4];
-        piperCall<TextureSampleFunc>(context, data->reflection, texCoord, reflectionPart);
-        piperCall<TextureSampleFunc>(context, data->transmission, texCoord, transmissionPart);
+        data->reflection(context, texCoord, reflectionPart);
+        data->transmission(context, texCoord, transmissionPart);
         const BxDFValue reflection{ reflectionPart }, transmission{ transmissionPart };
 
         if(!reflection.valid() && !transmission.valid()) {
@@ -628,8 +628,8 @@ namespace Piper {
         }
 
         Dimensionless<float> roughnessX, roughnessY;
-        piperCall<TextureSampleFunc>(context, data->roughnessX, texCoord, &roughnessX);
-        piperCall<TextureSampleFunc>(context, data->roughnessY, texCoord, &roughnessY);
+        data->roughnessX(context, texCoord, &roughnessX);
+        data->roughnessY(context, texCoord, &roughnessY);
 
         const Dimensionless<float> etaI = { face == Face::Front ? 1.0f : 1.5f };
         const Dimensionless<float> etaT = { face == Face::Front ? 1.5f : 1.0f };
@@ -671,7 +671,7 @@ namespace Piper {
         auto* bsdf = static_cast<MirrorBSDF*>(storage);
         static_assert(sizeof(MirrorBSDF) <= sizeof(SurfaceStorage));
         Dimensionless<float> reflection[4];
-        piperCall<TextureSampleFunc>(context, data->reflectionTexture, texCoord, reflection);
+        data->reflectionTexture(context, texCoord, reflection);
         bsdf->reflection = BxDFValue{ reflection };
         noSpecular = false;
     }
@@ -759,16 +759,16 @@ namespace Piper {
         static_assert(sizeof(SubstrateBSDF) <= sizeof(SurfaceStorage));
 
         Dimensionless<float> diffusePart[4], specularPart[4];
-        piperCall<TextureSampleFunc>(context, data->diffuse, texCoord, diffusePart);
-        piperCall<TextureSampleFunc>(context, data->specular, texCoord, specularPart);
+        data->diffuse(context, texCoord, diffusePart);
+        data->specular(context, texCoord, specularPart);
         const BxDFValue diffuse{ diffusePart }, specular{ specularPart };
 
         if(!diffuse.valid() && !specular.valid())
             return;
 
         Dimensionless<float> roughnessX, roughnessY;
-        piperCall<TextureSampleFunc>(context, data->roughnessX, texCoord, &roughnessX);
-        piperCall<TextureSampleFunc>(context, data->roughnessY, texCoord, &roughnessY);
+        data->roughnessX(context, texCoord, &roughnessX);
+        data->roughnessY(context, texCoord, &roughnessY);
         const MicrofacetDistribution distribution{ MicrofacetDistribution::remapRoughness(roughnessX),
                                                    MicrofacetDistribution::remapRoughness(roughnessY) };
 

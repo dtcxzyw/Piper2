@@ -119,15 +119,9 @@ namespace Piper {
 
     public:
         OptixRTProgram(PiperContext& context, Accelerator& accelerator) : Resource{ context }, mAccelerator{ accelerator } {}
-        ResourceShareMode getShareMode() const noexcept override {
-            return ResourceShareMode::Unique;
-        }
-        void flushBeforeRead(const Instance& dest) const override {}
-        Instance instantiateMain() const override {
-            return {};
-        }
-        Instance instantiateReference(Context* ctx) const override {
-            return {};
+        SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            return nullptr;
         }
     };
 
@@ -144,7 +138,7 @@ namespace Piper {
         DynamicArray<OptixTraversableHandle> mGeometry;
 
         // CustomBuffer mCustomBuffer;
-        SharedPtr<Buffer> mResource;
+        SharedPtr<Resource> mResource;
 
     public:
         OptixAcceleration(PiperContext& context, const DynamicArray<Pair<Context*, DeviceHandle>>& devices,
@@ -192,14 +186,14 @@ namespace Piper {
                     auto&& triDesc = eastl::get<TriangleIndexedGeometryDesc>(desc.desc);
 
                     // TODO: concurrency
-                    triDesc.buffer->access()->wait();
                     mResource = triDesc.buffer;
 
                     // TODO: relocate
                     for(auto& [ctx, device] : devices) {
                         auto guard = ctx->makeCurrent();
                         // TODO: batch building
-                        const auto bufferPtr = static_cast<CUdeviceptr>(triDesc.buffer->require(ctx)->getHandle());
+                        triDesc.buffer->requireInstance(ctx)->getFuture()->wait();
+                        const auto bufferPtr = static_cast<CUdeviceptr>(triDesc.buffer->requireInstance(ctx)->getHandle());
 
                         const auto vertices = bufferPtr + triDesc.vertices;
                         // TODO: SBT
@@ -237,12 +231,12 @@ namespace Piper {
                 case 1: {
                     const auto& custom = eastl::get<CustomGeometryDesc>(desc.desc);
                     // TODO: concurrency
-                    custom.bounds->access()->wait();
                     mResource = custom.bounds;
 
                     for(auto& [ctx, device] : devices) {
                         auto guard = ctx->makeCurrent();
-                        const auto bounds = static_cast<CUdeviceptr>(custom.bounds->require(ctx)->getHandle());
+                        custom.bounds->requireInstance(ctx)->getFuture()->wait();
+                        const auto bounds = static_cast<CUdeviceptr>(custom.bounds->requireInstance(ctx)->getHandle());
 
                         // TODO: SBT
                         OptixBuildInput input;

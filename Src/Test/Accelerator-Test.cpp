@@ -52,20 +52,18 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
         memcpy(reinterpret_cast<void*>(ptr), Y.data(), Y.size() * sizeof(Float));
     });
     const auto devZ = accelerator->createTiledOutput(count * sizeof(Float), 64);
-
-    auto conv = context.getPITUManager().loadPITU("conv.bc");
-    auto linkable = PIPER_FUTURE_CALL(conv, generateLinkable)(accelerator->getSupportedLinkableFormat());
-
     // TODO:concurrency
-    linkable.wait();
+    auto conv = context.getPITUManager().loadPITU("conv.bc");
+    auto linkable = PIPER_FUTURE_CALL(conv, generateLinkable)(accelerator->getSupportedLinkableFormat()).getSync();
 
-    auto kernel = accelerator->compileKernel(Piper::Span<Piper::LinkableProgram>{ &linkable.getUnsafe(), 1 }, {}, {});
-    auto entry = kernel->lookUp("convEntry");
+    auto kernel = accelerator->compileKernel(Piper::Span<Piper::LinkableProgram>{ &linkable, 1 },
+                                             Piper::UMap<Piper::String, Piper::String>{ context.getAllocator() },
+                                             Piper::DynamicArray<Piper::String>{ context.getAllocator() });
     // TODO:better interface
     auto lut = accelerator->createResourceLUT({ { devX, devY, devZ }, context.getAllocator() });
 
-    auto _ =
-        accelerator->launchKernel(Piper::Dim3{ width, 1, 1 }, Piper::Dim3{ height, 1, 1 }, entry, lut, width, height, kernelSize);
+    auto _ = accelerator->launchKernel(Piper::Dim3{ width, 1, 1 }, Piper::Dim3{ height, 1, 1 }, kernel->lookUp("convEntry"),
+                                       std::move(lut), width, height, kernelSize);
 
     auto dataZ = devZ->download().getSync();
 

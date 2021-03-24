@@ -104,10 +104,8 @@ namespace Piper {
                     auto size = sizeof(Bounds) * mBounds.size();
                     alignTo(size, alignment);
 
-                    desc.bounds = accelerator.createBuffer(size, alignment);
-
                     // TODO: reduce copy
-                    desc.bounds->upload([bounds = mBounds](const Ptr ptr) {
+                    desc.bounds = accelerator.createBuffer(size, alignment, [bounds = mBounds](const Ptr ptr) {
                         memcpy(reinterpret_cast<void*>(ptr), bounds.data(), sizeof(Bounds) * bounds.size());
                     });
 
@@ -116,14 +114,15 @@ namespace Piper {
         }
         [[nodiscard]] GeometryProgram materialize(const MaterializeContext& ctx) const override {
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            // TODO: better interface
+            // TODO: concurrency
             auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
 
-            auto planeData = ctx.accelerator.createBuffer(sizeof(PerPlaneData) * mPlanes.size(), alignof(PerPlaneData));
             // TODO: reduce copy
-            planeData->upload([planes = mPlanes](const Ptr ptr) {
-                memcpy(reinterpret_cast<void*>(ptr), planes.data(), sizeof(PerPlaneData) * planes.size());
-            });
-
+            auto planeData = ctx.accelerator.createBuffer(
+                sizeof(PerPlaneData) * mPlanes.size(), alignof(PerPlaneData), [planes = mPlanes](const Ptr ptr) {
+                    memcpy(reinterpret_cast<void*>(ptr), planes.data(), sizeof(PerPlaneData) * planes.size());
+                });
             GeometryProgram prog;
             prog.payload = packSBTPayload(context().getAllocator(), PlaneData{ ctx.registerResource(planeData) });
             prog.surface = ctx.tracer.buildProgram(linkable, "planeSurface");
@@ -134,38 +133,38 @@ namespace Piper {
         }
 
         SampledGeometryProgram materialize(const TraversalHandle traversal, const MaterializeContext& ctx) const override {
+
+            // TODO: concurrency
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             auto linkable = PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync();
 
             // TODO: reuse buffer by caching
-            auto planeData = ctx.accelerator.createBuffer(sizeof(PerPlaneData) * mPlanes.size(), alignof(PerPlaneData));
             // TODO: reduce copy
-            planeData->upload([planes = mPlanes](const Ptr ptr) {
-                memcpy(reinterpret_cast<void*>(ptr), planes.data(), sizeof(PerPlaneData) * planes.size());
-            });
+            auto planeData = ctx.accelerator.createBuffer(
+                sizeof(PerPlaneData) * mPlanes.size(), alignof(PerPlaneData), [planes = mPlanes](const Ptr ptr) {
+                    memcpy(reinterpret_cast<void*>(ptr), planes.data(), sizeof(PerPlaneData) * planes.size());
+                });
 
-            auto cdfData =
-                ctx.accelerator.createBuffer(sizeof(Dimensionless<float>) * mCDF.size(), alignof(Dimensionless<float>));
             // TODO: reduce copy
-            cdfData->upload([cdf = mCDF](const Ptr ptr) {
-                memcpy(reinterpret_cast<void*>(ptr), cdf.data(), sizeof(Dimensionless<float>) * cdf.size());
-            });
+            auto cdfData = ctx.accelerator.createBuffer(
+                sizeof(Dimensionless<float>) * mCDF.size(), alignof(Dimensionless<float>), [cdf = mCDF](const Ptr ptr) {
+                    memcpy(reinterpret_cast<void*>(ptr), cdf.data(), sizeof(Dimensionless<float>) * cdf.size());
+                });
 
-            auto pdfData =
-                ctx.accelerator.createBuffer(sizeof(Dimensionless<float>) * mPDF.size(), alignof(Dimensionless<float>));
             // TODO: reduce copy
-            pdfData->upload([pdf = mPDF](const Ptr ptr) {
-                memcpy(reinterpret_cast<void*>(ptr), pdf.data(), sizeof(Dimensionless<float>) * pdf.size());
-            });
+            auto pdfData = ctx.accelerator.createBuffer(
+                sizeof(Dimensionless<float>) * mPDF.size(), alignof(Dimensionless<float>), [pdf = mPDF](const Ptr ptr) {
+                    memcpy(reinterpret_cast<void*>(ptr), pdf.data(), sizeof(Dimensionless<float>) * pdf.size());
+                });
 
             SampledGeometryProgram prog;
             prog.sample = ctx.tracer.buildProgram(linkable, "planeSample");
             prog.payload = packSBTPayload(context().getAllocator(),
                                           CDFData{
-                                              ctx.registerResource(planeData),
+                                              ctx.registerResource(std::move(planeData)),
                                               traversal,
-                                              ctx.registerResource(cdfData),
-                                              ctx.registerResource(pdfData),
+                                              ctx.registerResource(std::move(cdfData)),
+                                              ctx.registerResource(std::move(pdfData)),
                                               Dimensionless<float>{ 1.0f / mArea.val },
                                               static_cast<uint32_t>(mCDF.size()),
                                           });

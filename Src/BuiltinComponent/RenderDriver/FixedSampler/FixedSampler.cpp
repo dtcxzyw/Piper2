@@ -49,8 +49,7 @@ namespace Piper {
             FilterProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
             res.weight = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(),
-                mFilterType);
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(), mFilterType);
             res.payload = packSBTPayload(context().getAllocator(), mPayload);
             return res;
         }
@@ -69,8 +68,7 @@ namespace Piper {
               mFilter(context.getModuleLoader().newInstanceT<Filter>(config->at("Filter")).getSync()) {}
         [[nodiscard]] DynamicArray<Spectrum<Radiance>> renderFrame(Tracer& tracer, TraceLauncher& launcher) override {
             const auto [width, height] = launcher.getFilmResolution();
-            auto buffer = tracer.getAccelerator().createBuffer(width * height * sizeof(RGBW), alignof(RGBW));
-            buffer->reset();
+            auto buffer = tracer.getAccelerator().createTiledOutput(width * height * sizeof(RGBW), alignof(RGBW));
 
             const auto rect = launcher.getRenderRECT();
             constexpr uint32_t tileSize = 32;
@@ -82,12 +80,15 @@ namespace Piper {
             List<Future<void>> tiles{ context().getAllocator() };
 
             const Function<SBTPayload, uint32_t> launchData =
-                [width, height, allocator = STLAllocator{ context().getAllocator() }](const uint32_t offset) {
-                    return packSBTPayload(allocator, LaunchData{ offset, width, height });
+                [w = width, h = height, allocator = STLAllocator{ context().getAllocator() }](const uint32_t offset) {
+                    return packSBTPayload(allocator, LaunchData{ offset, w, h });
                 };
 
-            ResourceView bufferRef{ buffer, ResourceAccessMode::ReadOnly };  // Not ReadWrite!!
-            const Span<ResourceView> resources = { &bufferRef, 1 };
+            SharedPtr<Resource> bufferRef = buffer;
+
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            // ResourceView bufferRef{ buffer, ResourceAccessMode::ReadOnly };  // Not ReadWrite!!
+            // const Span<ResourceView> resources = { &bufferRef, 1 };
 
             for(uint32_t bx = 0; bx < blockX; ++bx)
                 for(uint32_t by = 0; by < blockY; ++by) {
@@ -96,7 +97,7 @@ namespace Piper {
                                                   std::min(tileSize, rect.height - by * tileSize) };
                     // TODO: use standard tiled computation interface
 
-                    tiles.emplace_back(launcher.launch(tile, launchData, resources));
+                    tiles.emplace_back(launcher.launch(tile, launchData, Span<SharedPtr<Resource>>{ &bufferRef, 1 }));
                 }
 
             // TODO: move progress computation to Concurrency.hpp
@@ -136,11 +137,11 @@ namespace Piper {
         [[nodiscard]] RenderDriverProgram materialize(const MaterializeContext& ctx) const override {
             RenderDriverProgram res;
             auto pitu = context().getPITUManager().loadPITU(mKernelPath);
+            // TODO: concurrency
             res.accumulate = ctx.tracer.buildProgram(
-                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(),
-                "accumulate");
+                PIPER_FUTURE_CALL(pitu, generateLinkable)(ctx.accelerator.getSupportedLinkableFormat()).getSync(), "accumulate");
             auto [sbt, prog] = mFilter->materialize(ctx);
-            res.payload = packSBTPayload(context().getAllocator(), RDData{ ctx.registerCall(prog, sbt) });
+            res.payload = packSBTPayload(context().getAllocator(), RDData{ { ctx.registerCall(prog, sbt) } });
             return res;
         }
     };

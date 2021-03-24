@@ -20,11 +20,22 @@
 
 namespace Piper {
     extern "C" {
+    extern void embreeSampleGenerate(const void* SBTData, uint64_t idx, uint32_t dim, float& val);
+    static_assert(std::is_same_v<SampleGenerateFunc, std::decay_t<decltype(embreeSampleGenerate)>>);
+    extern void embreeSampleStart(const void* SBTData, uint32_t sampleX, uint32_t sampleY, uint32_t sample, uint64_t& idx,
+                                  Vector2<float>& pixelOffset);
+    static_assert(std::is_same_v<SampleStartFunc, std::decay_t<decltype(embreeSampleStart)>>);
+    extern void embreeIntegrate(FullContext context, const void* SBTData, RayInfo<FOR::World>& ray, Spectrum<Radiance>& sample);
+    static_assert(std::is_same_v<IntegratorFunc, std::decay_t<decltype(embreeIntegrate)>>);
+    extern void embreeAccumulate(RestrictedContext context, const void* SBTData, const void* launchData,
+                                 const Vector2<float>& point, const Spectrum<Radiance>& sample);
+    static_assert(std::is_same_v<RenderDriverFunc, std::decay_t<decltype(embreeAccumulate)>>);
+
     float piperSample(const FullContext context) {
         auto* ctx = reinterpret_cast<PerSampleContext*>(context);
         if(ctx->currentDimension < ctx->argument.maxDimension) {
             float res;
-            ctx->argument.generate(ctx->argument.SAPayload, ctx->sampleIndex, ctx->currentDimension++, res);
+            embreeSampleGenerate(ctx->argument.SAPayload, ctx->sampleIndex, ctx->currentDimension++, res);
             return res;
         }
         return std::generate_canonical<float, std::numeric_limits<size_t>::max()>(ctx->randomEngine);
@@ -41,20 +52,24 @@ namespace Piper {
         piperGetGridIndex(ctx, pixelIdx);
         pixelIdx.x += SBT.rect.left - SBT.fullRect.left;
         pixelIdx.y += SBT.rect.top - SBT.fullRect.top;
+        ResourceHandle rootLUT;
+        piperGetRootResourceLUT(ctx, rootLUT);
 
         PerSampleContext context{
             SBT,
             ctx,
+            rootLUT,
+            piperBuiltinSymbolLUT,
             { 0.0f },
-            5,
+            5U,
             0,
             RandomEngine{ static_cast<uint64_t>(pixelIdx.x * SBT.fullRect.height + pixelIdx.y) * SBT.sampleCount + sampleIdx }
         };
         Vector2<float> point;
-        SBT.start(SBT.SAPayload, pixelIdx.x, pixelIdx.y, sampleIdx, context.sampleIndex, point);
+        embreeSampleStart(SBT.SAPayload, pixelIdx.x, pixelIdx.y, sampleIdx, context.sampleIndex, point);
         point.x += static_cast<float>(SBT.fullRect.left + pixelIdx.x);
         point.y += static_cast<float>(SBT.fullRect.top + pixelIdx.y);
-        SBT.generate(SBT.SAPayload, context.sampleIndex, 2, context.time.val);
+        embreeSampleGenerate(SBT.SAPayload, context.sampleIndex, 2, context.time.val);
 
         // TODO:move to transform
         const auto& transform = SBT.transform;
@@ -64,14 +79,14 @@ namespace Piper {
         Dimensionless<float> weight;
         {
             float u1, u2;
-            SBT.generate(SBT.SAPayload, context.sampleIndex, 3, u1);
-            SBT.generate(SBT.SAPayload, context.sampleIndex, 4, u2);
-            SBT.rayGen(reinterpret_cast<RestrictedContext>(&context), SBT.RGPayload, NDC, u1, u2, ray, weight);
+            embreeSampleGenerate(SBT.SAPayload, context.sampleIndex, 3, u1);
+            embreeSampleGenerate(SBT.SAPayload, context.sampleIndex, 4, u2);
+            SBT.rayGen(reinterpret_cast<RestrictedContext>(&context), NDC, u1, u2, ray, weight);
         }
 
         Spectrum<Radiance> sample;
-        SBT.trace(reinterpret_cast<FullContext>(&context), SBT.TRPayload, ray, sample);
-        SBT.accumulate(reinterpret_cast<RestrictedContext>(&context), SBT.ACPayload, SBT.launchData, point, sample * weight);
+        embreeIntegrate(reinterpret_cast<FullContext>(&context), SBT.TRPayload, ray, sample);
+        embreeAccumulate(reinterpret_cast<RestrictedContext>(&context), SBT.ACPayload, SBT.launchData, point, sample * weight);
 
         uint64_t end;
         piperGetTime(nullptr, end);
@@ -87,26 +102,25 @@ namespace Piper {
                           const Normal<float, FOR::Shading>& Ng, const Face face, const TransportMode mode,
                           SurfaceStorage& storage, bool& noSpecular) {
         const auto* func = reinterpret_cast<const GSMInstanceUserData*>(surface);
-        func->init(decay(context), func->SFPayload, texCoord, Ng, face, mode, &storage, noSpecular);
+        func->init(decay(context), texCoord, Ng, face, mode, &storage, noSpecular);
     }
     void piperSurfaceSample(const FullContext context, const SurfaceHandle surface, const SurfaceStorage& storage,
                             const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& Ng, const BxDFPart require,
                             SurfaceSample& sample) {
         const auto* func = reinterpret_cast<const GSMInstanceUserData*>(surface);
-        func->sample(decay(context), func->SFPayload, &storage, wo, Ng, require, piperSample(context), piperSample(context),
-                     sample);
+        func->sample(decay(context), &storage, wo, Ng, require, piperSample(context), piperSample(context), sample);
     }
     void piperSurfaceEvaluate(const FullContext context, const SurfaceHandle surface, const SurfaceStorage& storage,
                               const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                               const Normal<float, FOR::Shading>& Ng, const BxDFPart require, Spectrum<Dimensionless<float>>& f) {
         const auto* func = reinterpret_cast<const GSMInstanceUserData*>(surface);
-        func->evaluate(decay(context), func->SFPayload, &storage, wo, wi, Ng, require, f);
+        func->evaluate(decay(context), &storage, wo, wi, Ng, require, f);
     }
     void piperSurfacePdf(const FullContext context, const SurfaceHandle surface, const SurfaceStorage& storage,
                          const Normal<float, FOR::Shading>& wo, const Normal<float, FOR::Shading>& wi,
                          const Normal<float, FOR::Shading>& Ng, const BxDFPart require, Dimensionless<float>& pdf) {
         const auto* func = reinterpret_cast<const GSMInstanceUserData*>(surface);
-        func->pdf(decay(context), func->SFPayload, &storage, wo, wi, Ng, require, pdf);
+        func->pdf(decay(context), &storage, wo, wi, Ng, require, pdf);
     }
     void piperLightSelect(const FullContext context, LightSelectResult& select) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
@@ -116,32 +130,34 @@ namespace Piper {
     void piperLightInit(const FullContext context, const LightHandle light, LightStorage& storage) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
-        func->init(decay(context), func->LIPayload, &storage);
+        func->init(decay(context), &storage);
     }
     void piperLightSample(const FullContext context, const LightHandle light, const LightStorage& storage,
                           const Point<Distance, FOR::World>& hit, LightSample& sample) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
-        func->sample(decay(context), func->LIPayload, &storage, hit, piperSample(context), piperSample(context), sample);
+        func->sample(decay(context), &storage, hit, piperSample(context), piperSample(context), sample);
     }
     void piperLightEvaluate(const FullContext context, const LightHandle light, const LightStorage& storage,
                             const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
                             const Normal<float, FOR::World>& dir, Spectrum<Radiance>& rad) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
-        func->evaluate(decay(context), func->LIPayload, &storage, lightSourceHit, n, dir, rad);
+        func->evaluate(decay(context), &storage, lightSourceHit, n, dir, rad);
     }
     void piperLightPdf(const FullContext context, const LightHandle light, const LightStorage& storage,
                        const Point<Distance, FOR::World>& lightSourceHit, const Normal<float, FOR::World>& n,
                        const Normal<float, FOR::World>& dir, const Distance t, Dimensionless<float>& pdf) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
         const auto* func = light ? reinterpret_cast<const LightFuncGroup*>(light) : ctx->lights;
-        func->pdf(decay(context), func->LIPayload, &storage, lightSourceHit, n, dir, t, pdf);
+        func->pdf(decay(context), &storage, lightSourceHit, n, dir, t, pdf);
     }
 
     void piperQueryCall(const RestrictedContext context, const CallHandle call, CallInfo& info) {
-        const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        info = ctx->callInfo[reinterpret_cast<ptrdiff_t>(call)];
+        const auto* ctx = reinterpret_cast<const PerSampleContext*>(context);
+        const auto index = reinterpret_cast<ptrdiff_t>(call);
+        info.address = reinterpret_cast<ptrdiff_t>(piperBuiltinSymbolLUT[index]);
+        info.SBTData = ctx->argument.callInfo[index];
     }
 
     // TODO:per-vertex TBN
@@ -169,8 +185,10 @@ namespace Piper {
         info.face = hit.face;
     }
     static_assert(std::is_same_v<GeometryPostProcessFunc, decltype(&calcTriangleMeshSurface)>);
+
     void piperGetResourceHandleIndirect(const RestrictedContext context, const uint32_t index, ResourceHandle& handle) {
-        piperGetResourceHandle(reinterpret_cast<PerSampleContext*>(context)->ctx, index, handle);
+        const auto ctx = reinterpret_cast<PerSampleContext*>(context);
+        piperLookUpResourceHandle(ctx->ctx, ctx->root, index, handle);
     }
     }
 }  // namespace Piper

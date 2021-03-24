@@ -26,7 +26,7 @@ namespace Piper {
         const auto* data = static_cast<const DiffuseAreaLightData*>(SBTData);
         Point<Distance, FOR::World> src;
         Normal<float, FOR::World> n;
-        piperCall<GeometrySampleFunc>(context, data->sample, hit, u1, u2, src, n, sample.pdf);
+        data->sample(context, hit, u1, u2, src, n, sample.pdf);
         const auto delta = src - hit;
         if(sample.pdf.val == 0.0f || dot(delta, n).val >= 0.0f) {
             sample.pdf = { 0.0f };

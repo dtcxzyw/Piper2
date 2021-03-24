@@ -139,9 +139,8 @@ namespace Piper {
     // TODO: resource allocation scheduler
     class Accelerator : public Object {
     private:
-        [[nodiscard]] virtual Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block,
-                                                            const SharedPtr<KernelSymbol>& kernel,
-                                                            const SharedPtr<ResourceLookUpTable>& root, ArgumentPackage args) = 0;
+        [[nodiscard]] virtual Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+                                                            SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) = 0;
 
     public:
         PIPER_INTERFACE_CONSTRUCT(Accelerator, Object);
@@ -153,10 +152,10 @@ namespace Piper {
                                                               DynamicArray<String> dynamicSymbols) = 0;
 
         template <typename... Args>
-        [[nodiscard]] Future<void> launchKernel(const Dim3& grid, const Dim3& block, const SharedPtr<KernelSymbol>& kernel,
-                                                const SharedPtr<ResourceLookUpTable>& root, const Args&... args) {
+        [[nodiscard]] Future<void> launchKernel(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+                                                SharedPtr<ResourceLookUpTable> root, const Args&... args) {
             static_assert((std::is_trivial_v<std::decay_t<Args>> && ...));
-            return launchKernelImpl(grid, block, kernel, root, ArgumentPackage{ context(), args... });
+            return launchKernelImpl(grid, block, std::move(kernel), std::move(root), ArgumentPackage{ context(), args... });
         }
 
         // TODO: better interface

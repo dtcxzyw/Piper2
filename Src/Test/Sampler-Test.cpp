@@ -299,7 +299,12 @@ TEST_F(PiperCoreEnvironment, SobolSampler) {
 
     Piper::LinkableProgram linkable[] = { generate->linkable, start->linkable, prepareKernelNative(*context) };
     Piper::DynamicArray<Sample> samples{ sampleCount, context->getAllocator() };
-    auto kernel = accelerator->compileKernel<Sample*>(linkable, "dummy").get().getSync();
+    auto kernel = accelerator
+                      ->compileKernel(linkable, Piper::UMap<Piper::String, Piper::String>{ context->getAllocator() },
+                                      Piper::DynamicArray<Piper::String>{ context->getAllocator() })
+                      .get();
+    context->getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+    /*
     const auto startFunction = static_cast<Piper::SampleStartFunc>(kernel->lookup(start->symbol));
     const auto generateFunction = static_cast<Piper::SampleGenerateFunc>(kernel->lookup(generate->symbol));
     const auto attr = sampler->generatePayload(width, height);
@@ -312,6 +317,7 @@ TEST_F(PiperCoreEnvironment, SobolSampler) {
         for(auto i = 0; i < dim; ++i)
             generateFunction(attr.payload.data(), index, i, sample.val[i]);
     }
+    */
     const auto res = evalStarDiscrepancy(*context, samples, "Piper.BuiltinComponent.ScrambledSobolSampler");
     EXPECT_LE(res, reference);
 }

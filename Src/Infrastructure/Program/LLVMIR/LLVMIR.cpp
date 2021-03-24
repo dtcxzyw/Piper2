@@ -135,7 +135,8 @@ namespace Piper {
             for(auto&& format : acceptableFormat) {
                 // TODO: LLVM IR Version
                 if(StringView{ format } == "LLVM IR") {
-                    return LinkableProgram{ scheduler.value(eastl::dynamic_shared_pointer_cast<PITU>(shared_from_this())),
+                    return LinkableProgram{ scheduler.value(eastl::dynamic_shared_pointer_cast<PITU>(
+                                                const_cast<LLVMIR*>(this)->shared_from_this())),
                                             String{ "LLVM IR", context().getAllocator() }, mUID };
                 }
                 if(StringView{ format } == "LLVM IR Bitcode") {
@@ -197,7 +198,7 @@ namespace Piper {
                 const auto map = file->map(0, file->size());
                 const auto span = map->get();
                 return eastl::static_shared_pointer_cast<PITU>(makeSharedObject<LLVMIR>(
-                    *ctx, Binary{ span.begin(), span.end(), ctx->getAllocator() }, eastl::hash<String>{}(path)));
+                    *ctx, Binary{ span.data(), span.data() + span.size(), ctx->getAllocator() }, eastl::hash<String>{}(path)));
             });
         }
 
