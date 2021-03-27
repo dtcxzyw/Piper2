@@ -21,64 +21,69 @@
 
 namespace Piper {
     extern "C" {
-    struct dim3 final {
-        unsigned int x, y, z;
-    };
-    extern const dim3 gridDim;
-    extern const dim3 blockDim;
-    extern const dim3 blockIdx;
-    extern const dim3 threadIdx;
+#define BUILTIN_CONSTANT(NAME) \
+    extern uint32_t NAME##X(); \
+    extern uint32_t NAME##Y(); \
+    extern uint32_t NAME##Z();
+
+    BUILTIN_CONSTANT(gridDim)
+    BUILTIN_CONSTANT(blockDim)
+    BUILTIN_CONSTANT(blockIdx)
+    BUILTIN_CONSTANT(threadIdx)
+
+#undef BUILTIN_CONSTANT
 
     void piperGetGridSize(const TaskContext, Dim3& dim) {
-        dim.x = gridDim.x;
-        dim.y = gridDim.y;
-        dim.z = gridDim.z;
+        dim.x = gridDimX();
+        dim.y = gridDimY();
+        dim.z = gridDimZ();
     }
     void piperGetBlockSize(const TaskContext, Dim3& dim) {
-        dim.x = blockDim.x;
-        dim.y = blockDim.y;
-        dim.z = blockDim.z;
+        dim.x = blockDimX();
+        dim.y = blockDimY();
+        dim.z = blockDimZ();
     }
     void piperGetGridIndex(const TaskContext, Dim3& index) {
-        index.x = blockIdx.x;
-        index.y = blockIdx.y;
-        index.z = blockIdx.z;
+        index.x = blockIdxX();
+        index.y = blockIdxY();
+        index.z = blockIdxZ();
     }
     void piperGetBlockIndex(const TaskContext, Dim3& index) {
-        index.x = threadIdx.x;
-        index.y = threadIdx.y;
-        index.z = threadIdx.z;
+        index.x = threadIdxX();
+        index.y = threadIdxY();
+        index.z = threadIdxZ();
     }
     void piperGetGridLinearIndex(const TaskContext, uint32_t& index) {
-        index = (blockIdx.x * gridDim.y + blockIdx.y) * gridDim.z + blockIdx.z;
+        index = (blockIdxX() * gridDimY() + blockIdxY()) * gridDimZ() + blockIdxZ();
     }
-    void piperGetBlockLinearIndex(const TaskContext context, uint32_t& index) {
-        index = (threadIdx.x * blockDim.y + threadIdx.y) * blockDim.z + threadIdx.z;
+    void piperGetBlockLinearIndex(const TaskContext, uint32_t& index) {
+        index = (threadIdxX() * blockDimY() + threadIdxY()) * blockDimZ() + threadIdxZ();
     }
     void piperGetTaskIndex(const TaskContext, uint32_t& index) {
-        const auto idx0 = (blockIdx.x * gridDim.y + blockIdx.y) * gridDim.z + blockIdx.z;
-        const auto idx1 = (threadIdx.x * blockDim.y + threadIdx.y) * blockDim.z + threadIdx.z;
-        index = idx0 * (blockIdx.x * blockIdx.y * blockIdx.z) + idx1;
+        const auto idx0 = (blockIdxX() * gridDimY() + blockIdxY()) * gridDimZ() + blockIdxZ();
+        const auto idx1 = (threadIdxX() * blockDimY() + threadIdxY()) * blockDimZ() + threadIdxZ();
+        index = idx0 * (blockDimX() * blockDimY() * blockDimZ()) + idx1;
     }
+
     struct UInt32Pair final {
         uint32_t first;
         uint32_t second;
     };
 
     void piperGetArgument(const TaskContext context, const uint32_t index, void* ptr) {
-        const auto offset = *(reinterpret_cast<const uint32_t*>(context) + 1);
-        const auto base = reinterpret_cast<const std::byte*>(context) + 2 * sizeof(uint32_t);
-        const auto desc = reinterpret_cast<const UInt32Pair*>(reinterpret_cast<const std::byte*>(context) + offset);
-        const auto beg = base + desc[index].first;
+        const auto offset1 = *reinterpret_cast<const uint32_t*>(context);
+        const auto offset2 = *(reinterpret_cast<const uint32_t*>(context) + 1);
+        const auto desc = reinterpret_cast<const UInt32Pair*>(reinterpret_cast<const std::byte*>(context) + offset1);
+        const auto beg = reinterpret_cast<const std::byte*>(context) + (offset2 + desc[index].first);
         memcpy(ptr, beg, desc[index].second);
     }
-    void piperGetRootResourceLUT(const TaskContext context, ResourceHandle& handle) {
+    void piperGetRootResourceLUT(const TaskContext, ResourceHandle& handle) {
         handle = 0;
     }
     void piperLookUpResourceHandle(const TaskContext context, const ResourceHandle LUT, const uint32_t index,
                                    ResourceHandle& handle) {
-        const auto offset = *reinterpret_cast<const uint32_t*>(context);
-        const auto base = reinterpret_cast<const ResourceHandle*>(reinterpret_cast<const std::byte*>(context) + offset);
+        const auto base =
+            reinterpret_cast<const ResourceHandle*>(reinterpret_cast<const std::byte*>(context) + 2 * sizeof(uint32_t));
         handle = base[LUT + index];
     }
     }

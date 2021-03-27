@@ -88,16 +88,9 @@ namespace Piper {
         // Future<SharedPtr<Resource>> asBuffer() const;
     };
 
-    class KernelSymbol : public Resource {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(KernelSymbol, Resource);
-    };
-
     class Kernel : public Resource {
     public:
         PIPER_INTERFACE_CONSTRUCT(Kernel, Resource);
-        // TODO: protocol check
-        [[nodiscard]] virtual SharedPtr<KernelSymbol> lookUp(String symbol) const = 0;
     };
 
     class ResourceLookUpTable : public Resource {
@@ -139,7 +132,7 @@ namespace Piper {
     // TODO: resource allocation scheduler
     class Accelerator : public Object {
     private:
-        [[nodiscard]] virtual Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+        [[nodiscard]] virtual Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
                                                             SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) = 0;
 
     public:
@@ -149,10 +142,10 @@ namespace Piper {
 
         [[nodiscard]] virtual SharedPtr<Kernel> compileKernel(const Span<LinkableProgram>& linkable,
                                                               UMap<String, String> staticRedirectedSymbols,
-                                                              DynamicArray<String> dynamicSymbols) = 0;
+                                                              DynamicArray<String> dynamicSymbols, String entryFunction) = 0;
 
         template <typename... Args>
-        [[nodiscard]] Future<void> launchKernel(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+        [[nodiscard]] Future<void> launchKernel(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
                                                 SharedPtr<ResourceLookUpTable> root, const Args&... args) {
             static_assert((std::is_trivial_v<std::decay_t<Args>> && ...));
             return launchKernelImpl(grid, block, std::move(kernel), std::move(root), ArgumentPackage{ context(), args... });

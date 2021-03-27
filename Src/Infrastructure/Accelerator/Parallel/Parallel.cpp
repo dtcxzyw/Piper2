@@ -100,79 +100,37 @@ namespace Piper {
         }
     };
 
-    class LLVMKernel;
-
-    class LLVMSymbolInstance final : public ResourceInstance {
-    private:
-        SharedPtr<const LLVMKernel> mKernel;
-        String mSymbol;
-        mutable void* mLazy;
-
-    public:
-        LLVMSymbolInstance(PiperContext& context, SharedPtr<const LLVMKernel> kernel, String symbol)
-            : ResourceInstance{ context }, mKernel{ std::move(kernel) }, mSymbol{ std::move(symbol) }, mLazy{ nullptr } {}
-        [[nodiscard]] ResourceHandle getHandle() const noexcept override;
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override;
-    };
-
-    class LLVMSymbol final : public KernelSymbol {
-    private:
-        SharedPtr<ResourceInstance> mInstance;
-
-    public:
-        LLVMSymbol(PiperContext& context, SharedPtr<const LLVMKernel> kernel, String symbol)
-            : KernelSymbol{ context }, mInstance{ makeSharedObject<LLVMSymbolInstance>(context, std::move(kernel),
-                                                                                       std::move(symbol)) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context*) override {
-            return mInstance;
-        }
-    };
-
     class LLVMKernel final : public Kernel, public eastl::enable_shared_from_this<LLVMKernel> {
     private:
         Future<std::unique_ptr<llvm::orc::LLJIT>> mJIT;
+        String mEntry;
 
     public:
-        LLVMKernel(PiperContext& context, Future<std::unique_ptr<llvm::orc::LLJIT>> JIT)
-            : Kernel{ context }, mJIT{ std::move(JIT) } {}
+        LLVMKernel(PiperContext& context, Future<std::unique_ptr<llvm::orc::LLJIT>> JIT, String entry)
+            : Kernel{ context }, mJIT{ std::move(JIT) }, mEntry{ std::move(entry) } {}
         SharedPtr<ResourceInstance> requireInstance(Context*) override {
             context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
             return nullptr;
         }
-        void* lookUpSync(const String& symbol) const {
+        void* lookUpSync() const {
             return reinterpret_cast<void*>(
-                getLLVMResult(context(), PIPER_SOURCE_LOCATION(), mJIT.getSync()->lookup(symbol.c_str())).getAddress());
+                getLLVMResult(context(), PIPER_SOURCE_LOCATION(), mJIT.getSync()->lookup(mEntry.c_str())).getAddress());
         }
         SharedPtr<FutureImpl> getFuture() const {
             return mJIT.raw();
         }
-        [[nodiscard]] SharedPtr<KernelSymbol> lookUp(String symbol) const override {
-            return makeSharedObject<LLVMSymbol>(context(), shared_from_this(), std::move(symbol));
-        }
     };
-
-    ResourceHandle LLVMSymbolInstance::getHandle() const noexcept {
-        if(!mLazy) {
-            mLazy = mKernel->lookUpSync(mSymbol);
-        }
-        return reinterpret_cast<ResourceHandle>(mLazy);
-    }
-
-    SharedPtr<FutureImpl> LLVMSymbolInstance::getFuture() const noexcept {
-        return mKernel->getFuture();
-    }
 
     class BufferInstance final : public ResourceInstance {
     private:
         Allocator& mAllocator;
         Ptr mPtr;
-        size_t mSize;
         Future<void> mFuture;
 
     public:
         BufferInstance(PiperContext& context, const size_t size, const size_t alignment, Function<void, Ptr> prepare)
             : ResourceInstance{ context }, mAllocator{ context.getAllocator() }, mPtr{ mAllocator.alloc(size, alignment) },
-              mSize{ size }, mFuture{ context.getScheduler().spawn([this, func = std::move(prepare)] { func(mPtr); }) } {}
+              mFuture{ context.getScheduler().spawn([this, func = std::move(prepare)] { func(mPtr); }) } {}
         ~BufferInstance() override {
             mAllocator.free(mPtr);
         }
@@ -212,16 +170,16 @@ namespace Piper {
         ~TiledBufferInstance() override {
             mAllocator.free(mPtr);
         }
-        SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
             return mFuture;
         }
-        ResourceHandle getHandle() const noexcept override {
+        [[nodiscard]] ResourceHandle getHandle() const noexcept override {
             return mPtr;
         }
         void setFuture(SharedPtr<FutureImpl> future) {
             mFuture = std::move(future);
         }
-        Future<Binary> download() const {
+        [[nodiscard]] Future<Binary> download() const {
             return context().getScheduler().spawn(
                 [this](PlaceHolder) {
                     const auto beg = reinterpret_cast<std::byte*>(mPtr);
@@ -321,7 +279,7 @@ namespace Piper {
             }
             for(auto&& [idx, lut] : children) {
                 handles[idx] = handles.size();
-                collect(futures, handles, offsets, outputs);
+                lut->collect(futures, handles, offsets, outputs);
             }
         }
     };
@@ -359,7 +317,7 @@ namespace Piper {
         }
         [[nodiscard]] SharedPtr<Kernel> compileKernel(const Span<LinkableProgram>& linkable,
                                                       UMap<String, String> staticRedirectedSymbols,
-                                                      DynamicArray<String> dynamicSymbols) override {
+                                                      DynamicArray<String> dynamicSymbols, String entryFunction) override {
             DynamicArray<Future<SharedPtr<PITU>>> modules{ context().getAllocator() };
             modules.reserve(linkable.size() + 1);
             USet<size_t> hashPool{ context().getAllocator() };
@@ -463,17 +421,16 @@ namespace Piper {
                     return engine;
                 },
                 linked);
-            return makeSharedObject<LLVMKernel>(context(), std::move(engine));
+            return makeSharedObject<LLVMKernel>(context(), std::move(engine), std::move(entryFunction));
         }
-        Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+        Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
                                       SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) override {
             // TODO: for small n,run in this thread
             const auto blockCount = grid.x * grid.y * grid.z;
             const auto taskPerBlock = block.x * block.y * block.z;
 
             auto& scheduler = context().getScheduler();
-            // TODO: reduce copy
-            auto func = kernel->requireInstance(nullptr);
+            auto func = eastl::dynamic_shared_pointer_cast<LLVMKernel>(kernel);
 
             DynamicArray<SharedPtr<FutureImpl>> futures{ { func->getFuture() }, context().getAllocator() };
             DynamicArray<ResourceHandle> handles{ context().getAllocator() };
@@ -493,7 +450,7 @@ namespace Piper {
                     context(),
                     [taskPerBlock, handles = std::move(handles), input = std::move(args), grid, block, call = std::move(func),
                      ref = std::move(root), kernelRef = std::move(kernel)](const uint32_t idx) {
-                        const auto address = call->getHandle();
+                        const auto address = call->lookUpSync();
 
                         TaskContextImplEx ctxEx{ { grid,
                                                    { idx / grid.z / grid.y, idx / grid.z % grid.y, idx % grid.z },
@@ -510,7 +467,7 @@ namespace Piper {
                         for(auto& i = ctx.blockIndex.x = 0; i < block.x; ++i)
                             for(auto& j = ctx.blockIndex.y = 0; j < block.y; ++j)
                                 for(auto& k = ctx.blockIndex.z = 0; k < block.z; ++k, ++ctx.blockLinearIndex, ++ctx.index) {
-                                    reinterpret_cast<KernelProtocol>(address)(reinterpret_cast<TaskContext>(&ctx));
+                                    static_cast<KernelProtocol>(address)(reinterpret_cast<TaskContext>(&ctx));
                                 }
                     } },
                 { futures.data(), futures.size() }, future);

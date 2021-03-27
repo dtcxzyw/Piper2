@@ -35,7 +35,7 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     std::mt19937_64 RNG(Clock::now().time_since_epoch().count());
     std::uniform_real_distribution<Float> URD{ 0.0f, 1.0f };
     // Convolution
-    constexpr uint32_t width = 4096, height = 2160, kernelSize = 63, count = width * height;
+    constexpr uint32_t width = 8192, height = 1024, kernelSize = 63, count = width * height;
     Piper::DynamicArray<Float> X{ count, context.getAllocator() };
     std::generate(X.begin(), X.end(), [&] { return URD(RNG); });
     Piper::DynamicArray<Float> Y{ kernelSize * kernelSize, context.getAllocator() };
@@ -56,14 +56,14 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     auto conv = context.getPITUManager().loadPITU("conv.bc");
     auto linkable = PIPER_FUTURE_CALL(conv, generateLinkable)(accelerator->getSupportedLinkableFormat()).getSync();
 
-    auto kernel = accelerator->compileKernel(Piper::Span<Piper::LinkableProgram>{ &linkable, 1 },
-                                             Piper::UMap<Piper::String, Piper::String>{ context.getAllocator() },
-                                             Piper::DynamicArray<Piper::String>{ context.getAllocator() });
+    auto kernel = accelerator->compileKernel(
+        Piper::Span<Piper::LinkableProgram>{ &linkable, 1 }, Piper::UMap<Piper::String, Piper::String>{ context.getAllocator() },
+        Piper::DynamicArray<Piper::String>{ context.getAllocator() }, Piper::String{ "convEntry", context.getAllocator() });
     // TODO:better interface
     auto lut = accelerator->createResourceLUT({ { devX, devY, devZ }, context.getAllocator() });
 
-    auto _ = accelerator->launchKernel(Piper::Dim3{ width, 1, 1 }, Piper::Dim3{ height, 1, 1 }, kernel->lookUp("convEntry"),
-                                       std::move(lut), width, height, kernelSize);
+    auto _ = accelerator->launchKernel(Piper::Dim3{ width, 1, 1 }, Piper::Dim3{ height, 1, 1 }, kernel, std::move(lut), width,
+                                       height, kernelSize);
 
     auto dataZ = devZ->download().getSync();
 
@@ -89,15 +89,19 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
                       PIPER_SOURCE_LOCATION());
 
     const auto* Z = reinterpret_cast<const Float*>(dataZ.data());
-    for(Piper::Index i = 0; i < count; ++i)
+    for(Piper::Index i = 0; i < count; ++i) {
         ASSERT_FLOAT_EQ(Z[i], standard[i]);
+    }
 }
 
+// TODO: static binding
+// TODO: dynamic binding
 void generalAcceleratorTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator) {
     convolutionTest(context, accelerator);
 }
 
-TEST_F(PiperCoreEnvironment, LLVM_CPU) {
+
+TEST_F(PiperCoreEnvironment, CPU) {
     auto& loader = context->getModuleLoader();
     contextOwner->setScheduler(loader.newInstanceT<Piper::Scheduler>("Piper.Infrastructure.Squirrel.Scheduler").getSync());
     auto manager = loader.newInstanceT<Piper::PITUManager>("Piper.Infrastructure.LLVMIR.LLVMIRManager");
@@ -106,7 +110,6 @@ TEST_F(PiperCoreEnvironment, LLVM_CPU) {
     generalAcceleratorTest(*context, accelerator.getSync());
 }
 
-/*
 TEST_F(PiperCoreEnvironment, CUDA) {
     auto& loader = context->getModuleLoader();
     contextOwner->setScheduler(loader.newInstanceT<Piper::Scheduler>("Piper.Infrastructure.Squirrel.Scheduler").getSync());
@@ -115,7 +118,6 @@ TEST_F(PiperCoreEnvironment, CUDA) {
     auto accelerator = loader.newInstanceT<Piper::Accelerator>("Piper.Infrastructure.CUDAWrapper.Accelerator");
     generalAcceleratorTest(*context, accelerator.getSync());
 }
-*/
 
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);

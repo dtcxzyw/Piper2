@@ -54,9 +54,18 @@ namespace Piper {
     class CUDAContext;
     class CUDAAccelerator;
 
-    static void checkCUDAResult(PiperContext& context, const SourceLocation& loc, const CUresult res) {
-        if(res == CUDA_SUCCESS)
+    static void checkCUDAResult(PiperContext& context, const SourceLocation& loc, CUresult res) {
+        if(res == CUDA_SUCCESS) {
+            /*
+            // TODO: block option
+            CUcontext ctx = nullptr;
+            cuCtxGetCurrent(&ctx);
+            if(ctx)
+                res = cuCtxSynchronize();
+            if(res == CUDA_SUCCESS)
+            */
             return;
+        }
         auto name = "UNKNOWN", str = "Unknown error";
         cuGetErrorName(res, &name);
         cuGetErrorString(res, &str);
@@ -90,9 +99,6 @@ namespace Piper {
         CUDAFuture(PiperContext& context, CUDAContext* ctx, SharedPtr<FutureImpl> commitFuture)
             : FutureImpl{ context }, mExecute{ ctx, nullptr }, mCommitFuture{ std::move(commitFuture) } {}
         Pair<CUDAContext*, CUstream> getExecute() const noexcept {
-            if(!mExecute.second)
-                context().getErrorHandler().unreachable(PIPER_SOURCE_LOCATION());
-
             return mExecute;
         }
         void committed(const CUstream stream, UniquePtr<CUevent_st, EventDeleter> event) noexcept {
@@ -160,10 +166,12 @@ namespace Piper {
                                                const auto stream = selectOne().first;
 
                                                auto guard = makeCurrent();
-                                               for(auto&& event : wait)
-                                                   checkCUDAResult(
-                                                       context(), PIPER_SOURCE_LOCATION(),
-                                                       cuStreamWaitEvent(stream, event->getEvent(), CU_EVENT_WAIT_DEFAULT));
+                                               for(auto&& event : wait) {
+                                                   const auto handle = event->getEvent();
+                                                   if(handle)
+                                                       checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
+                                                                       cuStreamWaitEvent(stream, handle, CU_EVENT_WAIT_DEFAULT));
+                                               }
                                                callable(mCUDAContext, stream, const_cast<void*>(ptr));
                                                cf->committed(stream, acquireEvent(stream));
                                            } },
@@ -243,7 +251,7 @@ namespace Piper {
 
             // TODO: dynamic streams
             // TODO: better selection
-            const std::uniform_int_distribution<size_t> gen(0, mStreams.size() - 1);
+            const std::uniform_int_distribution<size_t> gen{ 0, mStreams.size() - 1 };
             return makePair(mStreams[gen(mRandomEngine)], false);
         }
 
@@ -257,8 +265,8 @@ namespace Piper {
                 const auto status = cuEventQuery(event);
                 if(status != CUDA_SUCCESS) {
                     if(status == CUDA_ERROR_NOT_READY) {
-                        event = nullptr;
                         mRecycledEvents.push_back(event);
+                        event = nullptr;
                     } else {
                         checkCUDAResult(context(), PIPER_SOURCE_LOCATION(), status);
                     }
@@ -316,92 +324,111 @@ namespace Piper {
 
     class CUDAKernelInstance final : public ResourceInstance {
     private:
-        CUDAContext& mContext;
         Future<UniquePtr<CUmod_st, ModuleDeleter>> mModule;
 
     public:
-        CUDAKernelInstance(PiperContext& context, CUDAContext& ctx, Future<UniquePtr<CUmod_st, ModuleDeleter>> module)
-            : ResourceInstance{ context }, mContext{ ctx }, mModule{ std::move(module) } {}
+        CUDAKernelInstance(PiperContext& context, Future<UniquePtr<CUmod_st, ModuleDeleter>> module)
+            : ResourceInstance{ context }, mModule{ std::move(module) } {}
         SharedPtr<FutureImpl> getFuture() const noexcept override {
             return mModule.raw();
         }
         ResourceHandle getHandle() const noexcept override {
-            context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
-            return 0;
-        }
-        // TODO: Is the address of one device function callable in the device?
-        CUfunction lookUpSync(const String& symbol) const {
-            auto&& module = mModule.getSync();
-            auto guard = mContext.makeCurrent();
-            CUfunction func;
-            checkCUDAResult(context(), PIPER_SOURCE_LOCATION(), cuModuleGetFunction(&func, module.get(), symbol.c_str()));
-            // TODO: support global symbol lookup?
-            return func;
+            return reinterpret_cast<ResourceHandle>(mModule.getSync().get());
         }
     };
 
     static UniquePtr<CUmod_st, ModuleDeleter> compileKernel(CUDAContext* ctx, const Binary& binary) {
+        auto&& logger = ctx->context().getLogger();
+        if(logger.allow(LogLevel::Debug))
+            logger.record(LogLevel::Debug, StringView{ reinterpret_cast<CString>(binary.data()), binary.size() },
+                          PIPER_SOURCE_LOCATION());
+
         auto guard = ctx->makeCurrent();
         auto&& context = ctx->context();
 
         CUlinkState linkJIT;
-        char logBuffer[1024];
+        char errorBuffer[8192], infoBuffer[8192];
 
-        CUjit_option options[] = { CU_JIT_ERROR_LOG_BUFFER, CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES, CU_JIT_CACHE_MODE };
-        void* logBufferPtr = logBuffer;
-        auto logBufferSize = static_cast<unsigned>(std::size(logBuffer));
-        auto cacheMode = CU_JIT_CACHE_OPTION_CA;
-        void* values[] = { &logBufferPtr, &logBufferSize, &cacheMode };
+        CUjit_option options[] = { CU_JIT_ERROR_LOG_BUFFER, CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES, CU_JIT_INFO_LOG_BUFFER,
+                                   CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES, CU_JIT_LOG_VERBOSE };
+        void* errorBufferPtr = errorBuffer;
+        void* infoBufferPtr = infoBuffer;
+        auto errorBufferSize = static_cast<ptrdiff_t>(std::size(errorBuffer));
+        auto infoBufferSize = static_cast<ptrdiff_t>(std::size(infoBuffer));
+        void* values[] = { errorBufferPtr, reinterpret_cast<void*>(errorBufferSize), infoBufferPtr,
+                           reinterpret_cast<void*>(infoBufferSize), reinterpret_cast<void*>(static_cast<ptrdiff_t>(1)) };
         static_assert(std::size(options) == std::size(values));
         checkCUDAResult(context, PIPER_SOURCE_LOCATION(),
                         cuLinkCreate(static_cast<unsigned>(std::size(options)), options, values, &linkJIT));
         auto JITDeleter = gsl::finally([&] { checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuLinkDestroy(linkJIT)); });
 
+#define GENERATE_BUILTIN_IMPL(PA, PB, PC) PA "X" PB "x" PC PA "Y" PB "y" PC PA "Z" PB "z" PC
+#define GENERATE_BUILTIN(NAME, REG) \
+    GENERATE_BUILTIN_IMPL(".visible .func (.reg .u32 %res) " NAME, "()\n{\n    mov.u32 %res, " REG ".", ";\n    ret;\n}\n")
+
+        constexpr auto entry = R"(
+.version 7.2
+.target sm_50
+.address_size 64
+)"
+
+            GENERATE_BUILTIN("blockIdx", "%ctaid") GENERATE_BUILTIN("blockDim", "%ntid") GENERATE_BUILTIN("gridDim", "%nctaid")
+                GENERATE_BUILTIN("threadIdx", "%tid")
+
+                    R"(
+.extern .func realEntry
+(
+	.param .b64 param0
+)
+;
+
+.visible .entry cudaEntry(
+  .param .b64 context
+)
+{
+	.reg .b64 rd0;
+	ld.param.b64 rd0, [context];
+
+	{
+	.param .b64 param0;
+	st.param.b64 	[param0+0], rd0;
+
+	call.uni 
+	realEntry, 
+	(
+	param0
+	);
+	}
+	ret;
+}
+        )";
+
+#undef GENERATE_BUILTIN
+#undef GENERATE_BUILTIN_IMPL
+
+        checkCUDAResult(
+            context, PIPER_SOURCE_LOCATION(),
+            cuLinkAddData(linkJIT, CU_JIT_INPUT_PTX, const_cast<char*>(entry), strlen(entry) + 1, "Entry", 0, nullptr, nullptr));
         checkCUDAResult(context, PIPER_SOURCE_LOCATION(),
-                        cuLinkAddData(linkJIT, CU_JIT_INPUT_PTX, const_cast<std::byte*>(binary.data()), binary.size(),
-                                      "Unnamed" /* TODO: name of linkable*/, 0, nullptr, nullptr));
+                        cuLinkAddData(linkJIT, CU_JIT_INPUT_PTX, const_cast<std::byte*>(binary.data()), binary.size(), "Program",
+                                      0, nullptr, nullptr));
 
         void* cubin = nullptr;
         size_t size = 0;
         checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuLinkComplete(linkJIT, &cubin, &size));
 
+        if(errorBuffer[0] != '\0' && logger.allow(LogLevel::Error))
+            logger.record(LogLevel::Error, errorBuffer, PIPER_SOURCE_LOCATION());
+
+        if(infoBuffer[0] != '\0' && logger.allow(LogLevel::Info))
+            logger.record(LogLevel::Info, infoBuffer, PIPER_SOURCE_LOCATION());
+
+        // String ptx{ reinterpret_cast<CString>(binary.data()), binary.size(), ctx->context().getAllocator() };
         CUmodule mod;
         checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuModuleLoadData(&mod, cubin));
+
         return UniquePtr<CUmod_st, ModuleDeleter>{ mod, ModuleDeleter{ *ctx } };
     }
-
-    class CUDAKernel;
-
-    class CUDASymbolInstance final : public ResourceInstance {
-    private:
-        SharedPtr<CUDAKernelInstance> mKernel;
-        String mSymbol;
-        mutable CUfunction mLazy;
-
-    public:
-        CUDASymbolInstance(PiperContext& context, SharedPtr<CUDAKernelInstance> kernel, String symbol)
-            : ResourceInstance{ context }, mKernel{ std::move(kernel) }, mSymbol{ std::move(symbol) }, mLazy{ nullptr } {}
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
-            return mKernel->getFuture();
-        }
-        [[nodiscard]] ResourceHandle getHandle() const noexcept override {
-            if(!mLazy) {
-                mLazy = mKernel->lookUpSync(mSymbol);
-            }
-            return reinterpret_cast<ResourceHandle>(mLazy);
-        }
-    };
-
-    class CUDASymbol final : public KernelSymbol {
-    private:
-        SharedPtr<CUDAKernel> mKernel;
-        String mSymbol;
-
-    public:
-        CUDASymbol(PiperContext& context, SharedPtr<CUDAKernel> kernel, String symbol)
-            : KernelSymbol{ context }, mKernel{ std::move(kernel) }, mSymbol{ std::move(symbol) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context* ctx) override;
-    };
 
     // TODO: cache kernel using PTX Compiler APIs
     class CUDAKernel final : public Kernel, public eastl::enable_shared_from_this<CUDAKernel> {
@@ -411,24 +438,16 @@ namespace Piper {
         std::shared_mutex mMutex;
 
     public:
-        CUDAKernel(PiperContext& context, Future<Binary> binary) : Kernel{ context }, mBinary{ std::move(binary) } {}
+        CUDAKernel(PiperContext& context, Future<Binary> binary)
+            : Kernel{ context }, mBinary{ std::move(binary) }, mInstances{ context.getAllocator() } {}
         SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
             return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
                 auto&& scheduler = context().getScheduler();
                 auto cudaCtx = dynamic_cast<CUDAContext*>(ctx);
-                return makeSharedObject<CUDAKernelInstance>(context(), *cudaCtx,
-                                                            scheduler.spawn(compileKernel, cudaCtx, mBinary));
+                return makeSharedObject<CUDAKernelInstance>(context(), scheduler.spawn(compileKernel, cudaCtx, mBinary));
             });
         }
-        SharedPtr<KernelSymbol> lookUp(String symbol) const override {
-            return makeSharedObject<CUDASymbol>(context(), const_cast<CUDAKernel*>(this)->shared_from_this(), std::move(symbol));
-        }
     };
-
-    SharedPtr<ResourceInstance> CUDASymbol::requireInstance(Context* ctx) {
-        return makeSharedObject<CUDASymbolInstance>(
-            context(), eastl::dynamic_shared_pointer_cast<CUDAKernelInstance>(mKernel->requireInstance(ctx)), mSymbol);
-    }
 
     void EventDeleter::operator()(const CUevent event) const {
         auto guard = context->makeCurrent();
@@ -480,14 +499,14 @@ namespace Piper {
     class CUDABufferInstance final : public ResourceInstance {
     private:
         CUDAContext& mContext;
-        Future<Pair<CUdeviceptr, CUdeviceptr>> mPtr;
+        Optional<Future<Pair<CUdeviceptr, CUdeviceptr>>> mPtr;  // deferred construction
         SharedPtr<FutureImpl> mFuture;
 
     public:
         CUDABufferInstance(PiperContext& context, CUDAContext& ctx, const size_t size, const size_t alignment,
                            Function<void, Ptr> prepare)
-            : ResourceInstance{ context }, mContext{ ctx }, mPtr{ nullptr } {
-            const auto src = context.getScheduler().spawn([this, &ctx, &context, size, func = std::move(prepare)] {
+            : ResourceInstance{ context }, mContext{ ctx }, mPtr{ eastl::nullopt } {
+            auto src = context.getScheduler().spawn([this, &ctx, &context, size, func = std::move(prepare)] {
                 void* ptr;
                 {
                     auto guard = ctx.makeCurrent();
@@ -511,12 +530,13 @@ namespace Piper {
                 {});
 
             mFuture = ctx.spawn(
-                             [this, &context, ptr = mPtr.getUnsafe().first, size,
-                              source = &src.getUnsafe()](CUcontext, const CUstream stream) {
-                                 checkCUDAResult(context, PIPER_SOURCE_LOCATION(),
-                                                 cuMemcpyHtoDAsync(static_cast<CUdeviceptr>(ptr), source->get(), size, stream));
+                             [this, &context, ptr = mPtr->getUnsafe().first, size,
+                              source = std::move(src)](CUcontext, const CUstream stream) {
+                                 checkCUDAResult(
+                                     context, PIPER_SOURCE_LOCATION(),
+                                     cuMemcpyHtoDAsync(static_cast<CUdeviceptr>(ptr), source.getUnsafe().get(), size, stream));
                              },
-                             { { mPtr.raw(), src.raw() }, context.getAllocator() })
+                             { { mPtr->raw(), src.raw() }, context.getAllocator() })
                           .raw();
         }
 
@@ -528,12 +548,12 @@ namespace Piper {
             }
             auto guard = mContext.makeCurrent();
             // NOTICE: no future
-            checkCUDAResult(context(), PIPER_SOURCE_LOCATION(), cuMemFreeAsync(mPtr.getUnsafe().second, stream));
+            checkCUDAResult(context(), PIPER_SOURCE_LOCATION(), cuMemFreeAsync(mPtr->getUnsafe().second, stream));
         }
         [[nodiscard]] ResourceHandle getHandle() const noexcept override {
-            return mPtr.getUnsafe().first;
+            return mPtr->getUnsafe().first;
         }
-        SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
             return mFuture;
         }
     };
@@ -555,13 +575,13 @@ namespace Piper {
     class CUDATiledBufferInstance final : public ResourceInstance {
     private:
         CUDAContext& mContext;
-        Future<Pair<CUdeviceptr, CUdeviceptr>> mPtr;
+        Optional<Future<Pair<CUdeviceptr, CUdeviceptr>>> mPtr;
         size_t mSize;
         SharedPtr<FutureImpl> mFuture;
 
     public:
         CUDATiledBufferInstance(PiperContext& context, CUDAContext& ctx, const size_t size, const size_t alignment)
-            : ResourceInstance{ context }, mContext{ ctx }, mPtr{ nullptr }, mSize{ size } {
+            : ResourceInstance{ context }, mContext{ ctx }, mPtr{ eastl::nullopt }, mSize{ size } {
             mPtr = ctx.spawn(
                 [&context, size, alignment](CUcontext, const CUstream stream) {
                     CUdeviceptr ptr;
@@ -575,18 +595,19 @@ namespace Piper {
                     return makePair(aligned, ptr);
                 },
                 {});
-            mFuture = mPtr.raw();
+            mFuture = mPtr->raw();
         }
         void setFuture(SharedPtr<FutureImpl> future) {
             mFuture = std::move(future);
         }
-        ResourceHandle getHandle() const noexcept override {
-            return mPtr.getUnsafe().first;
+        [[nodiscard]] ResourceHandle getHandle() const noexcept override {
+            return mPtr->getUnsafe().first;
         }
-        SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
             return mFuture;
         }
-        Future<Binary> download() const {
+
+        [[nodiscard]] Future<Binary> download() const {
             return mContext.spawn(
                 [this, ptr = getHandle()](CUcontext, const CUstream stream) {
                     Binary res{ mSize, context().getAllocator() };
@@ -650,7 +671,7 @@ namespace Piper {
             }
             for(auto&& [idx, lut] : children) {
                 handles[idx] = handles.size();
-                collect(futures, handles, outputs);
+                lut->collect(futures, handles, outputs);
             }
         }
     };
@@ -663,7 +684,7 @@ namespace Piper {
 
     public:
         ResourceLookUpTableImpl(PiperContext& context, DynamicArray<SharedPtr<Resource>> resources)
-            : ResourceLookUpTable{ context }, mResources{ std::move(resources) } {}
+            : ResourceLookUpTable{ context }, mResources{ std::move(resources) }, mInstances{ context.getAllocator() } {}
         SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
             return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
                 return makeSharedObject<ResourceLookUpTableInstance>(context(), ctx, mResources);
@@ -676,14 +697,20 @@ namespace Piper {
         DynamicArray<UniquePtr<CUDAContext>> mContexts;
         DynamicArray<Context*> mContextReference;
         RandomEngine mRandomEngine;
-        Future<SharedPtr<PITU>> mLibDeviceBitcode;
+        Future<SharedPtr<PITU>> mLibDeviceBitcode, mKernel;
 
     public:
         explicit CUDAAccelerator(PiperContext& context, const String& path, const SharedPtr<Config>& config)
             : Accelerator{ context }, mContexts{ context.getAllocator() }, mContextReference{ context.getAllocator() },
               mRandomEngine{ static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()) },
-              mLibDeviceBitcode{ context.getPITUManager().loadPITU(path + "/libdevice.10.bc") } {
-            const auto streams = static_cast<uint32_t>(config->at("Streams")->get<uintmax_t>());
+              mLibDeviceBitcode{ context.getPITUManager().loadPITU(path + "/libdevice.10.bc") }, mKernel{
+                  context.getPITUManager().loadPITU(path + "/Kernel.bc")
+              } {
+            uint32_t streams = 0;
+            auto&& attr = config->viewAsObject();
+            const auto iter = attr.find(String{ "Steams", context.getAllocator() });
+            if(iter != attr.cend())
+                streams = static_cast<uint32_t>(iter->second->get<uintmax_t>());
             int count;
             checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuDeviceGetCount(&count));
             if(count == 0)
@@ -750,9 +777,12 @@ namespace Piper {
         }
         [[nodiscard]] SharedPtr<Kernel> compileKernel(const Span<LinkableProgram>& linkable,
                                                       UMap<String, String> staticRedirectedSymbols,
-                                                      DynamicArray<String> dynamicSymbols) override {
+                                                      DynamicArray<String> dynamicSymbols, String entryFunction) override {
+            staticRedirectedSymbols.insert(makePair(String{ "realEntry", context().getAllocator() }, std::move(entryFunction)));
+
             DynamicArray<Future<SharedPtr<PITU>>> modules{ context().getAllocator() };
-            modules.reserve(linkable.size() + 1);
+            modules.reserve(linkable.size() + 2);
+            modules.push_back(mKernel);
             modules.push_back(mLibDeviceBitcode);
             USet<uint64_t> inserted{ context().getAllocator() };
 
@@ -768,15 +798,13 @@ namespace Piper {
 
             auto linked =
                 context().getPITUManager().linkPITU(modules, std::move(staticRedirectedSymbols), std::move(dynamicSymbols));
-            // TODO: optimize
-
             // TODO: concurrency
-            auto ptx = linked.getSync()->generateLinkable({ { "NVIDIA PTX" } });
+            auto ptx = linked.getSync()->generateLinkable({ { "nvptx64" } });
 
             return makeSharedObject<CUDAKernel>(context(), eastl::get<Future<Binary>>(ptx.exchange));
         }
 
-        [[nodiscard]] Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<KernelSymbol> kernel,
+        [[nodiscard]] Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
                                                     SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) override {
 
             // TODO: launch on multi-GPU
@@ -793,23 +821,25 @@ namespace Piper {
             eastl::dynamic_shared_pointer_cast<ResourceLookUpTableInstance>(root->requireInstance(ctx))
                 ->collect(futures, handles, outputs);
 
-            auto launchBuffer = createBuffer(
-                args.data.size() + args.offset.size() * sizeof(decltype(args.offset)::value_type) + sizeof(uint32_t) * 2 +
-                    handles.size() * sizeof(ResourceHandle),
-                128, [params = std::move(args), handleBuffer = std::move(handles)](Ptr ptr) {
-                    const auto origin = ptr;
-                    const auto resourceOffset = reinterpret_cast<uint32_t*>(ptr);
+            const auto bufferSize = args.data.size() + args.offset.size() * sizeof(decltype(args.offset)::value_type) +
+                sizeof(uint32_t) * 2 + handles.size() * sizeof(ResourceHandle);
+            auto launchBuffer =
+                createBuffer(bufferSize, 128, [params = std::move(args), handleBuffer = std::move(handles)](Ptr ptr) {
+                    // header
+                    const auto handleBufferSize = static_cast<uint32_t>(handleBuffer.size() * sizeof(ResourceHandle));
+                    *reinterpret_cast<uint32_t*>(ptr) = handleBufferSize + 2 * sizeof(uint32_t);
                     ptr += sizeof(uint32_t);
-                    // argument params
-                    const auto offset = params.offset.size() * sizeof(decltype(params.offset)::value_type);
-                    *reinterpret_cast<uint32_t*>(ptr) = static_cast<uint32_t>(offset + sizeof(uint32_t));
+                    const auto offsetBufferSize =
+                        static_cast<uint32_t>(params.offset.size() * sizeof(decltype(params.offset)::value_type));
+                    *reinterpret_cast<uint32_t*>(ptr) = handleBufferSize + offsetBufferSize + 2 * sizeof(uint32_t);
                     ptr += sizeof(uint32_t);
-                    memcpy(reinterpret_cast<void*>(ptr), params.offset.data(), offset);
-                    ptr += offset;
-                    memcpy(reinterpret_cast<void*>(ptr), params.data.data(), params.data.size());
                     // resource handles
-                    *resourceOffset = static_cast<uint32_t>(ptr - origin);
                     memcpy(reinterpret_cast<void*>(ptr), handleBuffer.data(), handleBuffer.size() * sizeof(ResourceHandle));
+                    ptr += handleBufferSize;
+                    // argument params
+                    memcpy(reinterpret_cast<void*>(ptr), params.offset.data(), offsetBufferSize);
+                    ptr += offsetBufferSize;
+                    memcpy(reinterpret_cast<void*>(ptr), params.data.data(), params.data.size());
                 });
 
             auto launchBufferInstance = launchBuffer->requireInstance(ctx);
@@ -821,17 +851,31 @@ namespace Piper {
                         launchBufferRef = std::move(launchBuffer), kernelRef = std::move(kernel),
                         launchContextHandle = launchBufferInstance->getHandle()](CUcontext, const CUstream stream) {
                            auto launchParamBufferData = launchContextHandle;
-                           auto bufferSize = sizeof(launchContextHandle);
-                           void* launchConfig[] = { CU_LAUNCH_PARAM_BUFFER_POINTER, &launchParamBufferData,
-                                                    CU_LAUNCH_PARAM_BUFFER_SIZE, &bufferSize, CU_LAUNCH_PARAM_END };
-                           const auto cudaFunction = reinterpret_cast<CUfunction>(func->getHandle());
+                           void* kernelParams[] = { &launchParamBufferData };
+                           const auto module = reinterpret_cast<CUmodule>(func->getHandle());
+                           CUfunction cudaFunction;
+                           checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
+                                           cuModuleGetFunction(&cudaFunction, module, "cudaEntry"));
                            checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
                                            cuFuncSetAttribute(cudaFunction, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, 0));
                            checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
                                            cuFuncSetCacheConfig(cudaFunction, CU_FUNC_CACHE_PREFER_L1));
+                           // TODO: set stack size
+
+                           // TODO: better implementation
+                           {
+                               CUdevice device;
+                               checkCUDAResult(context(), PIPER_SOURCE_LOCATION(), cuCtxGetDevice(&device));
+                               int limit;
+                               checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
+                                               cuDeviceGetAttribute(&limit, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, device));
+                               if(static_cast<uint32_t>(limit) < block.x * block.y * block.z)
+                                   context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
+                           }
+
                            checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
                                            cuLaunchKernel(cudaFunction, grid.x, grid.y, grid.z, block.x, block.y, block.z, 0,
-                                                          stream, nullptr, launchConfig));
+                                                          stream, kernelParams, nullptr));
                        },
                        futures)
                     .raw();
@@ -847,8 +891,7 @@ namespace Piper {
             return makeSharedObject<CUDABuffer>(context(), *mContexts.front(), size, alignment, std::move(prepare));
         }
         SharedPtr<ResourceLookUpTable> createResourceLUT(DynamicArray<SharedPtr<Resource>> resources) override {
-            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
-            return nullptr;
+            return makeSharedObject<ResourceLookUpTableImpl>(context(), std::move(resources));
         }
         SharedPtr<TiledOutput> createTiledOutput(const size_t size, const size_t alignment) override {
             return makeSharedObject<CUDATiledBuffer>(context(), *mContexts.front(), size, alignment);

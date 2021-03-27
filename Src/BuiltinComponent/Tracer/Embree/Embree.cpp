@@ -1010,8 +1010,8 @@ namespace Piper {
             }
 
             auto lut = mAccelerator.createResourceLUT(std::move(fullResources));
-            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ arg.sampleCount, 1, 1 },
-                                             mKernel->lookUp(String{ "piperMain" }), std::move(lut), arg);
+            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ arg.sampleCount, 1, 1 }, mKernel,
+                                             std::move(lut), arg);
         }
         [[nodiscard]] RenderRECT getRenderRECT() const noexcept override {
             return *reinterpret_cast<const RenderRECT*>(&mArg.fullRect);
@@ -1253,7 +1253,8 @@ namespace Piper {
             }
 
             mKernel = mAccelerator.compileKernel(Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
-                                                 std::move(staticBinding), std::move(callSymbol));
+                                                 std::move(staticBinding), std::move(callSymbol),
+                                                 String{ "piperMain", context.getAllocator() });
 
             mArg.callInfo = mSBTData.data();
 

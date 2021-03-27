@@ -95,7 +95,7 @@ namespace Piper {
         KernelArgument argument;
         TaskContext ctx;
         ResourceHandle root;
-        void** symbolLUT;
+        int8_t** symbolLUT;
         Time<float> time;
         uint32_t currentDimension;
         uint64_t sampleIndex;

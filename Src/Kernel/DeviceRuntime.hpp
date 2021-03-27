@@ -42,7 +42,7 @@ namespace Piper {
     void piperGetRootResourceLUT(TaskContext context, ResourceHandle& handle);
     void piperLookUpResourceHandle(TaskContext context, ResourceHandle LUT, uint32_t index, ResourceHandle& handle);
 
-    extern void* piperBuiltinSymbolLUT[];
+    extern int8_t* piperBuiltinSymbolLUT[];
 
     // TODO: Atomic Intrinsic
     // TODO: Synchronize Primitive?

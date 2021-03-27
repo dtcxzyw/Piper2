@@ -41,6 +41,9 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #pragma warning(pop)
+#include "../../../STL/Pair.hpp"
+
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/Linker/Linker.h>
 #include <new>
 #include <utility>
@@ -71,17 +74,6 @@ namespace Piper {
         }
     };
 
-    static void verifyLLVMModule(PiperContext& context, llvm::Module& module) {
-        std::string output;
-        llvm::raw_string_ostream out(output);
-        // ReSharper disable once CppRedundantQualifier
-        // NOTICE: return true if the module is broken
-        if(llvm::verifyModule(module, &out)) {
-            out.flush();
-            context.getErrorHandler().raiseException(("Bad module:" + output).c_str(), PIPER_SOURCE_LOCATION());
-        }
-    }
-
     template <typename T>
     auto getLLVMResult(PiperContext& context, const SourceLocation& loc, llvm::Expected<T> value) {
         if(value)
@@ -104,6 +96,30 @@ namespace Piper {
         stream.flush();
         return data;
     }
+    static String module2IR(PiperContext& context, llvm::Module& module) {
+        std::string res;
+        llvm::raw_string_ostream out(res);
+        llvm::legacy::PassManager manager;
+        manager.add(llvm::createPrintModulePass(out));
+        manager.run(module);
+        out.flush();
+        return String{ res.data(), res.size(), context.getAllocator() };
+    }
+
+    static void verifyLLVMModule(PiperContext& context, llvm::Module& module) {
+        std::string output;
+        llvm::raw_string_ostream out(output);
+        // ReSharper disable once CppRedundantQualifier
+        // NOTICE: return true if the module is broken
+        if(llvm::verifyModule(module, &out)) {
+            out.flush();
+            context.getErrorHandler().raiseException(
+                ("Bad module: " + String{ output.data(), output.size(), context.getAllocator() } + "\nLLVM IR:\n" +
+                 module2IR(context, module))
+                    .c_str(),
+                PIPER_SOURCE_LOCATION());
+        }
+    }
 
     class LLVMIR final : public PITU, public eastl::enable_shared_from_this<LLVMIR> {
     private:
@@ -116,13 +132,7 @@ namespace Piper {
         String humanReadable() const override {
             llvm::LLVMContext ctx;
             const auto inst = binary2Module(context(), mModule, ctx);
-            std::string res;
-            llvm::raw_string_ostream out(res);
-            llvm::legacy::PassManager manager;
-            manager.add(llvm::createPrintModulePass(out));
-            manager.run(*inst);
-            out.flush();
-            return String{ res.data(), res.size(), context().getAllocator() };
+            return module2IR(context(), *inst);
         }
         uint64_t getID() const noexcept {
             return mUID;
@@ -150,28 +160,33 @@ namespace Piper {
                                                auto stage = self->context().getErrorHandler().enterStage("generate linkable",
                                                                                                          PIPER_SOURCE_LOCATION());
                                                // TODO:llvm::sys::getHostCPUName();llvm::sys::getHostCPUFeatures();
-                                               const auto* cpu = "generic";
-                                               const auto* features = "";
+                                               // TODO: multi target?
+                                               // const auto* cpu = "generic";
+                                               const auto cpu = "sm_75";
+                                               const auto* features = "+ptx72";
 
                                                llvm::TargetOptions opt;
-                                               auto RM = llvm::Optional<llvm::Reloc::Model>();
-                                               auto* targetMachine = target->createTargetMachine(format, cpu, features, opt, RM);
+
+                                               auto* targetMachine = target->createTargetMachine(
+                                                   "nvptx64-nvidia-cuda", cpu, features, opt, llvm::Reloc::PIC_,
+                                                   llvm::CodeModel::Small, llvm::CodeGenOpt::Aggressive);
 
                                                llvm::LLVMContext ctx;
                                                const auto inst = binary2Module(self->context(), self->mModule, ctx);
 
                                                inst->setDataLayout(targetMachine->createDataLayout());
-                                               inst->setTargetTriple(format);
+                                               inst->setTargetTriple("nvptx64-nvidia-cuda");
 
                                                llvm::legacy::PassManager pass;
                                                Binary data{ self->context().getAllocator() };
                                                LLVMStream stream(self->context(), data);
-                                               if(!(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
-                                                                                       llvm::CodeGenFileType::CGFT_ObjectFile)))
+                                               /// This method should return true if emission of this file type is not
+                                               /// supported, or false on success.
+                                               if(targetMachine->addPassesToEmitFile(pass, stream, nullptr,
+                                                                                     llvm::CodeGenFileType::CGFT_AssemblyFile))
                                                    self->context().getErrorHandler().raiseException(
                                                        "Failed to create object emit pass", PIPER_SOURCE_LOCATION());
                                                pass.run(*inst);
-                                               // TODO: optimize
                                                stream.flush();
                                                return std::move(data);
                                            }),
@@ -230,46 +245,56 @@ namespace Piper {
 
                     stage.next("construct builtin symbol redirect", PIPER_SOURCE_LOCATION());
 
-                    auto findSymbol = [&](const String& symbol) -> llvm::Constant* {
+                    // NOTICE: Global indirect symbol is not supported by NVPTX backend.
+                    auto findSymbol = [&](const String& symbol) -> Pair<llvm::Function*, unsigned> {
                         const llvm::StringRef name{ symbol.data(), symbol.size() };
                         if(const auto func = module->getFunction(name))
-                            return func;
-                        if(const auto var = module->getNamedGlobal(name))
-                            return var;
-                        if(const auto alias = module->getNamedAlias(name))
-                            return alias;
+                            return { func, func->getAddressSpace() };
 
                         errorHandler.raiseException("Undefined symbol \"" + symbol + '\"', PIPER_SOURCE_LOCATION());
                     };
 
                     for(auto&& [dst, src] : SRS) {
-                        const auto symbol = findSymbol(src);
+                        const auto [symbol, addressSpace] = findSymbol(src);
 
-                        if(symbol->getType()->isFunctionTy())
-                            llvm::GlobalIFunc::create(symbol->getType(), 0, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
-                                                      llvm::StringRef{ dst.data(), dst.size() }, symbol, module.get());
+                        const auto func = llvm::Function::Create(
+                            symbol->getFunctionType(), llvm::GlobalValue::LinkageTypes::ExternalLinkage,
+                            symbol->getAddressSpace(), llvm::StringRef{ dst.data(), dst.size() }, module.get());
+                        const auto block = llvm::BasicBlock::Create(*llvmCtx, "", func);
+                        llvm::IRBuilder<> builder{ block };
+                        DynamicArray<llvm::Value*> args{ ctx->getAllocator() };
+                        for(auto&& arg : func->args())
+                            args.push_back(&arg);
+
+                        const auto ret = builder.CreateCall(symbol, llvm::ArrayRef<llvm::Value*>{ args.data(), args.size() });
+                        if(func->getReturnType()->isVoidTy())
+                            builder.CreateRetVoid();
                         else
-                            llvm::GlobalAlias::create(symbol->getType(), 0, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
-                                                      llvm::StringRef{ dst.data(), dst.size() }, symbol, module.get());
+                            builder.CreateRet(ret);
                     }
 
-                    const auto pointer = llvm::Type::getVoidTy(*llvmCtx)->getPointerTo();
-                    const auto arrayType = llvm::ArrayType::get(pointer, DST.size());
                     DynamicArray<llvm::Constant*> symbols{ DST.size(), ctx->getAllocator() };
                     std::transform(DST.cbegin(), DST.cend(), symbols.begin(),
-                                   [&](const String& name) { return findSymbol(name); });
+                                   [&](const String& name) { return findSymbol(name).first; });
+                    const auto pointer = llvm::Type::getInt8PtrTy(*llvmCtx);
+                    if(symbols.empty())
+                        symbols.push_back(llvm::Constant::getNullValue(pointer));
+                    const auto arrayType = llvm::ArrayType::get(pointer, symbols.size());
                     llvm::Constant* values = llvm::ConstantArray::get(
                         arrayType, llvm::ArrayRef<llvm::Constant*>{ symbols.data(), symbols.data() + symbols.size() });
 
-                    // TODO: Is it memory safe?
-                    module->getOrInsertGlobal("piperBuiltinSymbolLUT", arrayType, [&] {
-                        return new llvm::GlobalVariable{ arrayType, true, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
-                                                         values, "piperBuiltinSymbolLUT" };
-                    });
+                    const auto LUT =
+                        llvm::cast<llvm::GlobalVariable>(module->getOrInsertGlobal("piperBuiltinSymbolLUT", arrayType));
+                    LUT->setConstant(true);
+                    LUT->setExternallyInitialized(false);
+                    LUT->setLinkage(llvm::GlobalVariable::LinkageTypes::ExternalLinkage);
+                    LUT->setInitializer(values);
 
+                    stage.next("verify module", PIPER_SOURCE_LOCATION());
                     // TODO: verification switch
                     verifyLLVMModule(*ctx, *module);
 
+                    stage.next("convert to bitcode", PIPER_SOURCE_LOCATION());
                     return eastl::static_shared_pointer_cast<PITU>(
                         makeSharedObject<LLVMIR>(*ctx, module2Binary(*ctx, *module), UID));
                 },
@@ -282,9 +307,9 @@ namespace Piper {
             if(!llvm::llvm_is_multithreaded())
                 context.getErrorHandler().raiseException("LLVM should be compiled with multi-threading flag.",
                                                          PIPER_SOURCE_LOCATION());
-            // llvm::InitializeAllTargetInfos();
+            llvm::InitializeAllTargetInfos();
             llvm::InitializeAllTargets();
-            // llvm::InitializeAllTargetMCs();
+            llvm::InitializeAllTargetMCs();
             // llvm::InitializeAllAsmParsers();
             llvm::InitializeAllAsmPrinters();
         }

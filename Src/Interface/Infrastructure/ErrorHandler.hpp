@@ -37,8 +37,7 @@ namespace Piper {
 
     class ErrorHandler : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(ErrorHandler, Object)
-        virtual ~ErrorHandler() = default;
+        PIPER_INTERFACE_CONSTRUCT(ErrorHandler, Object);
 
         virtual void setupGlobalErrorHandler() = 0;
         virtual void setupThreadErrorHandler() = 0;
@@ -66,6 +65,7 @@ namespace Piper {
         // virtual void addFinalAction() = 0;
 
         // for tracing
+        // TODO: additional information: error buffer
         StageGuard enterStage(Variant<CString, String> stage, const SourceLocation& loc) {
             enterStageImpl(std::move(stage), loc);
             return StageGuard{ *this };

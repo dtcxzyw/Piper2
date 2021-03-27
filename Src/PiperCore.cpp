@@ -523,6 +523,7 @@ namespace Piper {
     public:
         explicit ErrorHandlerImpl(PiperContext& context) : ErrorHandler(context), mStages(context.getAllocator()) {}
         void setupGlobalErrorHandler() override {
+            // TODO: Windows: SEH Exception/Linux: more Signal
             notImplemented(PIPER_SOURCE_LOCATION());
         }
         void setupThreadErrorHandler() override {
