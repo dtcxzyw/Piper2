@@ -22,7 +22,6 @@
 #include "../../../Interface/Infrastructure/ErrorHandler.hpp"
 #include "../../../Interface/Infrastructure/Module.hpp"
 #include "../../../Interface/Infrastructure/Program.hpp"
-#include "../../../STL/List.hpp"
 #include "Shared.hpp"
 
 namespace Piper {
@@ -71,13 +70,13 @@ namespace Piper {
             auto buffer = tracer.getAccelerator().createTiledOutput(width * height * sizeof(RGBW), alignof(RGBW));
 
             const auto rect = launcher.getRenderRECT();
-            constexpr uint32_t tileSize = 32;
+            constexpr uint32_t tileSize = 16;
             const auto blockX = (rect.width + tileSize - 1) / tileSize;
             const auto blockY = (rect.height + tileSize - 1) / tileSize;
             const auto blockCount = blockX * blockY;
             auto& logger = context().getLogger();
 
-            List<Future<void>> tiles{ context().getAllocator() };
+            DynamicArray<Future<void>> tiles{ context().getAllocator() };
 
             const Function<SBTPayload, uint32_t> launchData =
                 [w = width, h = height, allocator = STLAllocator{ context().getAllocator() }](const uint32_t offset) {
@@ -86,24 +85,22 @@ namespace Piper {
 
             SharedPtr<Resource> bufferRef = buffer;
 
-            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
-            // ResourceView bufferRef{ buffer, ResourceAccessMode::ReadOnly };  // Not ReadWrite!!
-            // const Span<ResourceView> resources = { &bufferRef, 1 };
-
             for(uint32_t bx = 0; bx < blockX; ++bx)
                 for(uint32_t by = 0; by < blockY; ++by) {
                     const auto left = rect.left + bx * tileSize, top = rect.top + by * tileSize;
                     const auto tile = RenderRECT{ left, top, std::min(tileSize, rect.width - bx * tileSize),
                                                   std::min(tileSize, rect.height - by * tileSize) };
-                    // TODO: use standard tiled computation interface
-
                     tiles.emplace_back(launcher.launch(tile, launchData, Span<SharedPtr<Resource>>{ &bufferRef, 1 }));
                 }
+
+            buffer->markDirty(context().getScheduler().wrap(tiles).raw());
 
             // TODO: move progress computation to Concurrency.hpp
             uint32_t progress = 0;
             while(!tiles.empty()) {
-                tiles.remove_if([](Future<void>& future) { return future.ready(); });
+                tiles.erase(std::remove_if(tiles.begin(), tiles.end(), [](Future<void>& future) { return future.ready(); }),
+                            tiles.end());
+
                 const auto newProgress = blockCount - static_cast<uint32_t>(tiles.size());
                 if(newProgress != progress) {
                     progress = newProgress;
@@ -121,6 +118,7 @@ namespace Piper {
             }
 
             // TODO: use accelerator
+            // TODO: concurrency
             auto bufferCPU = buffer->download().getSync();
             const auto bufferData = reinterpret_cast<const RGBW*>(bufferCPU.data());
             DynamicArray<Spectrum<Radiance>> res{ width * height, context().getAllocator() };

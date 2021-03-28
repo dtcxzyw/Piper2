@@ -30,19 +30,13 @@ namespace Piper {
     using KernelProtocol = void (*)(TaskContext ctx);
 
     extern "C" {
-    void piperGetGridSize(TaskContext context, Dim3& dim);
-    void piperGetBlockSize(TaskContext context, Dim3& dim);
-    void piperGetGridIndex(TaskContext context, Dim3& index);
-    void piperGetBlockIndex(TaskContext context, Dim3& index);
-    void piperGetGridLinearIndex(TaskContext context, uint32_t& index);
-    void piperGetBlockLinearIndex(TaskContext context, uint32_t& index);
-    void piperGetTaskIndex(TaskContext context, uint32_t& index);
+    void piperGetTaskIndex(TaskContext context, Dim3& index);
 
     void piperGetArgument(TaskContext context, uint32_t index, void* ptr);
     void piperGetRootResourceLUT(TaskContext context, ResourceHandle& handle);
     void piperLookUpResourceHandle(TaskContext context, ResourceHandle LUT, uint32_t index, ResourceHandle& handle);
 
-    extern int8_t* piperBuiltinSymbolLUT[];
+    extern int8_t** piperBuiltinSymbolLUT;
 
     // TODO: Atomic Intrinsic
     // TODO: Synchronize Primitive?

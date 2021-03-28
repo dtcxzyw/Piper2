@@ -41,28 +41,26 @@ namespace Piper {
         [[nodiscard]] virtual std::lock_guard<std::recursive_mutex> makeCurrent() = 0;
         [[nodiscard]] virtual ContextHandle getHandle() const noexcept = 0;
         [[nodiscard]] virtual CommandQueueHandle select() = 0;
-        //[[nodiscard]] virtual SharedPtr<ResourceInstance> createContextSpecificBuffer(size_t size, size_t alignment) = 0;
     };
 
     class ResourceInstance : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(ResourceInstance, Object);
         [[nodiscard]] virtual ResourceHandle getHandle() const noexcept = 0;
-        [[nodiscard]] virtual SharedPtr<FutureImpl> getFuture() const noexcept = 0;
+        [[nodiscard]] virtual const SharedPtr<FutureImpl>& getFuture() const noexcept = 0;
     };
 
     class Resource : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(Resource, Object);
-        // TODO: reduce copy?
-        virtual SharedPtr<ResourceInstance> requireInstance(Context* ctx) = 0;
+        virtual const SharedPtr<ResourceInstance>& requireInstance(Context* ctx) = 0;
     };
 
     // helper function
     template <typename Callable>
-    SharedPtr<ResourceInstance> safeRequireInstance(std::shared_mutex& mutex,
-                                                    UMap<Context*, SharedPtr<ResourceInstance>>& instances, Context* ctx,
-                                                    Callable&& init) {
+    const SharedPtr<ResourceInstance>& safeRequireInstance(std::shared_mutex& mutex,
+                                                           UMap<Context*, SharedPtr<ResourceInstance>>& instances, Context* ctx,
+                                                           Callable&& init) {
         std::shared_lock<std::shared_mutex> guard{ mutex };
         const auto iter = instances.find(ctx);
         if(iter == instances.cend()) {
@@ -78,16 +76,15 @@ namespace Piper {
         }
         return iter->second;
     }
-
     // TODO: type check?
     class TiledOutput : public Resource {
     public:
         PIPER_INTERFACE_CONSTRUCT(TiledOutput, Resource);
         // TODO: reduce copy
         [[nodiscard]] virtual Future<Binary> download() const = 0;
+        virtual void markDirty(SharedPtr<FutureImpl> future) = 0;
         // Future<SharedPtr<Resource>> asBuffer() const;
     };
-
     class Kernel : public Resource {
     public:
         PIPER_INTERFACE_CONSTRUCT(Kernel, Resource);
@@ -128,11 +125,11 @@ namespace Piper {
         PIPER_INTERFACE_CONSTRUCT(SymbolBinding, Object);
     };
 
-    // TODO: tiled input?
     // TODO: resource allocation scheduler
+    // TODO: support SIMD
     class Accelerator : public Object {
     private:
-        [[nodiscard]] virtual Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
+        [[nodiscard]] virtual Future<void> launchKernelImpl(const Dim3& size, SharedPtr<Kernel> kernel,
                                                             SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) = 0;
 
     public:
@@ -145,20 +142,18 @@ namespace Piper {
                                                               DynamicArray<String> dynamicSymbols, String entryFunction) = 0;
 
         template <typename... Args>
-        [[nodiscard]] Future<void> launchKernel(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
-                                                SharedPtr<ResourceLookUpTable> root, const Args&... args) {
+        [[nodiscard]] Future<void> launchKernel(const Dim3& size, SharedPtr<Kernel> kernel, SharedPtr<ResourceLookUpTable> root,
+                                                const Args&... args) {
             static_assert((std::is_trivial_v<std::decay_t<Args>> && ...));
-            return launchKernelImpl(grid, block, std::move(kernel), std::move(root), ArgumentPackage{ context(), args... });
+            return launchKernelImpl(size, std::move(kernel), std::move(root), ArgumentPackage{ context(), args... });
         }
 
         // TODO: better interface
         // virtual void applyNative(Function<void, ContextHandle, CommandQueueHandle> func,
         //                         DynamicArray<SharedPtr<ResourceView>> resources) = 0;
 
-        // TODO:support DMA? (DMA may cause bad performance)
+        // TODO: support DMA?
         [[nodiscard]] virtual SharedPtr<Resource> createBuffer(size_t size, size_t alignment, Function<void, Ptr> data) = 0;
-
-        // TODO: init/tiled/map/reduce
         [[nodiscard]] virtual SharedPtr<TiledOutput> createTiledOutput(size_t size, size_t alignment) = 0;
 
         [[nodiscard]] virtual SharedPtr<ResourceLookUpTable> createResourceLUT(DynamicArray<SharedPtr<Resource>> resources) = 0;

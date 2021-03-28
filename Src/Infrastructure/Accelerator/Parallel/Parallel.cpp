@@ -38,7 +38,6 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/Linker/Linker.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 // use LLJIT
@@ -58,6 +57,9 @@ namespace Piper {
         return static_cast<CommandQueueHandle>(GetCurrentThreadId());
     }
     */
+
+    static SharedPtr<ResourceInstance> dummy = nullptr;
+    static SharedPtr<FutureImpl> dummyFuture = nullptr;
 
     template <typename T>
     auto getLLVMResult(PiperContext& context, const SourceLocation& loc, llvm::Expected<T> value) {
@@ -108,15 +110,15 @@ namespace Piper {
     public:
         LLVMKernel(PiperContext& context, Future<std::unique_ptr<llvm::orc::LLJIT>> JIT, String entry)
             : Kernel{ context }, mJIT{ std::move(JIT) }, mEntry{ std::move(entry) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context*) override {
+        const SharedPtr<ResourceInstance>& requireInstance(Context*) override {
             context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
-            return nullptr;
+            return dummy;
         }
         void* lookUpSync() const {
             return reinterpret_cast<void*>(
                 getLLVMResult(context(), PIPER_SOURCE_LOCATION(), mJIT.getSync()->lookup(mEntry.c_str())).getAddress());
         }
-        SharedPtr<FutureImpl> getFuture() const {
+        const SharedPtr<FutureImpl>& getFuture() const {
             return mJIT.raw();
         }
     };
@@ -134,7 +136,7 @@ namespace Piper {
         ~BufferInstance() override {
             mAllocator.free(mPtr);
         }
-        SharedPtr<FutureImpl> getFuture() const noexcept override {
+        const SharedPtr<FutureImpl>& getFuture() const noexcept override {
             return mFuture.raw();
         }
         ResourceHandle getHandle() const noexcept override {
@@ -149,7 +151,7 @@ namespace Piper {
     public:
         Buffer(PiperContext& context, const size_t size, const size_t alignment, Function<void, Ptr> prepare)
             : Resource{ context }, mInstance{ makeSharedObject<BufferInstance>(context, size, alignment, std::move(prepare)) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context*) override {
+        const SharedPtr<ResourceInstance>& requireInstance(Context*) override {
             return mInstance;
         }
     };
@@ -170,7 +172,7 @@ namespace Piper {
         ~TiledBufferInstance() override {
             mAllocator.free(mPtr);
         }
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] const SharedPtr<FutureImpl>& getFuture() const noexcept override {
             return mFuture;
         }
         [[nodiscard]] ResourceHandle getHandle() const noexcept override {
@@ -194,12 +196,18 @@ namespace Piper {
     class TiledBuffer final : public TiledOutput {
     private:
         SharedPtr<TiledBufferInstance> mInstance;
+        SharedPtr<ResourceInstance> mRef;
 
     public:
         TiledBuffer(PiperContext& context, const size_t size, const size_t alignment)
-            : TiledOutput{ context }, mInstance{ makeSharedObject<TiledBufferInstance>(context, size, alignment) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context*) override {
-            return mInstance;
+            : TiledOutput{ context }, mInstance{ makeSharedObject<TiledBufferInstance>(context, size, alignment) }, mRef{
+                  mInstance
+              } {}
+        const SharedPtr<ResourceInstance>& requireInstance(Context*) override {
+            return mRef;
+        }
+        void markDirty(SharedPtr<FutureImpl> future) override {
+            mInstance->setFuture(std::move(future));
         }
         [[nodiscard]] Future<Binary> download() const override {
             return mInstance->download();
@@ -236,6 +244,7 @@ namespace Piper {
         const ArgumentPackage& args;
     };
 
+    // TODO: move to kernel
     static void piperGetArgument(const TaskContext context, const uint32_t index, void* ptr) {
         auto&& ctxEx = *reinterpret_cast<const TaskContextImplEx*>(context);
         const auto [offset, size] = ctxEx.args.offset[index];
@@ -257,12 +266,12 @@ namespace Piper {
             context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
             return 0;
         }
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] const SharedPtr<FutureImpl>& getFuture() const noexcept override {
             context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
-            return nullptr;
+            return dummyFuture;
         }
         void collect(DynamicArray<SharedPtr<FutureImpl>>& futures, DynamicArray<ResourceHandle>& handles,
-                     DynamicArray<size_t>& offsets, DynamicArray<TiledBufferInstance*>& outputs) {
+                     DynamicArray<size_t>& offsets) {
             DynamicArray<Pair<size_t, ResourceLookUpTableInstance*>> children{ context().getAllocator() };
             for(auto&& inst : mResourceInstances) {
                 if(auto lut = dynamic_cast<ResourceLookUpTableInstance*>(inst.get())) {
@@ -272,14 +281,11 @@ namespace Piper {
                 } else {
                     futures.push_back(inst->getFuture());
                     handles.push_back(inst->getHandle());
-                    if(auto output = dynamic_cast<TiledBufferInstance*>(inst.get())) {
-                        outputs.push_back(output);
-                    }
                 }
             }
             for(auto&& [idx, lut] : children) {
                 handles[idx] = handles.size();
-                lut->collect(futures, handles, offsets, outputs);
+                lut->collect(futures, handles, offsets);
             }
         }
     };
@@ -291,7 +297,7 @@ namespace Piper {
     public:
         ResourceLookUpTableImpl(PiperContext& context, const DynamicArray<SharedPtr<Resource>>& resources)
             : ResourceLookUpTable{ context }, mInstance{ makeSharedObject<ResourceLookUpTableInstance>(context, resources) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
+        const SharedPtr<ResourceInstance>& requireInstance(Context* ctx) override {
             return mInstance;
         }
     };
@@ -423,11 +429,9 @@ namespace Piper {
                 linked);
             return makeSharedObject<LLVMKernel>(context(), std::move(engine), std::move(entryFunction));
         }
-        Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
-                                      SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) override {
-            // TODO: for small n,run in this thread
-            const auto blockCount = grid.x * grid.y * grid.z;
-            const auto taskPerBlock = block.x * block.y * block.z;
+        Future<void> launchKernelImpl(const Dim3& size, SharedPtr<Kernel> kernel, SharedPtr<ResourceLookUpTable> root,
+                                      ArgumentPackage args) override {
+            // TODO: for small n, run in this thread
 
             auto& scheduler = context().getScheduler();
             auto func = eastl::dynamic_shared_pointer_cast<LLVMKernel>(kernel);
@@ -435,45 +439,31 @@ namespace Piper {
             DynamicArray<SharedPtr<FutureImpl>> futures{ { func->getFuture() }, context().getAllocator() };
             DynamicArray<ResourceHandle> handles{ context().getAllocator() };
             DynamicArray<size_t> offsets{ context().getAllocator() };
-            DynamicArray<TiledBufferInstance*> outputs{ context().getAllocator() };
 
             eastl::dynamic_shared_pointer_cast<ResourceLookUpTableInstance>(root->requireInstance(nullptr))
-                ->collect(futures, handles, offsets, outputs);
+                ->collect(futures, handles, offsets);
             for(auto pos : offsets)
                 handles[pos] += reinterpret_cast<ResourceHandle>(handles.data());
 
             auto future = scheduler.newFutureImpl(0, Closure<void*>{ context(), [](void*) {} }, false);
 
             scheduler.parallelForImpl(
-                blockCount,
-                Closure<uint32_t>{
-                    context(),
-                    [taskPerBlock, handles = std::move(handles), input = std::move(args), grid, block, call = std::move(func),
-                     ref = std::move(root), kernelRef = std::move(kernel)](const uint32_t idx) {
-                        const auto address = call->lookUpSync();
+                size.x * size.y,
+                Closure<uint32_t>{ context(),
+                                   [handles = std::move(handles), input = std::move(args), size, call = std::move(func),
+                                    ref = std::move(root), kernelRef = std::move(kernel)](const uint32_t idx) {
+                                       const auto address = call->lookUpSync();
 
-                        TaskContextImplEx ctxEx{ { grid,
-                                                   { idx / grid.z / grid.y, idx / grid.z % grid.y, idx % grid.z },
-                                                   block,
-                                                   idx,
-                                                   idx * taskPerBlock,
-                                                   0,
-                                                   { 0, 0, 0 },
-                                                   reinterpret_cast<ResourceHandle>(handles.data()) },
-                                                 input };
-                        auto&& ctx = ctxEx.ctx;
+                                       TaskContextImplEx ctxEx{ { { idx % size.x, idx / size.x, 0 },
+                                                                  reinterpret_cast<ResourceHandle>(handles.data()) },
+                                                                input };
+                                       auto&& ctx = ctxEx.ctx;
 
-                        // TODO: support unroll
-                        for(auto& i = ctx.blockIndex.x = 0; i < block.x; ++i)
-                            for(auto& j = ctx.blockIndex.y = 0; j < block.y; ++j)
-                                for(auto& k = ctx.blockIndex.z = 0; k < block.z; ++k, ++ctx.blockLinearIndex, ++ctx.index) {
-                                    static_cast<KernelProtocol>(address)(reinterpret_cast<TaskContext>(&ctx));
-                                }
-                    } },
+                                       for(; ctx.taskIndex.z < size.z; ++ctx.taskIndex.z) {
+                                           static_cast<KernelProtocol>(address)(reinterpret_cast<TaskContext>(&ctx));
+                                       }
+                                   } },
                 { futures.data(), futures.size() }, future);
-
-            for(auto output : outputs)
-                output->setFuture(future);
 
             return Future<void>{ std::move(future) };
         }
@@ -486,7 +476,7 @@ namespace Piper {
         SharedPtr<TiledOutput> createTiledOutput(const size_t size, const size_t alignment) override {
             return makeSharedObject<TiledBuffer>(context(), size, alignment);
         }
-        const DynamicArray<Context*>& enumerateContexts() const override {
+        [[nodiscard]] const DynamicArray<Context*>& enumerateContexts() const override {
             return mContexts;
         }
     };

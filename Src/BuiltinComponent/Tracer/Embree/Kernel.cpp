@@ -31,6 +31,9 @@ namespace Piper {
                                  const Vector2<float>& point, const Spectrum<Radiance>& sample);
     static_assert(std::is_same_v<RenderDriverFunc, std::decay_t<decltype(embreeAccumulate)>>);
 
+    extern void embreeLightSelect(RestrictedContext context, const void* SBTData, float u, LightSelectResult& select);
+    static_assert(std::is_same_v<LightSelectFunc, std::decay_t<decltype(embreeLightSelect)>>);
+
     float piperSample(const FullContext context) {
         auto* ctx = reinterpret_cast<PerSampleContext*>(context);
         if(ctx->currentDimension < ctx->argument.maxDimension) {
@@ -46,12 +49,13 @@ namespace Piper {
         piperGetTime(nullptr, beg);
         KernelArgument SBT{};
         piperGetArgument(ctx, 0, &SBT);
-        uint32_t sampleIdx;
-        piperGetBlockLinearIndex(ctx, sampleIdx);
-        Dim3 pixelIdx;
-        piperGetGridIndex(ctx, pixelIdx);
-        pixelIdx.x += SBT.rect.left - SBT.fullRect.left;
-        pixelIdx.y += SBT.rect.top - SBT.fullRect.top;
+        Dim3 sampleIdx;
+        piperGetTaskIndex(ctx, sampleIdx);
+        // NOTICE: swap width and height
+        std::swap(sampleIdx.x, sampleIdx.y);
+
+        sampleIdx.x += SBT.rect.left - SBT.fullRect.left;
+        sampleIdx.y += SBT.rect.top - SBT.fullRect.top;
         ResourceHandle rootLUT;
         piperGetRootResourceLUT(ctx, rootLUT);
 
@@ -63,12 +67,13 @@ namespace Piper {
             { 0.0f },
             5U,
             0,
-            RandomEngine{ static_cast<uint64_t>(pixelIdx.x * SBT.fullRect.height + pixelIdx.y) * SBT.sampleCount + sampleIdx }
+            RandomEngine{ static_cast<uint64_t>(sampleIdx.x * SBT.fullRect.height + sampleIdx.y) * SBT.sampleCount + sampleIdx.z }
         };
+
         Vector2<float> point;
-        embreeSampleStart(SBT.SAPayload, pixelIdx.x, pixelIdx.y, sampleIdx, context.sampleIndex, point);
-        point.x += static_cast<float>(SBT.fullRect.left + pixelIdx.x);
-        point.y += static_cast<float>(SBT.fullRect.top + pixelIdx.y);
+        embreeSampleStart(SBT.SAPayload, sampleIdx.x, sampleIdx.y, sampleIdx.z, context.sampleIndex, point);
+        point.x += static_cast<float>(SBT.fullRect.left + sampleIdx.x);
+        point.y += static_cast<float>(SBT.fullRect.top + sampleIdx.y);
         embreeSampleGenerate(SBT.SAPayload, context.sampleIndex, 2, context.time.val);
 
         // TODO:move to transform
@@ -86,6 +91,7 @@ namespace Piper {
 
         Spectrum<Radiance> sample;
         embreeIntegrate(reinterpret_cast<FullContext>(&context), SBT.TRPayload, ray, sample);
+
         embreeAccumulate(reinterpret_cast<RestrictedContext>(&context), SBT.ACPayload, SBT.launchData, point, sample * weight);
 
         uint64_t end;
@@ -124,7 +130,7 @@ namespace Piper {
     }
     void piperLightSelect(const FullContext context, LightSelectResult& select) {
         const auto* ctx = reinterpret_cast<const KernelArgument*>(context);
-        ctx->lightSample(decay(context), ctx->LSPayload, piperSample(context), select);
+        embreeLightSelect(decay(context), ctx->LSPayload, piperSample(context), select);
         select.light = reinterpret_cast<LightHandle>(ctx->lights + reinterpret_cast<ptrdiff_t>(select.light));
     }
     void piperLightInit(const FullContext context, const LightHandle light, LightStorage& storage) {

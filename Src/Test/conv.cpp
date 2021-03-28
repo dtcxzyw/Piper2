@@ -22,7 +22,8 @@
 
 extern "C" void convEntry(const Piper::TaskContext context) {
     using namespace Piper;
-    uint32_t idx, width, height, kernelSize;
+    Dim3 idx;
+    uint32_t width, height, kernelSize;
     piperGetTaskIndex(context, idx);
     piperGetArgument(context, 0, &width);
     piperGetArgument(context, 1, &height);
@@ -33,7 +34,7 @@ extern "C" void convEntry(const Piper::TaskContext context) {
     piperLookUpResourceHandle(context, LUT, 0, X);
     piperLookUpResourceHandle(context, LUT, 1, Y);
     piperLookUpResourceHandle(context, LUT, 2, Z);
-    conv(idx, reinterpret_cast<const Float*>(X), reinterpret_cast<const Float*>(Y), reinterpret_cast<Float*>(Z), width, height,
-         kernelSize);
+    conv(idx.x * width + idx.z, reinterpret_cast<const Float*>(X), reinterpret_cast<const Float*>(Y), reinterpret_cast<Float*>(Z),
+         width, height, kernelSize);
 }
 static_assert(std::is_same_v<Piper::KernelProtocol, std::decay_t<decltype(convEntry)>>);

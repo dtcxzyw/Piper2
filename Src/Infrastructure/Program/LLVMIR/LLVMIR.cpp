@@ -40,11 +40,10 @@
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
-#pragma warning(pop)
-#include "../../../STL/Pair.hpp"
-
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/Linker/Linker.h>
+#pragma warning(pop)
+#include "../../../STL/Pair.hpp"
 #include <new>
 #include <utility>
 
@@ -257,9 +256,17 @@ namespace Piper {
                     for(auto&& [dst, src] : SRS) {
                         const auto [symbol, addressSpace] = findSymbol(src);
 
+                        /*
                         const auto func = llvm::Function::Create(
                             symbol->getFunctionType(), llvm::GlobalValue::LinkageTypes::ExternalLinkage,
                             symbol->getAddressSpace(), llvm::StringRef{ dst.data(), dst.size() }, module.get());
+                        */
+
+                        auto callee = module->getOrInsertFunction(llvm::StringRef{ dst.data(), dst.size() },
+                                                                  symbol->getFunctionType(), symbol->getAttributes());
+                        const auto func = llvm::dyn_cast<llvm::Function>(callee.getCallee());
+                        func->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
+
                         const auto block = llvm::BasicBlock::Create(*llvmCtx, "", func);
                         llvm::IRBuilder<> builder{ block };
                         DynamicArray<llvm::Value*> args{ ctx->getAllocator() };
@@ -273,24 +280,33 @@ namespace Piper {
                             builder.CreateRet(ret);
                     }
 
-                    DynamicArray<llvm::Constant*> symbols{ DST.size(), ctx->getAllocator() };
-                    std::transform(DST.cbegin(), DST.cend(), symbols.begin(),
-                                   [&](const String& name) { return findSymbol(name).first; });
-                    const auto pointer = llvm::Type::getInt8PtrTy(*llvmCtx);
-                    if(symbols.empty())
-                        symbols.push_back(llvm::Constant::getNullValue(pointer));
-                    const auto arrayType = llvm::ArrayType::get(pointer, symbols.size());
-                    llvm::Constant* values = llvm::ConstantArray::get(
-                        arrayType, llvm::ArrayRef<llvm::Constant*>{ symbols.data(), symbols.data() + symbols.size() });
+                    auto LUT = module->getNamedGlobal("piperBuiltinSymbolLUT");
+                    if(LUT) {
+                        const auto valueType = llvm::dyn_cast<llvm::PointerType>(LUT->getValueType());
+                        const auto pointerType = valueType->getElementType();
 
-                    const auto LUT =
-                        llvm::cast<llvm::GlobalVariable>(module->getOrInsertGlobal("piperBuiltinSymbolLUT", arrayType));
-                    LUT->setConstant(true);
-                    LUT->setExternallyInitialized(false);
-                    LUT->setLinkage(llvm::GlobalVariable::LinkageTypes::ExternalLinkage);
-                    LUT->setInitializer(values);
+                        DynamicArray<llvm::Constant*> symbols{ DST.size(), ctx->getAllocator() };
+                        std::transform(DST.cbegin(), DST.cend(), symbols.begin(), [&](const String& name) {
+                            const auto func = findSymbol(name).first;
+                            return llvm::ConstantExpr::getPointerCast(func, pointerType);
+                        });
+                        if(symbols.empty())
+                            symbols.push_back(llvm::Constant::getNullValue(pointerType));
+                        const auto arrayType = llvm::ArrayType::get(pointerType, symbols.size());
+
+                        llvm::Constant* values = llvm::ConstantArray::get(
+                            arrayType, llvm::ArrayRef<llvm::Constant*>{ symbols.data(), symbols.data() + symbols.size() });
+                        const auto LUTStorage =
+                            new llvm::GlobalVariable(*module, arrayType, true, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
+                                                     values, "piperBuiltinSymbolLUTStorage");
+
+                        LUT->setConstant(true);
+                        LUT->setInitializer(llvm::ConstantExpr::getPointerCast(LUTStorage, LUT->getValueType()));
+                        LUT->setLinkage(llvm::GlobalValue::ExternalLinkage);
+                    }
 
                     stage.next("verify module", PIPER_SOURCE_LOCATION());
+
                     // TODO: verification switch
                     verifyLLVMModule(*ctx, *module);
 

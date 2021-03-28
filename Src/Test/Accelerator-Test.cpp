@@ -62,8 +62,8 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
     // TODO:better interface
     auto lut = accelerator->createResourceLUT({ { devX, devY, devZ }, context.getAllocator() });
 
-    auto _ = accelerator->launchKernel(Piper::Dim3{ width, 1, 1 }, Piper::Dim3{ height, 1, 1 }, kernel, std::move(lut), width,
-                                       height, kernelSize);
+    auto future = accelerator->launchKernel(Piper::Dim3{ height, 1, width }, kernel, std::move(lut), width, height, kernelSize);
+    devZ->markDirty(future.raw());
 
     auto dataZ = devZ->download().getSync();
 
@@ -99,7 +99,6 @@ void convolutionTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper:
 void generalAcceleratorTest(Piper::PiperContext& context, const Piper::SharedPtr<Piper::Accelerator>& accelerator) {
     convolutionTest(context, accelerator);
 }
-
 
 TEST_F(PiperCoreEnvironment, CPU) {
     auto& loader = context->getModuleLoader();

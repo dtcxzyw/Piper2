@@ -33,36 +33,10 @@ namespace Piper {
 
 #undef BUILTIN_CONSTANT
 
-    void piperGetGridSize(const TaskContext, Dim3& dim) {
-        dim.x = gridDimX();
-        dim.y = gridDimY();
-        dim.z = gridDimZ();
-    }
-    void piperGetBlockSize(const TaskContext, Dim3& dim) {
-        dim.x = blockDimX();
-        dim.y = blockDimY();
-        dim.z = blockDimZ();
-    }
-    void piperGetGridIndex(const TaskContext, Dim3& index) {
+    void piperGetTaskIndex(const TaskContext, Dim3& index) {
         index.x = blockIdxX();
         index.y = blockIdxY();
-        index.z = blockIdxZ();
-    }
-    void piperGetBlockIndex(const TaskContext, Dim3& index) {
-        index.x = threadIdxX();
-        index.y = threadIdxY();
-        index.z = threadIdxZ();
-    }
-    void piperGetGridLinearIndex(const TaskContext, uint32_t& index) {
-        index = (blockIdxX() * gridDimY() + blockIdxY()) * gridDimZ() + blockIdxZ();
-    }
-    void piperGetBlockLinearIndex(const TaskContext, uint32_t& index) {
-        index = (threadIdxX() * blockDimY() + threadIdxY()) * blockDimZ() + threadIdxZ();
-    }
-    void piperGetTaskIndex(const TaskContext, uint32_t& index) {
-        const auto idx0 = (blockIdxX() * gridDimY() + blockIdxY()) * gridDimZ() + blockIdxZ();
-        const auto idx1 = (threadIdxX() * blockDimY() + threadIdxY()) * blockDimZ() + threadIdxZ();
-        index = idx0 * (blockDimX() * blockDimY() * blockDimZ()) + idx1;
+        index.z = blockIdxZ() * blockDimX() + threadIdxX();
     }
 
     struct UInt32Pair final {

@@ -448,6 +448,7 @@ namespace Piper {
         PIPER_APPEND(GetTime);
         PIPER_APPEND(QueryTransform);
         PIPER_APPEND(FloatAtomicAdd);
+
         if(debug) {
             PIPER_APPEND(PrintFloat);
         }
@@ -495,7 +496,6 @@ namespace Piper {
         GeometryHandle mGeometry;
         SceneHandle mScene;
         BuiltinTriangleBuffer mTriangleBuffer;
-        CustomBuffer mCustomBuffer;
         SharedPtr<Resource> mBufferResource;
 
     public:
@@ -625,10 +625,9 @@ namespace Piper {
         }
         void setCustomFunc(MemoryArena& arena, const Call<GeometryIntersectFunc> intersect,
                            const Call<GeometryOccludeFunc> occlude) {
-            mCustomBuffer.intersect = intersect;
-            mCustomBuffer.occlude = occlude;
             auto* const data = arena.alloc<CustomBuffer>();
-            *data = mCustomBuffer;
+            data->intersect = intersect;
+            data->occlude = occlude;
             rtcSetGeometryUserData(mGeometry.get(), data);
         }
         [[nodiscard]] Pair<CString, BuiltinTriangleBuffer> getBuiltin() const noexcept {
@@ -1010,8 +1009,9 @@ namespace Piper {
             }
 
             auto lut = mAccelerator.createResourceLUT(std::move(fullResources));
-            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ arg.sampleCount, 1, 1 }, mKernel,
-                                             std::move(lut), arg);
+
+            // NOTICE: swap width and height
+            return mAccelerator.launchKernel(Dim3{ rect.height, rect.width, arg.sampleCount }, mKernel, std::move(lut), arg);
         }
         [[nodiscard]] RenderRECT getRenderRECT() const noexcept override {
             return *reinterpret_cast<const RenderRECT*>(&mArg.fullRect);
@@ -1179,7 +1179,10 @@ namespace Piper {
                                                                  PIPER_SOURCE_LOCATION());
                 }
             }
-            std::swap(*environmentLight, lights.front());
+            if(environmentLight)
+                std::swap(*environmentLight, lights.front());
+            else
+                context.getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
 
             mArg.lights = mArena.alloc<LightFuncGroup>(lights.size());
             // TODO: better interface
@@ -1195,17 +1198,16 @@ namespace Piper {
                 mArg.lights[idx].evaluate = { addDynamicBinding(LIP.evaluate, payload) };
                 mArg.lights[idx].pdf = { addDynamicBinding(LIP.pdf, payload) };
 
+                if(const auto* geometry = inst.light->getGeometry())
+                    registerGeometry(geometry);
+
                 if(auto* data = lights[idx].node->postMaterialize(mHolder)) {
-                    auto& geo = geometryProg[lights[idx].light->getGeometry()];
+                    auto& geo = geometryProg[inst.light->getGeometry()];
                     data->kind = geo.kind;
                     data->calcSurface = geo.calcSurface;
                     data->usage = GeometryUsage::AreaLight;
                     data->light = reinterpret_cast<LightHandle>(mArg.lights + idx);
                 }
-
-                const auto* geometry = inst.light->getGeometry();
-                if(geometry)
-                    registerGeometry(geometry);
             }
 
             {

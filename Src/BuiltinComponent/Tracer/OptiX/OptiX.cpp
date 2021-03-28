@@ -119,7 +119,7 @@ namespace Piper {
 
     public:
         OptixRTProgram(PiperContext& context, Accelerator& accelerator) : Resource{ context }, mAccelerator{ accelerator } {}
-        SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
+        const SharedPtr<ResourceInstance>& requireInstance(Context* ctx) override {
             context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
             return nullptr;
         }

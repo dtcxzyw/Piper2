@@ -73,7 +73,6 @@ namespace Piper {
         const void* launchData;
         const void* TRPayload;
         LightFuncGroup* lights;
-        LightSelectFunc lightSample;
         const void* LSPayload;
         const void* SAPayload;
         uint32_t sampleCount;

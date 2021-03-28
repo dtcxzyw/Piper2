@@ -48,13 +48,14 @@
 // TODO: nvSci?
 // TODO: use Cooperative Groups?
 // TODO: use CUB
-// TODO: set stack size
 
 namespace Piper {
     class CUDAContext;
     class CUDAAccelerator;
 
-    static void checkCUDAResult(PiperContext& context, const SourceLocation& loc, CUresult res) {
+    static SharedPtr<FutureImpl> dummyFuture = nullptr;
+
+    static void checkCUDAResult(PiperContext& context, const SourceLocation& loc, const CUresult res) {
         if(res == CUDA_SUCCESS) {
             /*
             // TODO: block option
@@ -135,6 +136,7 @@ namespace Piper {
         std::recursive_mutex mContextMutex;
         RandomEngine mRandomEngine;
         List<CUevent> mRecycledEvents;
+        uint32_t mLaunchLimit;
 
         template <typename Result, typename Callable>
         Future<Result> spawnImpl(Callable&& callable, DynamicArray<SharedPtr<FutureImpl>> dependencies) {
@@ -211,8 +213,12 @@ namespace Piper {
             : Context{ context }, mAccelerator{ accelerator }, mDevice{ 0 },
               mCUDAContext{ nullptr }, mStreams{ context.getAllocator() },
               mRandomEngine{ static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()) },
-              mRecycledEvents{ context.getAllocator() } {
+              mRecycledEvents{ context.getAllocator() }, mLaunchLimit{ 0 } {
             checkCUDAResult(context, PIPER_SOURCE_LOCATION(), cuDeviceGet(&mDevice, idx));
+
+            checkCUDAResult(
+                context, PIPER_SOURCE_LOCATION(),
+                cuDeviceGetAttribute(reinterpret_cast<int*>(&mLaunchLimit), CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, mDevice));
 
             {
                 // TODO: support devices which don't support memory pool
@@ -289,6 +295,10 @@ namespace Piper {
             return reinterpret_cast<ContextHandle>(mCUDAContext);
         }
 
+        [[nodiscard]] uint32_t getLaunchLimit() const noexcept {
+            return mLaunchLimit;
+        }
+
         [[nodiscard]] CUcontext getContextHandle() const noexcept {
             return mCUDAContext;
         }
@@ -329,7 +339,7 @@ namespace Piper {
     public:
         CUDAKernelInstance(PiperContext& context, Future<UniquePtr<CUmod_st, ModuleDeleter>> module)
             : ResourceInstance{ context }, mModule{ std::move(module) } {}
-        SharedPtr<FutureImpl> getFuture() const noexcept override {
+        const SharedPtr<FutureImpl>& getFuture() const noexcept override {
             return mModule.raw();
         }
         ResourceHandle getHandle() const noexcept override {
@@ -376,29 +386,33 @@ namespace Piper {
                 GENERATE_BUILTIN("threadIdx", "%tid")
 
                     R"(
-.extern .func realEntry
-(
-	.param .b64 param0
-)
-;
+.extern .func realEntry(.param .b64 param0);
 
-.visible .entry cudaEntry(
-  .param .b64 context
-)
+.visible .entry cudaEntry(.param .u32 maxZ,.param .b64 context)
 {
+    .reg .pred 	%p0;
+	.reg .b32 	%r<7>;
 	.reg .b64 rd0;
 	ld.param.b64 rd0, [context];
 
+    ld.param.u32 	%r1, [maxZ];
+	mov.u32 	%r2, %ctaid.z;
+	mov.u32 	%r3, %ntid.x;
+	mul.lo.s32 	%r4, %r2, %r3;
+	mov.u32 	%r5, %tid.x;
+	add.s32 	%r6, %r4, %r5;
+	setp.le.u32 	%p0, %r1, %r6;
+	@%p0 bra 	Label2;
+	bra.uni 	Label1;
+
+Label1:
 	{
 	.param .b64 param0;
 	st.param.b64 	[param0+0], rd0;
-
-	call.uni 
-	realEntry, 
-	(
-	param0
-	);
-	}
+	call.uni realEntry, (param0);
+    }
+    bra.uni 	Label2;
+Label2:
 	ret;
 }
         )";
@@ -440,7 +454,7 @@ namespace Piper {
     public:
         CUDAKernel(PiperContext& context, Future<Binary> binary)
             : Kernel{ context }, mBinary{ std::move(binary) }, mInstances{ context.getAllocator() } {}
-        SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
+        const SharedPtr<ResourceInstance>& requireInstance(Context* ctx) override {
             return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
                 auto&& scheduler = context().getScheduler();
                 auto cudaCtx = dynamic_cast<CUDAContext*>(ctx);
@@ -553,21 +567,21 @@ namespace Piper {
         [[nodiscard]] ResourceHandle getHandle() const noexcept override {
             return mPtr->getUnsafe().first;
         }
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] const SharedPtr<FutureImpl>& getFuture() const noexcept override {
             return mFuture;
         }
     };
 
     class CUDABuffer final : public Resource {
     private:
-        SharedPtr<CUDABufferInstance> mSharedBuffer;  // TODO: unique buffer?
+        SharedPtr<ResourceInstance> mSharedBuffer;  // TODO: unique buffer?
 
     public:
         CUDABuffer(PiperContext& context, CUDAContext& ctx, const size_t size, const size_t alignment,
                    Function<void, Ptr>&& prepare)
             : Resource{ context }, mSharedBuffer{ makeSharedObject<CUDABufferInstance>(context, ctx, size, alignment,
                                                                                        std::move(prepare)) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context*) override {
+        const SharedPtr<ResourceInstance>& requireInstance(Context*) override {
             return mSharedBuffer;
         }
     };
@@ -603,7 +617,7 @@ namespace Piper {
         [[nodiscard]] ResourceHandle getHandle() const noexcept override {
             return mPtr->getUnsafe().first;
         }
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] const SharedPtr<FutureImpl>& getFuture() const noexcept override {
             return mFuture;
         }
 
@@ -623,12 +637,17 @@ namespace Piper {
     private:
         // TODO: lazy allocation
         SharedPtr<CUDATiledBufferInstance> mMainBuffer;
+        SharedPtr<ResourceInstance> mRef;
 
     public:
         CUDATiledBuffer(PiperContext& context, CUDAContext& ctx, const size_t size, const size_t alignment)
-            : TiledOutput{ context }, mMainBuffer{ makeSharedObject<CUDATiledBufferInstance>(context, ctx, size, alignment) } {}
-        SharedPtr<ResourceInstance> requireInstance(Context*) override {
-            return mMainBuffer;
+            : TiledOutput{ context },
+              mMainBuffer{ makeSharedObject<CUDATiledBufferInstance>(context, ctx, size, alignment) }, mRef{ mMainBuffer } {}
+        const SharedPtr<ResourceInstance>& requireInstance(Context*) override {
+            return mRef;
+        }
+        void markDirty(SharedPtr<FutureImpl> future) override {
+            mMainBuffer->setFuture(std::move(future));
         }
         [[nodiscard]] Future<Binary> download() const override {
             return mMainBuffer->download();
@@ -650,12 +669,11 @@ namespace Piper {
             context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
             return 0;
         }
-        [[nodiscard]] SharedPtr<FutureImpl> getFuture() const noexcept override {
+        [[nodiscard]] const SharedPtr<FutureImpl>& getFuture() const noexcept override {
             context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
-            return nullptr;
+            return dummyFuture;
         }
-        void collect(DynamicArray<SharedPtr<FutureImpl>>& futures, DynamicArray<ResourceHandle>& handles,
-                     DynamicArray<CUDATiledBufferInstance*>& outputs) {
+        void collect(DynamicArray<SharedPtr<FutureImpl>>& futures, DynamicArray<ResourceHandle>& handles) {
             DynamicArray<Pair<size_t, ResourceLookUpTableInstance*>> children{ context().getAllocator() };
             for(auto&& inst : mResourceInstances) {
                 if(auto lut = dynamic_cast<ResourceLookUpTableInstance*>(inst.get())) {
@@ -664,14 +682,11 @@ namespace Piper {
                 } else {
                     futures.push_back(inst->getFuture());
                     handles.push_back(inst->getHandle());
-                    if(auto output = dynamic_cast<CUDATiledBufferInstance*>(inst.get())) {
-                        outputs.push_back(output);
-                    }
                 }
             }
             for(auto&& [idx, lut] : children) {
                 handles[idx] = handles.size();
-                lut->collect(futures, handles, outputs);
+                lut->collect(futures, handles);
             }
         }
     };
@@ -685,7 +700,7 @@ namespace Piper {
     public:
         ResourceLookUpTableImpl(PiperContext& context, DynamicArray<SharedPtr<Resource>> resources)
             : ResourceLookUpTable{ context }, mResources{ std::move(resources) }, mInstances{ context.getAllocator() } {}
-        SharedPtr<ResourceInstance> requireInstance(Context* ctx) override {
+        const SharedPtr<ResourceInstance>& requireInstance(Context* ctx) override {
             return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
                 return makeSharedObject<ResourceLookUpTableInstance>(context(), ctx, mResources);
             });
@@ -804,22 +819,24 @@ namespace Piper {
             return makeSharedObject<CUDAKernel>(context(), eastl::get<Future<Binary>>(ptx.exchange));
         }
 
-        [[nodiscard]] Future<void> launchKernelImpl(const Dim3& grid, const Dim3& block, SharedPtr<Kernel> kernel,
+        [[nodiscard]] Future<void> launchKernelImpl(const Dim3& size, SharedPtr<Kernel> kernel,
                                                     SharedPtr<ResourceLookUpTable> root, ArgumentPackage args) override {
+            if(!(size.x && size.y && size.z))
+                context().getErrorHandler().raiseException("Empty launch", PIPER_SOURCE_LOCATION());
+            // TODO: multi launch
+            if(!(std::numeric_limits<int>::max() / size.x / size.y / size.z))
+                context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
 
-            // TODO: launch on multi-GPU
-            // TODO: tiled launching
-
+            // TODO: better schedule
             auto ctx = selectOne().first;
 
             auto entry = kernel->requireInstance(ctx);
 
             DynamicArray<SharedPtr<FutureImpl>> futures{ { entry->getFuture() }, context().getAllocator() };
             DynamicArray<ResourceHandle> handles{ context().getAllocator() };
-            DynamicArray<CUDATiledBufferInstance*> outputs{ context().getAllocator() };
 
             eastl::dynamic_shared_pointer_cast<ResourceLookUpTableInstance>(root->requireInstance(ctx))
-                ->collect(futures, handles, outputs);
+                ->collect(futures, handles);
 
             const auto bufferSize = args.data.size() + args.offset.size() * sizeof(decltype(args.offset)::value_type) +
                 sizeof(uint32_t) * 2 + handles.size() * sizeof(ResourceHandle);
@@ -847,11 +864,11 @@ namespace Piper {
 
             auto future =
                 ctx->spawn(
-                       [this, grid, block, func = std::move(entry), ref = std::move(root),
-                        launchBufferRef = std::move(launchBuffer), kernelRef = std::move(kernel),
-                        launchContextHandle = launchBufferInstance->getHandle()](CUcontext, const CUstream stream) {
+                       [this, size, func = std::move(entry), ref = std::move(root), launchBufferRef = std::move(launchBuffer),
+                        kernelRef = std::move(kernel), launchContextHandle = launchBufferInstance->getHandle(),
+                        limit = ctx->getLaunchLimit()](CUcontext, const CUstream stream) {
                            auto launchParamBufferData = launchContextHandle;
-                           void* kernelParams[] = { &launchParamBufferData };
+                           void* kernelParams[] = { const_cast<uint32_t*>(&size.z), &launchParamBufferData };
                            const auto module = reinterpret_cast<CUmodule>(func->getHandle());
                            CUfunction cudaFunction;
                            checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
@@ -862,26 +879,19 @@ namespace Piper {
                                            cuFuncSetCacheConfig(cudaFunction, CU_FUNC_CACHE_PREFER_L1));
                            // TODO: set stack size
 
-                           // TODO: better implementation
-                           {
-                               CUdevice device;
-                               checkCUDAResult(context(), PIPER_SOURCE_LOCATION(), cuCtxGetDevice(&device));
-                               int limit;
-                               checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
-                                               cuDeviceGetAttribute(&limit, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, device));
-                               if(static_cast<uint32_t>(limit) < block.x * block.y * block.z)
-                                   context().getErrorHandler().notSupported(PIPER_SOURCE_LOCATION());
+                           const auto blockSize = limit;  // TODO: scheduler
+                           uint32_t a = 1, b = size.z;
+                           if(size.z > blockSize) {
+                               a = (size.z + blockSize - 1) / blockSize;
+                               b = blockSize;
                            }
 
-                           checkCUDAResult(context(), PIPER_SOURCE_LOCATION(),
-                                           cuLaunchKernel(cudaFunction, grid.x, grid.y, grid.z, block.x, block.y, block.z, 0,
-                                                          stream, kernelParams, nullptr));
+                           checkCUDAResult(
+                               context(), PIPER_SOURCE_LOCATION(),
+                               cuLaunchKernel(cudaFunction, size.x, size.y, a, b, 1, 1, 0, stream, kernelParams, nullptr));
                        },
                        futures)
                     .raw();
-
-            for(auto&& output : outputs)
-                output->setFuture(future);
 
             return Future<void>{ std::move(future) };
         }
