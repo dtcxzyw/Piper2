@@ -363,8 +363,8 @@ namespace Piper {
                                    CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES, CU_JIT_LOG_VERBOSE };
         void* errorBufferPtr = errorBuffer;
         void* infoBufferPtr = infoBuffer;
-        auto errorBufferSize = static_cast<ptrdiff_t>(std::size(errorBuffer));
-        auto infoBufferSize = static_cast<ptrdiff_t>(std::size(infoBuffer));
+        const auto errorBufferSize = static_cast<ptrdiff_t>(std::size(errorBuffer));
+        const auto infoBufferSize = static_cast<ptrdiff_t>(std::size(infoBuffer));
         void* values[] = { errorBufferPtr, reinterpret_cast<void*>(errorBufferSize), infoBufferPtr,
                            reinterpret_cast<void*>(infoBufferSize), reinterpret_cast<void*>(static_cast<ptrdiff_t>(1)) };
         static_assert(std::size(options) == std::size(values));

@@ -46,7 +46,6 @@
 
 namespace Piper {
     // TODO: NVLink
-    // TODO: need makeCurrent?
 
     static void checkCUDAResult(PiperContext& context, const SourceLocation& loc, const CUresult res) {
         if(res == CUDA_SUCCESS)
@@ -72,6 +71,7 @@ namespace Piper {
         OptixTraversableHandle geometry;
     };
 
+    // TODO: need makeCurrent?
     struct DeviceDeleter {
         Context* ctx;
         void operator()(const OptixDeviceContext context) const {
@@ -79,6 +79,22 @@ namespace Piper {
         }
     };
     using DeviceHandle = UniquePtr<OptixDeviceContext_t, DeviceDeleter>;
+
+    struct PipelineDeleter {
+        Context* ctx;
+        void operator()(const OptixPipeline pipeline) const {
+            checkOptixResult(ctx->context(), PIPER_SOURCE_LOCATION(), optixPipelineDestroy(pipeline));
+        }
+    };
+    using PipelineHandle = UniquePtr<OptixPipeline_t, PipelineDeleter>;
+
+    struct ProgramGroupDeleter {
+        Context* ctx;
+        void operator()(const OptixProgramGroup programGroup) const {
+            checkOptixResult(ctx->context(), PIPER_SOURCE_LOCATION(), optixProgramGroupDestroy(programGroup));
+        }
+    };
+
     // NOTICE: optixBuiltinISModuleGet
 
     class OptixModuleHolder final : public ResourceInstance {
@@ -92,7 +108,7 @@ namespace Piper {
             : ResourceInstance{ context.context() }, mContext{ context } {
             auto guard = context.makeCurrent();
 
-            char logBuffer[1024];
+            char logBuffer[8192];
             size_t logSize = sizeof(logBuffer);
 
             checkOptixResult(
@@ -253,622 +269,78 @@ namespace Piper {
         [[nodiscard]] auto&& getGeometry() const noexcept {
             return mGeometry;
         }
-    };  // namespace Piper
-
-    struct EmbreeGSMInstance final : public GSMInstance {
-        SharedPtr<Geometry> geometry;
-        SharedPtr<Surface> surface;
-        SharedPtr<Medium> medium;
-
-        EmbreeGSMInstance(PiperContext& context, SharedPtr<Geometry> geo, SharedPtr<Surface> surf, SharedPtr<Medium> med)
-            : GSMInstance(context), geometry(std::move(geo)), surface(std::move(surf)), medium(std::move(med)) {}
     };
 
-    class EmbreeLeafNodeWithGSM;
-    struct GSMInstanceProgram final {
-        SharedPtr<Geometry> geometry;
-        SharedPtr<Surface> surface;
-        SharedPtr<Medium> medium;
-        TraversalHandle traversal;
-        EmbreeLeafNodeWithGSM* node;
+    struct CUDATexDeleter {
+        Context* ctx;
+        void operator()(void* tex) const {
+            auto guard = ctx->makeCurrent();
+            checkCUDAResult(ctx->context(), PIPER_SOURCE_LOCATION(), cuTexObjectDestroy(reinterpret_cast<CUtexObject>(tex)));
+        }
     };
+    using CUDATexture = UniquePtr<void, CUDATexDeleter>;
 
-    class EmbreeLeafNodeWithLight;
-    struct LightInstanceProgram final {
-        SharedPtr<Light> light;
-        TraversalHandle traversal;
-        EmbreeLeafNodeWithLight* node;
-    };
-
-    class EmbreeLeafNodeWithSensor;
-    struct SensorInstanceProgram final {
-        SharedPtr<Sensor> sensor;
-        TraversalHandle traversal;
-        EmbreeLeafNodeWithSensor* node;
-    };
-
-    class EmbreeNode : public Node {
-    public:
-        PIPER_INTERFACE_CONSTRUCT(EmbreeNode, Node);
-        [[nodiscard]] virtual OptixTraversableHandle getTraversal() const noexcept = 0;
-        virtual void collect(DynamicArray<GSMInstanceProgram>& gsm, DynamicArray<LightInstanceProgram>& light,
-                             DynamicArray<SensorInstanceProgram>& sensor, const OptixTraversalNode* traversal,
-                             MemoryArena& arena) = 0;
-        virtual void updateTimeInterval(Time<float> begin, Time<float> end) {}
-    };
-
-    /*
-    class EmbreeBranchNode final : public EmbreeNode {
+    // TODO: multi-frame
+    class BuiltinTextureInstance : public ResourceInstance {
     private:
-        SceneHandle mScene;
-        struct SubNode final {
-            TransformInfo transform;
-            GeometryHandle geometry;
-            SharedPtr<EmbreeNode> node;
-        };
-        DynamicArray<SubNode> mChildren;
+        CUDATexture mTexture;
 
     public:
-        EmbreeBranchNode(PiperContext& context, const RTCDevice device,
-                         const DynamicArray<Pair<TransformInfo, SharedPtr<Node>>>& children)
-            : EmbreeNode(context), mChildren{ context.getAllocator() } {
-            mScene.reset(rtcNewScene(device));
-            mChildren.reserve(children.size());
-            for(auto&& [trans, child] : children) {
-                mChildren.push_back(SubNode{ trans, GeometryHandle{ rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE) },
-                                             eastl::dynamic_shared_pointer_cast<EmbreeNode>(child) });
-                auto& sub = mChildren.back();
-                rtcSetGeometryInstancedScene(sub.geometry.get(), sub.node->getScene());
-                rtcSetGeometryUserData(sub.geometry.get(), sub.node->getScene());
-                rtcSetGeometryMask(sub.geometry.get(), gsmMask | areaLightMask);
-                // static transform
-                if(trans.step.val <= 0.0f && !trans.transforms.empty()) {
-                    if(trans.transforms.size() == 1 && trans.transforms.front().first == 0U)
-                        setTransformSRT(sub.geometry.get(), 0, trans.transforms.front().second);
-                    else
-                        context.getErrorHandler().raiseException("Unrecognized transform.", PIPER_SOURCE_LOCATION());
-                }
-                rtcAttachGeometry(mScene.get(), sub.geometry.get());
-            }
-        }
-
-        void updateTimeInterval(const Time<float> begin, const Time<float> end) override {
-            for(auto&& [transform, geometry, child] : mChildren) {
-                child->updateTimeInterval(begin, end);
-                updateTransformSRT(geometry.get(), begin, end, transform);
-                rtcCommitGeometry(geometry.get());
-            }
-            rtcCommitScene(mScene.get());
-        }
-
-        [[nodiscard]] RTCScene getScene() const noexcept override {
-            return mScene.get();
-        }
-
-        void collect(DynamicArray<GSMInstanceProgram>& gsm, DynamicArray<LightInstanceProgram>& light,
-                     DynamicArray<SensorInstanceProgram>& sensor, const EmbreeTraversalNode* traversal,
-                     MemoryArena& arena) override {
-            for(auto&& [trans, geometry, child] : mChildren) {
-                auto* sub = arena.alloc<EmbreeTraversalNode>();
-                sub->geometry = geometry.get();
-                sub->parent = traversal;
-                child->collect(gsm, light, sensor, sub, arena);
-            }
+        BuiltinTextureInstance(PiperContext& context, SharedPtr<ResourceInstance> buffer, const ImageAttributes& attributes,
+                               TextureWrap wrapMode)
+            : ResourceInstance{ context } {}
+        [[nodiscard]] ResourceHandle getHandle() const noexcept override {
+            return reinterpret_cast<ResourceHandle>(mTexture.get());
         }
     };
 
-    class EmbreeLeafNodeWithGSM final : public EmbreeNode {
+    class BuiltinTextureResource : public Resource {
     private:
-        SceneHandle mScene;
-        GeometryHandle mGeometry;
-        SharedPtr<EmbreeGSMInstance> mInstance;
-        SharedPtr<Wrapper<GSMInstanceUserData>> mUserData;
+        std::shared_mutex mMutex;
+        UMap<Context*, SharedPtr<ResourceInstance>> mInstances;
+        SharedPtr<Resource> mBuffer;
+        TextureWrap mMode;
+        ImageAttributes mAttributes;
 
     public:
-        EmbreeLeafNodeWithGSM(PiperContext& context, Tracer& tracer, Accelerator& accelerator, ResourceCacheManager& cacheManager,
-                              const RTCDevice device, SharedPtr<EmbreeGSMInstance> instance)
-            : EmbreeNode(context), mInstance(std::move(instance)),
-              mUserData(makeSharedObject<Wrapper<GSMInstanceUserData>>(context)) {
-            auto& accel =
-                dynamic_cast<EmbreeAcceleration&>(mInstance->geometry->getAcceleration(tracer, accelerator, cacheManager));
-
-            mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE));
-            rtcSetGeometryInstancedScene(mGeometry.get(), accel.getScene(device));
-            rtcSetGeometryUserData(mGeometry.get(), &mUserData->value);
-            rtcSetGeometryMask(mGeometry.get(), gsmMask);
-            rtcCommitGeometry(mGeometry.get());
-
-            mScene.reset(rtcNewScene(device));
-            rtcAttachGeometry(mScene.get(), mGeometry.get());
-            rtcCommitScene(mScene.get());
-        }
-
-        [[nodiscard]] RTCScene getScene() const noexcept override {
-            return mScene.get();
-        }
-
-        void collect(DynamicArray<GSMInstanceProgram>& gsm, DynamicArray<LightInstanceProgram>&,
-                     DynamicArray<SensorInstanceProgram>&, const EmbreeTraversalNode* node, MemoryArena& arena) override {
-            gsm.emplace_back(GSMInstanceProgram{ mInstance->geometry, mInstance->surface, nullptr,
-                                                 reinterpret_cast<TraversalHandle>(node), this });
-        }
-
-        GSMInstanceUserData& postMaterialize(ResourceHolder& holder) const {
-            holder.retain(mUserData);
-            return mUserData->value;
+        BuiltinTextureResource(PiperContext& context, Accelerator& accelerator, const SharedPtr<Image>& image,
+                               TextureWrap wrapMode)
+            : Resource{ context }, mInstances{ context.getAllocator() },
+              mBuffer{ accelerator.createBuffer(
+                  image->attributes().width * image->attributes().height * image->attributes().channel, 16,
+                  [image, size = image->attributes().width * image->attributes().height * image->attributes().channel](
+                      const Ptr ptr) { memcpy(reinterpret_cast<void*>(ptr), image->data(), size); }) },
+              mMode{ wrapMode }, mAttributes{ image->attributes() } {}
+        const SharedPtr<ResourceInstance>& requireInstance(Context* ctx) override {
+            return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
+                return makeSharedObject<BuiltinTextureInstance>(context(), mBuffer, mAttributes, mMode);
+            });
         }
     };
 
-    class EmbreeLeafNodeWithLight final : public EmbreeNode {
+    class BuiltinTexture : public Texture {
     private:
-        GeometryHandle mGeometry;
-        SceneHandle mScene;
-        SharedPtr<Light> mLight;
-        SharedPtr<Wrapper<AreaLightUserData>> mUserData;
+        SharedPtr<Image> mImage;
+        TextureWrap mMode;
 
     public:
-        EmbreeLeafNodeWithLight(PiperContext& context, Tracer& tracer, Accelerator& accelerator,
-                                ResourceCacheManager& cacheManager, const RTCDevice device, SharedPtr<Light> light)
-            : EmbreeNode(context), mLight(std::move(light)) {
-            const auto* geometry = mLight->getGeometry();
-            mGeometry.reset(rtcNewGeometry(device, geometry ? RTC_GEOMETRY_TYPE_INSTANCE : RTC_GEOMETRY_TYPE_USER));
-            if(geometry) {
-                mUserData = makeSharedObject<Wrapper<AreaLightUserData>>(context);
-                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer, accelerator, cacheManager));
-                rtcSetGeometryInstancedScene(mGeometry.get(), accel.getScene(device));
-                rtcSetGeometryUserData(mGeometry.get(), &mUserData->value);
-                rtcSetGeometryMask(mGeometry.get(), areaLightMask);
-            } else {
-                // dummy node
-                rtcSetGeometryUserPrimitiveCount(mGeometry.get(), 0);
-                rtcSetGeometryIntersectFunction(mGeometry.get(), [](auto) {});
-                rtcSetGeometryBoundsFunction(
-                    mGeometry.get(), [](auto) {}, nullptr);
-                rtcSetGeometryOccludedFunction(mGeometry.get(), [](auto) {});
-            }
-
-            rtcCommitGeometry(mGeometry.get());
-
-            mScene.reset(rtcNewScene(device));
-            rtcAttachGeometry(mScene.get(), mGeometry.get());
-            rtcCommitScene(mScene.get());
+        BuiltinTexture(PiperContext& context, SharedPtr<Image> image, const TextureWrap wrapMode)
+            : Texture{ context }, mImage{ std::move(image) }, mMode{ wrapMode } {}
+        [[nodiscard]] uint32_t channel() const noexcept override {
+            return mImage->attributes().channel;
         }
-
-        [[nodiscard]] RTCScene getScene() const noexcept override {
-            return mScene.get();
-        }
-
-        void collect(DynamicArray<GSMInstanceProgram>&, DynamicArray<LightInstanceProgram>& light,
-                     DynamicArray<SensorInstanceProgram>&, const EmbreeTraversalNode* node, MemoryArena& arena) override {
-            light.push_back(LightInstanceProgram{ mLight, reinterpret_cast<TraversalHandle>(node), this });
-        }
-
-        AreaLightUserData* postMaterialize(ResourceHolder& holder) const {
-            if(mUserData)
-                holder.retain(mUserData);
-            return mUserData ? &mUserData->value : nullptr;
+        [[nodiscard]] TextureProgram materialize(const MaterializeContext& ctx) const override {
+            TextureProgram res;
+            const auto tex =
+                ctx.registerResource(makeSharedObject<BuiltinTextureResource>(context(), ctx.accelerator, mImage, mMode));
+            res.payload = packSBTPayload(context().getAllocator(), tex);
+            res.sample = nullptr;  // TODO: tex2D
+            return res;
         }
     };
 
-    class EmbreeLeafNodeWithSensor final : public EmbreeNode {
-    private:
-        GeometryHandle mGeometry;
-        SceneHandle mScene;
-        SharedPtr<Sensor> mSensor;
-
-    public:
-        EmbreeLeafNodeWithSensor(PiperContext& context, const RTCDevice device, SharedPtr<Sensor> sensor)
-            : EmbreeNode(context), mSensor(std::move(sensor)) {
-            mGeometry.reset(rtcNewGeometry(device, RTC_GEOMETRY_TYPE_USER));
-
-            // dummy node
-            rtcSetGeometryUserPrimitiveCount(mGeometry.get(), 0);
-            rtcSetGeometryIntersectFunction(mGeometry.get(), [](auto) {});
-            rtcSetGeometryBoundsFunction(
-                mGeometry.get(), [](auto) {}, nullptr);
-            rtcSetGeometryOccludedFunction(mGeometry.get(), [](auto) {});
-            rtcCommitGeometry(mGeometry.get());
-
-            mScene.reset(rtcNewScene(device));
-            rtcAttachGeometry(mScene.get(), mGeometry.get());
-            rtcCommitScene(mScene.get());
-        }
-
-        [[nodiscard]] RTCScene getScene() const noexcept override {
-            return mScene.get();
-        }
-
-        [[nodiscard]] Sensor& getSensor() const noexcept {
-            return *mSensor;
-        }
-
-        void collect(DynamicArray<GSMInstanceProgram>&, DynamicArray<LightInstanceProgram>&,
-                     DynamicArray<SensorInstanceProgram>& sensor, const EmbreeTraversalNode* node, MemoryArena& arena) override {
-            sensor.push_back(SensorInstanceProgram{ mSensor, reinterpret_cast<TraversalHandle>(node), this });
-        }
-
-        // TODO: follow
-        // void postMaterialize(const TraversalHandle* follow, ResourceHolder& holder) const {}
-    };
-
-    struct EmbreeRTProgram final : RTProgram {
-        LinkableProgram program;
-        String symbol;
-        EmbreeRTProgram(PiperContext& context, LinkableProgram prog, String sym)
-            : RTProgram(context), program(std::move(prog)), symbol(std::move(sym)) {}
-    };
-
-    class EmbreeTraceLauncher final : public TraceLauncher {
-    private:
-        Accelerator& mAccelerator;
-        KernelArgument mArg;
-        KernelSymbol<KernelArgument> mKernel;
-        DynamicArray<ResourceView> mResources;
-        std::unique_lock<std::mutex> mLock;
-        SharedPtr<EmbreeNode> mRoot;
-        MemoryArena mArena;
-
-    public:
-        explicit EmbreeTraceLauncher(PiperContext& context, Accelerator& accelerator, const KernelArgument& argTemplate,
-                                     KernelSymbol<KernelArgument> kernel, DynamicArray<ResourceView> resources,
-                                     SharedPtr<EmbreeNode> root, std::mutex& mutex)
-            : TraceLauncher(context), mAccelerator(accelerator), mArg(argTemplate),
-              mKernel(std::move(kernel)), mResources{ std::move(resources) }, mLock(mutex, std::try_to_lock),
-              mRoot(std::move(root)), mArena(context.getAllocator(), 128) {
-            if(!mLock.owns_lock())
-                context.getErrorHandler().raiseException("The pipeline is locked.", PIPER_SOURCE_LOCATION());
-        }
-        [[nodiscard]] Future<void> launch(const RenderRECT& rect, const Function<SBTPayload, uint32_t>& launchData,
-                                          const Span<ResourceView>& resources) override {
-            const auto launchSBT = launchData(static_cast<uint32_t>(mResources.size()));
-            auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(launchSBT.size()));
-            memcpy(ptr, launchSBT.data(), launchSBT.size());
-            auto arg = mArg;
-
-            arg.rect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
-            arg.launchData = ptr;
-
-            // TODO: reduce copy
-            auto fullResources = mResources;
-            for(auto&& res : resources)
-                fullResources.push_back(res);
-
-            return mAccelerator.launchKernel(Dim3{ rect.width, rect.height, 1 }, Dim3{ arg.sampleCount, 1, 1 }, mKernel,
-                                             fullResources, arg);
-        }
-        [[nodiscard]] RenderRECT getRenderRECT() const noexcept override {
-            return *reinterpret_cast<const RenderRECT*>(&mArg.fullRect);
-        }
-        void updateTimeInterval(const Time<float> begin, const Time<float> end) noexcept override {
-            mRoot->updateTimeInterval(begin, end);
-        }
-        [[nodiscard]] Pair<uint32_t, uint32_t> getFilmResolution() const noexcept override {
-            return { mArg.width, mArg.height };
-        }
-    };
-
-    struct SensorGroup final {
-        SensorFunc rayGen;
-        const void* RGPayload;
-    };
-
-    class EmbreePipeline final : public Pipeline {
-    private:
-        Optional<KernelSymbol<KernelArgument>> mKernel;
-        Accelerator& mAccelerator;
-        // TODO:temp arena?
-        MemoryArena mArena;
-        KernelArgument mArg;
-        ResourceHolder mHolder;
-        SharedPtr<EmbreeNode> mScene;
-        UMap<Node*, SensorGroup> mSensors;
-        SharedPtr<Sampler> mSampler;
-        EmbreeProfiler mProfiler;
-        DynamicArray<ResourceView> mResources;
-        std::mutex mMutex;
-
-        void* upload(const SBTPayload& payload) {
-            if(payload.empty())
-                return nullptr;
-            auto* ptr = reinterpret_cast<void*>(mArena.allocRaw(payload.size()));
-            memcpy(ptr, payload.data(), payload.size());
-            return ptr;
-        }
-
-    public:
-        EmbreePipeline(PiperContext& context, Tracer& tracer, Accelerator& accelerator, ResourceCacheManager& cacheManager,
-                       const PITU& pitu, SharedPtr<EmbreeNode> scene, Integrator& integrator, RenderDriver& renderDriver,
-                       LightSampler& lightSampler, SharedPtr<Sampler> sampler, bool debug)
-            : Pipeline(context), mAccelerator(accelerator), mArena(context.getAllocator(), 4096), mArg{}, mHolder(context),
-              mScene(std::move(scene)), mSensors{ context.getAllocator() }, mSampler(std::move(sampler)),
-              mProfiler(context), mResources{ context.getAllocator() } {
-            DynamicArray<LinkableProgram> modules(context.getAllocator());
-            modules.push_back(prepareKernelNative(context, debug));
-            modules.push_back(pitu.generateLinkable(accelerator.getSupportedLinkableFormat()));
-
-            DynamicArray<Pair<String, void*>> call(context.getAllocator());
-
-            const MaterializeContext materialize{
-                tracer,
-                accelerator,
-                cacheManager,
-                mProfiler,
-                ResourceRegister{ [this](SharedPtr<Resource> resource) {
-                    const auto idx = static_cast<uint32_t>(mResources.size());
-                    mResources.push_back(ResourceView{ std::move(resource), ResourceAccessMode::ReadOnly });
-                    return idx;
-                } },
-                CallSiteRegister{ [&](const SharedPtr<RTProgram>& program, const SBTPayload& payload) -> CallHandle {
-                    const auto id = static_cast<uint32_t>(call.size());
-                    const auto* prog = dynamic_cast<EmbreeRTProgram*>(program.get());
-                    modules.emplace_back(prog->program);
-                    call.emplace_back(prog->symbol, upload(payload));
-                    return reinterpret_cast<CallHandle>(static_cast<ptrdiff_t>(id));
-                } },
-                TextureLoader{ [&](const SharedPtr<Config>& desc, const uint32_t channel) -> CallHandle {
-                    const auto texture = tracer.generateTexture(desc, channel);
-                    auto [SBT, prog] = texture->materialize(materialize);
-                    return materialize.registerCall(prog, SBT);
-                } }
-            };
-
-            mArg.scene = mScene->getScene();
-
-            DynamicArray<GSMInstanceProgram> GSMs{ context.getAllocator() };
-            DynamicArray<LightInstanceProgram> lights{ context.getAllocator() };
-            DynamicArray<SensorInstanceProgram> sensors{ context.getAllocator() };
-            mScene->collect(GSMs, lights, sensors, nullptr, mArena);
-
-            struct SurfaceInfo final {
-                void* payload;
-                // TODO:prefix
-                String initFunc;
-                String sampleFunc;
-                String evaluateFunc;
-                String pdfFunc;
-                SurfaceInitFunc init;
-                SurfaceSampleFunc sample;
-                SurfaceEvaluateFunc evaluate;
-                SurfacePdfFunc pdf;
-            };
-            UMap<const Surface*, SurfaceInfo> surfaceProg(context.getAllocator());
-            struct GeometryInfo final {
-                void* payload;
-                String calcSurfaceFunc, intersectFunc, occludeFunc, boundsFunc;
-                GeometryPostProcessFunc calcSurface;
-                HitKind kind;
-                EmbreeAcceleration* acceleration;
-            };
-            UMap<const Geometry*, GeometryInfo> geometryProg(context.getAllocator());
-
-            const auto registerProgram = [&](const SharedPtr<RTProgram>& prog) {
-                auto& rtp = dynamic_cast<EmbreeRTProgram&>(*prog);
-                modules.push_back(rtp.program);
-                return rtp.symbol;
-            };
-
-            const auto registerGeometry = [&](const Geometry* geometry) {
-                if(geometryProg.count(geometry))
-                    return;
-                const auto gp = geometry->materialize(materialize);
-                auto& info = geometryProg[geometry];
-                auto& accel = dynamic_cast<EmbreeAcceleration&>(geometry->getAcceleration(tracer, accelerator, cacheManager));
-                mResources.push_back(ResourceView{ accel.getResource(), ResourceAccessMode::ReadOnly });
-                info.acceleration = &accel;
-
-                if(gp.surface) {
-                    info.kind = HitKind::Custom;
-                    info.payload = upload(gp.payload);
-                    info.calcSurfaceFunc = registerProgram(gp.surface);
-                    info.intersectFunc = registerProgram(gp.intersect);
-                    info.occludeFunc = registerProgram(gp.occlude);
-                } else {
-                    auto [func, payload] = accel.getBuiltin();
-                    info.calcSurfaceFunc = String{ func, context.getAllocator() };
-                    info.payload = upload(packSBTPayload(context.getAllocator(), payload));
-                    info.kind = HitKind::Builtin;
-                }
-            };
-
-            for(auto&& prog : GSMs) {
-                if(!surfaceProg.count(prog.surface.get())) {
-                    auto sp = prog.surface->materialize(materialize);
-                    auto& info = surfaceProg[prog.surface.get()];
-                    info.payload = upload(sp.payload);
-                    info.initFunc = registerProgram(sp.init);
-                    info.sampleFunc = registerProgram(sp.sample);
-                    info.evaluateFunc = registerProgram(sp.evaluate);
-                    info.pdfFunc = registerProgram(sp.pdf);
-                }
-
-                registerGeometry(prog.geometry.get());
-            }
-
-            auto ACP = renderDriver.materialize(materialize);
-            auto& ACRTP = dynamic_cast<EmbreeRTProgram&>(*ACP.accumulate);
-            modules.push_back(ACRTP.program);
-            mArg.ACPayload = upload(ACP.payload);
-
-            LightInstanceProgram* environmentLight = nullptr;
-            for(auto&& inst : lights) {
-                if(match(inst.light->attributes(), LightAttributes::Infinite)) {
-                    if(environmentLight == nullptr)
-                        environmentLight = &inst;
-                    else
-                        context.getErrorHandler().raiseException("Only one infinite light is supported.",
-                                                                 PIPER_SOURCE_LOCATION());
-                }
-            }
-            std::swap(*environmentLight, lights.front());
-
-            mArg.lights = mArena.alloc<LightFuncGroup>(lights.size());
-            DynamicArray<LightProgram> LIPs{ context.getAllocator() };
-            // TODO:better interface
-            DynamicArray<SharedPtr<Light>> lightReferences{ context.getAllocator() };
-            for(size_t idx = 0; idx < lights.size(); ++idx) {
-                auto&& inst = lights[idx];
-                auto LIP = inst.light->materialize(inst.traversal, materialize);
-                auto& init = dynamic_cast<EmbreeRTProgram&>(*LIP.init);
-                auto& sample = dynamic_cast<EmbreeRTProgram&>(*LIP.sample);
-                auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*LIP.evaluate);
-                auto& pdf = dynamic_cast<EmbreeRTProgram&>(*LIP.pdf);
-                modules.push_back(init.program);
-                modules.push_back(sample.program);
-                modules.push_back(evaluate.program);
-                modules.push_back(pdf.program);
-                mArg.lights[idx].LIPayload = upload(LIP.payload);
-                LIPs.emplace_back(std::move(LIP));
-                lightReferences.emplace_back(inst.light);
-
-                const auto* geometry = inst.light->getGeometry();
-                if(geometry)
-                    registerGeometry(geometry);
-            }
-
-            lightSampler.preprocess({ lightReferences.cbegin(), lightReferences.cend() });
-            auto LSP = lightSampler.materialize(materialize);
-            auto& LSRTP = dynamic_cast<EmbreeRTProgram&>(*LSP.select);
-            modules.push_back(LSRTP.program);
-            mArg.LSPayload = upload(LSP.payload);
-
-            DynamicArray<String> sensorFunc{ context.getAllocator() };
-            sensorFunc.reserve(sensors.size());
-            for(auto& sensor : sensors) {
-                auto RGP = sensor.sensor->materialize(sensor.traversal, materialize);
-                auto& RGRTP = dynamic_cast<EmbreeRTProgram&>(*RGP.rayGen);
-                modules.push_back(RGRTP.program);
-                sensorFunc.push_back(RGRTP.symbol);
-                mSensors.emplace(makePair(sensor.node, SensorGroup{ nullptr, upload(RGP.payload) }));
-            }
-
-            auto TRP = integrator.materialize(materialize);
-            auto& TRRTP = dynamic_cast<EmbreeRTProgram&>(*TRP.trace);
-            modules.push_back(TRRTP.program);
-            mArg.TRPayload = upload(TRP.payload);
-
-            auto SAP = mSampler->materialize(materialize);
-            auto& start = dynamic_cast<EmbreeRTProgram&>(*SAP.start);
-            auto& generate = dynamic_cast<EmbreeRTProgram&>(*SAP.generate);
-            modules.push_back(start.program);
-            modules.push_back(generate.program);
-
-            mKernel = mAccelerator.compileKernel<KernelArgument>(
-                Span<LinkableProgram>{ modules.data(), modules.data() + modules.size() },
-                String{ "piperMain", context.getAllocator() });
-
-            // TODO:better interface
-            auto symbolMap = mKernel->get().getSync();
-
-            mArg.callInfo = mArena.alloc<CallInfo>(call.size());
-            for(size_t idx = 0; idx < call.size(); ++idx) {
-                mArg.callInfo[idx].address = reinterpret_cast<ptrdiff_t>(symbolMap->lookup(call[idx].first));
-                mArg.callInfo[idx].SBTData = call[idx].second;
-            }
-
-            for(auto& [_, prog] : geometryProg) {
-                prog.calcSurface = static_cast<GeometryPostProcessFunc>(symbolMap->lookup(prog.calcSurfaceFunc));
-                if(prog.kind != HitKind::Builtin) {
-                    prog.acceleration->setCustomFunc(prog.payload, mArena,
-                                                     static_cast<GeometryIntersectFunc>(symbolMap->lookup(prog.intersectFunc)),
-                                                     static_cast<GeometryOccludeFunc>(symbolMap->lookup(prog.occludeFunc)));
-                }
-            }
-            for(auto& [_, prog] : surfaceProg) {
-                prog.init = static_cast<SurfaceInitFunc>(symbolMap->lookup(prog.initFunc));
-                prog.sample = static_cast<SurfaceSampleFunc>(symbolMap->lookup(prog.sampleFunc));
-                prog.evaluate = static_cast<SurfaceEvaluateFunc>(symbolMap->lookup(prog.evaluateFunc));
-                prog.pdf = static_cast<SurfacePdfFunc>(symbolMap->lookup(prog.pdfFunc));
-            }
-            for(auto& prog : GSMs) {
-                auto& data = prog.node->postMaterialize(mHolder);
-                auto& geo = geometryProg[prog.geometry.get()];
-                data.kind = geo.kind;
-                data.calcSurface = geo.calcSurface;
-                data.GEPayload = geo.payload;
-                data.usage = GeometryUsage::GSM;
-
-                auto& surf = surfaceProg[prog.surface.get()];
-                data.init = surf.init;
-                data.sample = surf.sample;
-                data.evaluate = surf.evaluate;
-                data.pdf = surf.pdf;
-                data.SFPayload = surf.payload;
-            }
-
-            mArg.accumulate = static_cast<RenderDriverFunc>(symbolMap->lookup(ACRTP.symbol));
-
-            for(size_t idx = 0; idx < lights.size(); ++idx) {
-                auto& LIP = LIPs[idx];
-                auto& init = dynamic_cast<EmbreeRTProgram&>(*LIP.init);
-                auto& sample = dynamic_cast<EmbreeRTProgram&>(*LIP.sample);
-                auto& evaluate = dynamic_cast<EmbreeRTProgram&>(*LIP.evaluate);
-                auto& pdf = dynamic_cast<EmbreeRTProgram&>(*LIP.pdf);
-                mArg.lights[idx].init = static_cast<LightInitFunc>(symbolMap->lookup(init.symbol));
-                mArg.lights[idx].sample = static_cast<LightSampleFunc>(symbolMap->lookup(sample.symbol));
-                mArg.lights[idx].evaluate = static_cast<LightEvaluateFunc>(symbolMap->lookup(evaluate.symbol));
-                mArg.lights[idx].pdf = static_cast<LightPdfFunc>(symbolMap->lookup(pdf.symbol));
-
-                if(auto* data = lights[idx].node->postMaterialize(mHolder)) {
-                    auto& geo = geometryProg[lights[idx].light->getGeometry()];
-                    data->kind = geo.kind;
-                    data->calcSurface = geo.calcSurface;
-                    data->GEPayload = geo.payload;
-                    data->usage = GeometryUsage::AreaLight;
-                    data->light = reinterpret_cast<LightHandle>(mArg.lights + idx);
-                }
-            }
-
-            mArg.lightSample = static_cast<LightSelectFunc>(symbolMap->lookup(LSRTP.symbol));
-
-            for(uint32_t idx = 0; idx < sensorFunc.size(); ++idx)
-                mSensors[sensors[idx].node].rayGen = static_cast<SensorFunc>(symbolMap->lookup(sensorFunc[idx]));
-
-            mArg.trace = static_cast<IntegratorFunc>(symbolMap->lookup(TRRTP.symbol));
-
-            mArg.start = static_cast<SampleStartFunc>(symbolMap->lookup(start.symbol));
-            mArg.generate = static_cast<SampleGenerateFunc>(symbolMap->lookup(generate.symbol));
-
-            static char p1, p2, p3, p4, p5;
-            mArg.profileIntersectHit = mProfiler.registerDesc("Tracer", "Intersect Hit", &p1, StatisticsType::Bool);
-            mArg.profileIntersectTime = mProfiler.registerDesc("Tracer", "Intersect Time", &p2, StatisticsType::Time);
-            mArg.profileOccludeHit = mProfiler.registerDesc("Tracer", "Occlude Hit", &p3, StatisticsType::Bool);
-            mArg.profileOccludeTime = mProfiler.registerDesc("Tracer", "Occlude Time", &p4, StatisticsType::Time);
-            mArg.profileSampleTime = mProfiler.registerDesc("Tracer", "Per Sample Time", &p5, StatisticsType::Time);
-            mArg.profiler = &mProfiler;
-            mArg.errorHandler = &context.getErrorHandler();
-        }
-        [[nodiscard]] SharedPtr<TraceLauncher> prepare(const SharedPtr<Node>& sensor, const uint32_t width, const uint32_t height,
-                                                       const FitMode fitMode) override {
-            const auto sensorIter = mSensors.find(sensor.get());
-            if(sensorIter == mSensors.cend())
-                context().getErrorHandler().raiseException("The reference node of the active sensor cannot be resolved.",
-                                                           PIPER_SOURCE_LOCATION());
-            const auto deviceAspectRatio =
-                dynamic_cast<const EmbreeLeafNodeWithSensor*>(sensorIter->first)->getSensor().aspectRatio();
-
-            auto [transform, rect] = calcRenderRECT(width, height, deviceAspectRatio, fitMode);
-
-            auto arg = mArg;
-            arg.rayGen = sensorIter->second.rayGen;
-            arg.RGPayload = sensorIter->second.RGPayload;
-
-            const auto attr = mSampler->generatePayload(rect.width, rect.height);
-            arg.SAPayload = upload(attr.payload);
-            arg.maxDimension = attr.maxDimension;
-
-            arg.width = width;
-            arg.height = height;
-            arg.transform = *reinterpret_cast<const SensorNDCAffineTransformAlias*>(&transform);
-            arg.sampleCount = attr.samplesPerPixel;
-            arg.fullRect = *reinterpret_cast<const RenderRECTAlias*>(&rect);
-            return makeSharedObject<EmbreeTraceLauncher>(context(), mAccelerator, arg, mKernel.value(), mResources, mScene,
-                                                         mMutex);
-        }
-        String generateStatisticsReport() const override {
-            return mProfiler.generateReport();
-        }
-    };
-    */
+    // NOTICE: Concurrent launches with different values for pipelineParams in the same pipeline triggers serialization of the
+    // launches. Concurrency requires a separate pipeline for each concurrent launch.
 
     class OptiX final : public Tracer {
     private:
@@ -891,11 +363,8 @@ namespace Piper {
                 context().getErrorHandler().raiseException("Unrecognized wrap mode " + mode, PIPER_SOURCE_LOCATION());
             };
             const auto mode = str2Mode(wrap->get<String>());
-            const auto image = context().getModuleLoader().newInstanceT<Image>(textureDesc->at("Image")).getSync();
-            // TODO: move sampler to accelerator
-            // TODO: use builtin sampler
-            // return mSampler->generateTexture(image, mode);
-            return nullptr;
+            auto image = context().getModuleLoader().newInstanceT<Image>(textureDesc->at("Image")).getSync();
+            return makeSharedObject<BuiltinTexture>(context(), std::move(image), mode);
         }
 
     public:
@@ -950,9 +419,6 @@ namespace Piper {
                                   PIPER_SOURCE_LOCATION());
                 // TODO: cache manage
             }
-
-            // rtcSetDeviceMemoryMonitorFunction();
-            // mSampler = context.getModuleLoader().newInstanceT<TextureSampler>(config->at("TextureSampler")).getSync();
         }
         [[nodiscard]] SharedPtr<RTProgram> buildProgram(LinkableProgram linkable, String symbol) override {
             // return makeSharedObject<OptixRTProgram>(context(), mDevices, linkable, symbol);
@@ -998,7 +464,6 @@ namespace Piper {
         }
         [[nodiscard]] SharedPtr<Texture> generateTexture(const SharedPtr<Config>& textureDesc,
                                                          const uint32_t channel) const override {
-            /*
             auto res = generateTextureImpl(textureDesc);
             if(res->channel() != channel)
                 context().getErrorHandler().raiseException("Mismatched channel. Expect " +
@@ -1006,8 +471,6 @@ namespace Piper {
                                                                toString(context().getAllocator(), res->channel()),
                                                            PIPER_SOURCE_LOCATION());
             return res;
-            */
-            return nullptr;
         }
         Accelerator& getAccelerator() const noexcept override {
             return *mAccelerator;
@@ -1029,9 +492,11 @@ namespace Piper {
     class ModuleImpl final : public Module {
     private:
         void* mHandle;
+        String mPath;
 
     public:
-        explicit ModuleImpl(PiperContext& context, const char* path) : Module{ context }, mHandle{ nullptr } {
+        explicit ModuleImpl(PiperContext& context, const char* path)
+            : Module{ context }, mHandle{ nullptr }, mPath{ path, context.getAllocator() } {
             checkOptixResult(context, PIPER_SOURCE_LOCATION(), optixInitWithHandle(&mHandle));
         }
         ~ModuleImpl() override {

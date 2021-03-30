@@ -28,8 +28,7 @@ namespace Piper {
     // TODO:2D distribution support
     class Texture : public Object {
     public:
-        PIPER_INTERFACE_CONSTRUCT(Texture, Object)
-        virtual ~Texture() = default;
+        PIPER_INTERFACE_CONSTRUCT(Texture, Object);
         [[nodiscard]] virtual uint32_t channel() const noexcept = 0;
         virtual TextureProgram materialize(const MaterializeContext& ctx) const = 0;
     };
@@ -37,7 +36,6 @@ namespace Piper {
     class TextureSampler : public Object {
     public:
         PIPER_INTERFACE_CONSTRUCT(TextureSampler, Object);
-        virtual ~TextureSampler() = default;
         [[nodiscard]] virtual SharedPtr<Texture> generateTexture(const SharedPtr<Image>& image, TextureWrap wrap) const = 0;
     };
     // TODO:texCoord modifier

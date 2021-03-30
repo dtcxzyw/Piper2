@@ -42,6 +42,7 @@
 #include <llvm/Transforms/Utils/Cloning.h>
 // use LLJIT
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
+#include <llvm/Support/Host.h>
 #include <llvm/Support/ManagedStatic.h>
 //#define NOMINMAX
 //#include <Windows.h>
@@ -362,8 +363,32 @@ namespace Piper {
                     auto mod = binary2Module(context(), eastl::get<Future<Binary>>(linkable.exchange).getSync(), *llCtx);
 
                     stage.next("build JIT", PIPER_SOURCE_LOCATION());
-                    // TODO: LLVM use fake host triple, use true host triple to initialize JITTargetMachineBuilder
-                    auto JTMB = getLLVMResult(*ctx, PIPER_SOURCE_LOCATION(), llvm::orc::JITTargetMachineBuilder::detectHost());
+
+                    const auto triple = llvm::sys::getProcessTriple();
+                    const auto cpu = llvm::sys::getHostCPUName();
+                    llvm::StringMap<bool> features;
+                    llvm::sys::getHostCPUFeatures(features);
+
+                    auto& logger = ctx->getLogger();
+                    llvm::orc::JITTargetMachineBuilder JTMB{ llvm::Triple{ triple } };
+                    JTMB.setCPU(cpu.str());
+
+                    for(auto&& feature : features)
+                        if(feature.second)
+                            JTMB.getFeatures().AddFeature(feature.first());
+
+                    if(logger.allow(LogLevel::Info)) {
+                        String featureInfo{ ctx->getAllocator() };
+                        for(auto&& feature : features)
+                            if(feature.second)
+                                featureInfo = featureInfo + feature.first().data() + ",";
+                        if(featureInfo.size())
+                            featureInfo.pop_back();
+                        logger.record(LogLevel::Info,
+                                      String{ "Triple: ", ctx->getAllocator() } + triple.data() + "\nCPU: " + cpu.data() +
+                                          "\nFeatures: " + featureInfo,
+                                      PIPER_SOURCE_LOCATION());
+                    }
 
                     // TODO: test settings
                     // TODO: FP Precise
