@@ -292,6 +292,10 @@ namespace Piper {
         [[nodiscard]] ResourceHandle getHandle() const noexcept override {
             return reinterpret_cast<ResourceHandle>(mTexture.get());
         }
+        const SharedPtr<FutureImpl>& getFuture() const noexcept override {
+            context().getErrorHandler().notImplemented(PIPER_SOURCE_LOCATION());
+            return nullptr;
+        }
     };
 
     class BuiltinTextureResource : public Resource {
@@ -313,7 +317,7 @@ namespace Piper {
               mMode{ wrapMode }, mAttributes{ image->attributes() } {}
         const SharedPtr<ResourceInstance>& requireInstance(Context* ctx) override {
             return safeRequireInstance(mMutex, mInstances, ctx, [this, ctx] {
-                return makeSharedObject<BuiltinTextureInstance>(context(), mBuffer, mAttributes, mMode);
+                return makeSharedObject<BuiltinTextureInstance>(context(), mBuffer->requireInstance(ctx), mAttributes, mMode);
             });
         }
     };

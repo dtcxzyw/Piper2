@@ -70,7 +70,7 @@ namespace Piper {
             auto buffer = tracer.getAccelerator().createTiledOutput(width * height * sizeof(RGBW), alignof(RGBW));
 
             const auto rect = launcher.getRenderRECT();
-            constexpr uint32_t tileSize = 16;
+            constexpr uint32_t tileSize = 8;
             const auto blockX = (rect.width + tileSize - 1) / tileSize;
             const auto blockY = (rect.height + tileSize - 1) / tileSize;
             const auto blockCount = blockX * blockY;

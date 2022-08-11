@@ -219,7 +219,7 @@ namespace Piper {
         }
     };
 
-    // TODO:remove Closure
+    // TODO: remove Closure
     template <typename... Args>
     class Closure final {
     private:
@@ -557,6 +557,9 @@ namespace Piper {
                 },
                 std::move(args)...);
         }
+
+        // TODO: reduce blocking by mutex
+        // virtual void yield() = 0;
     };
 
     template <typename T>
@@ -613,8 +616,7 @@ namespace Piper {
         return ptr.context().getScheduler().spawn([](SharedPtr<U> ptr) { return eastl::dynamic_shared_pointer_cast<T>(ptr); },
                                                   ptr);
     }
-
-    // TODO:operator fusion?
+    
 #define PIPER_FUTURE_BINARY_OPERATOR(op) /* NOLINT(cppcoreguidelines-macro-usage)*/         \
                                                                                             \
     template <typename U, typename V>                                                       \

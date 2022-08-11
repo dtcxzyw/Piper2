@@ -134,8 +134,9 @@ namespace Piper {
         }
         void addFloat(const StatisticsHandle id, const float val) {
             auto& [first, second] = mStatistics[reinterpret_cast<ptrdiff_t>(id)].fc;
-            double src = first;
-            while(!first.compare_exchange_strong(src, src + static_cast<double>(val)))
+            double src = first.load(std::memory_order_relaxed);
+            while(!first.compare_exchange_weak(src, src + static_cast<double>(val), std::memory_order_release,
+                                               std::memory_order_relaxed))
                 ;
             ++second;
         }
@@ -418,9 +419,11 @@ namespace Piper {
 
     static void piperEmbreeFloatAtomicAdd(float& x, const float y) {
         // TODO:improve performance
+        static_assert(sizeof(float) == sizeof(std::atomic<float>));
+        static_assert(std::atomic<float>::is_always_lock_free);
         auto& atomicX = *reinterpret_cast<std::atomic<float>*>(&x);
-        auto src = x;
-        while(!atomicX.compare_exchange_strong(src, src + y))
+        auto src = atomicX.load(std::memory_order_relaxed);
+        while(!atomicX.compare_exchange_weak(src, src + y, std::memory_order_release, std::memory_order_relaxed))
             ;
     }
 

@@ -32,22 +32,24 @@
 // TODO:use new PassManager
 //#include <llvm/IR/PassManager.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Linker/Linker.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/Linker/Linker.h>
 #pragma warning(pop)
 #include "../../../STL/Pair.hpp"
 #include <new>
 #include <utility>
 
 namespace Piper {
+
+    // TODO: support polly
 
     class LLVMStream final : public llvm::raw_pwrite_stream {
     private:
@@ -272,7 +274,6 @@ namespace Piper {
                         DynamicArray<llvm::Value*> args{ ctx->getAllocator() };
                         for(auto&& arg : func->args())
                             args.push_back(&arg);
-
                         const auto ret = builder.CreateCall(symbol, llvm::ArrayRef<llvm::Value*>{ args.data(), args.size() });
                         if(func->getReturnType()->isVoidTy())
                             builder.CreateRetVoid();

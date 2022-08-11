@@ -19,3 +19,6 @@
 [Disney's Hyperion Renderer](https://www.disneyanimation.com/publications/the-design-and-evolution-of-disneys-hyperion-renderer/)
 [UE4 PostProcess Effects](https://docs.unrealengine.com/en-US/Engine/Rendering/PostProcessEffects/index.html)
 [Digital SLR Camera Basics](https://imaging.nikon.com/lineup/dslr/basics/)
+[mitsuba2](https://github.com/mitsuba-renderer/mitsuba2)
+[pbrt-v3](https://github.com/mmp/pbrt-v3)
+[pbrt-v4](https://github.com/mmp/pbrt-v4)
